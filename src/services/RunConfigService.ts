@@ -1,11 +1,10 @@
 import type { ConfigStore } from './ConfigStore';
-import type { RunConfig } from '../shared/types';
+import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 import { newId } from '../utils/uuid';
 
-export interface ConfigRef {
-  folderKey: string;
-  config: RunConfig;
-}
+export type ConfigRef =
+  | { folderKey: string; config: RunConfig; valid: true }
+  | { folderKey: string; config: InvalidConfigEntry; valid: false };
 
 export class RunConfigService {
   constructor(private readonly store: ConfigStore) {}
@@ -14,7 +13,10 @@ export class RunConfigService {
     const out: ConfigRef[] = [];
     for (const key of this.store.folderKeys()) {
       for (const cfg of this.store.getForFolder(key).configurations) {
-        out.push({ folderKey: key, config: cfg });
+        out.push({ folderKey: key, config: cfg, valid: true });
+      }
+      for (const bad of this.store.invalidForFolder(key)) {
+        out.push({ folderKey: key, config: bad, valid: false });
       }
     }
     return out;
@@ -36,17 +38,40 @@ export class RunConfigService {
 
   async update(folderKey: string, cfg: RunConfig): Promise<void> {
     const file = this.store.getForFolder(folderKey);
-    const idx = file.configurations.findIndex(c => c.id === cfg.id);
-    if (idx === -1) throw new Error(`Configuration not found: ${cfg.id}`);
-    const next = [...file.configurations];
-    next[idx] = cfg;
-    await this.store.write(folderKey, { ...file, configurations: next });
+    const invalid = this.store.invalidForFolder(folderKey);
+
+    const validIdx = file.configurations.findIndex(c => c.id === cfg.id);
+    const wasInvalid = invalid.some(e => e.id === cfg.id);
+
+    if (validIdx === -1 && !wasInvalid) {
+      throw new Error(`Configuration not found: ${cfg.id}`);
+    }
+
+    const nextConfigs =
+      validIdx === -1
+        ? [...file.configurations, cfg]
+        : file.configurations.map((c, i) => (i === validIdx ? cfg : c));
+
+    await this.store.write(
+      folderKey,
+      { ...file, configurations: nextConfigs },
+      { removeInvalidIds: [cfg.id] },
+    );
   }
 
   async delete(folderKey: string, id: string): Promise<void> {
     const file = this.store.getForFolder(folderKey);
+    const invalid = this.store.invalidForFolder(folderKey);
+
+    const inValid = file.configurations.some(c => c.id === id);
+    const inInvalid = invalid.some(e => e.id === id);
+    if (!inValid && !inInvalid) return;
+
     const next = file.configurations.filter(c => c.id !== id);
-    if (next.length === file.configurations.length) return; // no-op
-    await this.store.write(folderKey, { ...file, configurations: next });
+    await this.store.write(
+      folderKey,
+      { ...file, configurations: next },
+      { removeInvalidIds: [id] },
+    );
   }
 }
