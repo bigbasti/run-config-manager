@@ -7,6 +7,8 @@ import { gradleModulePrefix } from '../adapters/spring-boot/findBuildRoot';
 import * as net from 'net';
 import { makeRunContext, resolveConfig } from '../utils/resolveVars';
 import { readServerPort } from '../adapters/spring-boot/readServerPort';
+import { RunTerminal } from './RunTerminal';
+import { readyPatternsFor, chunkSignalsReady } from './readyPatterns';
 
 interface Entry {
   execution: vscode.TaskExecution;
@@ -102,10 +104,38 @@ export class ExecutionService {
 
     const cwd = prepared.cwd ?? initialCwd;
     const { command, args } = adapter.buildCommand(resolvedCfg, folder);
+    const mergedEnv: Record<string, string | undefined> = {
+      ...process.env,
+      ...resolvedCfg.env,
+      ...(prepared.env ?? {}),
+    };
 
-    const shell = new vscode.ShellExecution(command, args, {
+    // Custom terminal: we own the child process so we can scan stdout for
+    // readiness phrases (e.g. Spring's "Started X in 4s", Angular's "Compiled
+    // successfully") alongside the terminal-visible output. Falls back to the
+    // port-poll signal for apps without a recognised pattern.
+    const patterns = readyPatternsFor(resolvedCfg);
+    const markReady = (reason: string) => {
+      if (this.running.has(cfg.id) && !this.started.has(cfg.id)) {
+        this.started.add(cfg.id);
+        this.emitter.fire(cfg.id);
+        log.info(`Ready: ${cfg.name} — ${reason}`);
+      }
+    };
+
+    const terminal = new RunTerminal({
+      command,
+      args,
       cwd,
-      env: { ...resolvedCfg.env, ...(prepared.env ?? {}) },
+      env: mergedEnv,
+      onOutput: chunk => {
+        if (patterns.length && chunkSignalsReady(chunk, patterns)) {
+          markReady(`matched readiness pattern`);
+        }
+      },
+      onExit: () => {
+        // Handled by onDidEndTask listener; no-op here.
+      },
     });
 
     const task = new vscode.Task(
@@ -113,7 +143,7 @@ export class ExecutionService {
       folder,
       cfg.name,
       'Run Configurations',
-      shell,
+      new vscode.CustomExecution(async () => terminal),
       [],
     );
 
@@ -136,10 +166,9 @@ export class ExecutionService {
       this.emitter.fire(cfg.id);
       log.info(`Started: ${cfg.name} (${command} ${args.join(' ')})`);
 
-      // Poll the configured port(s) to detect when the app has actually bound.
-      // When any socket accepts a TCP connection, flip to the 'started' state
-      // so the tree can show a green icon instead of a spinner. Runs as a
-      // fire-and-forget side effect; doesn't block the executeTask return.
+      // Fallback: port poll in parallel with the log scanner. The first signal
+      // to hit wins. Covers apps whose output doesn't match any known pattern
+      // but whose port is known or guessable (e.g. Tomcat's httpPort).
       void (async () => {
         const ports = await detectReadyPorts(resolvedCfg, folder);
         if (ports.length > 0) void this.watchReadyPort(cfg.id, ports);
@@ -153,13 +182,16 @@ export class ExecutionService {
   }
 
   private async watchReadyPort(configId: string, ports: number[]): Promise<void> {
-    // Race all candidate ports — first one to open wins. 10-minute cap.
+    // Race all candidate ports — first one to open wins. Bail as soon as the
+    // log scanner has already marked us ready, so we don't spam log lines.
     const deadline = Date.now() + 10 * 60_000;
     while (Date.now() < deadline && this.running.has(configId)) {
+      if (this.started.has(configId)) return;
       for (const p of ports) {
         const alive = await tryTcp('localhost', p);
         if (alive) {
           if (!this.running.has(configId)) return;
+          if (this.started.has(configId)) return;
           this.started.add(configId);
           this.emitter.fire(configId);
           log.info(`Ready: ${configId} listening on ${p}`);

@@ -201,6 +201,10 @@ export class ShellExecution {
   constructor(public command: string, public args: any[] = [], public options: any = {}) {}
 }
 
+export class CustomExecution {
+  constructor(public callback: () => Promise<any>) {}
+}
+
 export class TaskScope {
   static Workspace = 1;
   static Global = 2;
