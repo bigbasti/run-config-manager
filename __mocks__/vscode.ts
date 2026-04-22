@@ -36,6 +36,15 @@ export class EventEmitter<T> {
 // In-memory FS backing for tests
 const fsStore = new Map<string, Uint8Array>();
 
+// Registered watchers so tests can trigger events.
+export const __watchers: Array<{
+  pattern: any;
+  change: EventEmitter<Uri>;
+  create: EventEmitter<Uri>;
+  del: EventEmitter<Uri>;
+}> = [];
+export const __resetWatchers = () => { __watchers.length = 0; };
+
 export const FileType = { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 } as const;
 
 class FsStubError extends Error {
@@ -77,12 +86,18 @@ export const workspace = {
   },
   workspaceFolders: [] as Array<{ uri: Uri; name: string; index: number }>,
   getWorkspaceFolder: (_: Uri) => undefined,
-  createFileSystemWatcher: (_: string) => ({
-    onDidChange: () => ({ dispose: () => {} }),
-    onDidCreate: () => ({ dispose: () => {} }),
-    onDidDelete: () => ({ dispose: () => {} }),
-    dispose: () => {},
-  }),
+  createFileSystemWatcher: (pattern: any) => {
+    const change = new EventEmitter<Uri>();
+    const create = new EventEmitter<Uri>();
+    const del = new EventEmitter<Uri>();
+    __watchers.push({ pattern, change, create, del });
+    return {
+      onDidChange: change.event,
+      onDidCreate: create.event,
+      onDidDelete: del.event,
+      dispose: () => {},
+    };
+  },
 };
 
 export const window = {
