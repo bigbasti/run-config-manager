@@ -121,11 +121,23 @@ export const commands = {
   executeCommand: jest.fn(),
 };
 
+const endEmitter = new EventEmitter<{ execution: any }>();
+const startEmitter = new EventEmitter<{ execution: any }>();
+
 export const tasks = {
-  executeTask: jest.fn(),
-  onDidEndTask: jest.fn().mockReturnValue({ dispose: () => {} }),
-  onDidStartTask: jest.fn().mockReturnValue({ dispose: () => {} }),
-  onDidEndTaskProcess: jest.fn().mockReturnValue({ dispose: () => {} }),
+  executeTask: jest.fn(async (task: any) => {
+    const execution = {
+      task,
+      terminate: jest.fn(() => { endEmitter.fire({ execution }); }),
+    };
+    startEmitter.fire({ execution });
+    return execution;
+  }),
+  onDidStartTask: startEmitter.event,
+  onDidEndTask: endEmitter.event,
+  onDidEndTaskProcess: new EventEmitter<any>().event,
+  __endEmitter: endEmitter,
+  __startEmitter: startEmitter,
 };
 
 export const debug = {
