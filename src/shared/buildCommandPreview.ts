@@ -30,6 +30,11 @@ export function buildCommandPreview(cfg: RunConfig): string {
         ? `mvn spring-boot:run -Dspring-boot.run.profiles=${profiles}`
         : 'mvn spring-boot:run';
     }
+  } else if (cfg.type === 'tomcat') {
+    const to = cfg.typeOptions;
+    const home = to.tomcatHome || '<TOMCAT_HOME>';
+    const ctx = (to.applicationContext || '/').trim();
+    base = `${home}/bin/catalina.sh run  # deploy ${to.artifactPath || '<artifact>'} → ${ctx} on :${to.httpPort}`;
   } else {
     return `(unsupported type: ${(cfg as RunConfig).type})`;
   }

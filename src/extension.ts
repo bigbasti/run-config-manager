@@ -7,6 +7,7 @@ import { DebugService } from './services/DebugService';
 import { AdapterRegistry } from './adapters/AdapterRegistry';
 import { NpmAdapter } from './adapters/npm/NpmAdapter';
 import { SpringBootAdapter } from './adapters/spring-boot/SpringBootAdapter';
+import { TomcatAdapter } from './adapters/tomcat/TomcatAdapter';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
 import { log, initLogger } from './utils/logger';
@@ -25,6 +26,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const registry = new AdapterRegistry();
   registry.register(new NpmAdapter());
   registry.register(new SpringBootAdapter());
+  registry.register(new TomcatAdapter());
 
   const store = new ConfigStore();
   const svc = new RunConfigService(store);
@@ -268,14 +270,20 @@ async function addConfig(
         // Fields that have their options populated by detection — the webview
         // shows spinners in these fields until schemaUpdate messages arrive.
         pending: [
+          // Spring Boot
           'typeOptions.mainClass',
-          'typeOptions.jdkPath',
           'typeOptions.classpath',
           'typeOptions.profiles',
           'typeOptions.gradleCommand',
+          'typeOptions.buildRoot',
+          // Shared Java
+          'typeOptions.jdkPath',
           'typeOptions.gradlePath',
           'typeOptions.mavenPath',
-          'typeOptions.buildRoot',
+          // Tomcat-specific
+          'typeOptions.tomcatHome',
+          'typeOptions.artifactPath',
+          'typeOptions.artifactKind',
         ],
       },
     }, context, svc);

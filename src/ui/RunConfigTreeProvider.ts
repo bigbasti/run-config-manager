@@ -143,6 +143,7 @@ function labelForType(type: RunConfig['type']): string {
   switch (type) {
     case 'npm': return 'npm / Node.js';
     case 'spring-boot': return 'Spring Boot';
+    case 'tomcat': return 'Tomcat';
     default: return type;
   }
 }
@@ -152,6 +153,7 @@ function iconForType(type: string): string {
   switch (type) {
     case 'npm': return 'package';
     case 'spring-boot': return 'rocket';
+    case 'tomcat': return 'server-environment';
     default: return 'circle-outline';
   }
 }

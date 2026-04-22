@@ -15,6 +15,13 @@ interface Entry {
   watcher?: vscode.TaskExecution;
 }
 
+export interface RunOpts {
+  // When true, prepareLaunch is called with { debug: true } so adapters can
+  // wire in JDWP flags. DebugService uses this to attach after the JVM boots.
+  debug?: boolean;
+  debugPort?: number;
+}
+
 export class ExecutionService {
   private running = new Map<string, Entry>();
   private emitter = new vscode.EventEmitter<string>();
@@ -29,7 +36,11 @@ export class ExecutionService {
     return this.running.has(configId);
   }
 
-  async run(cfg: RunConfig, folder: vscode.WorkspaceFolder): Promise<vscode.TaskExecution | undefined> {
+  async run(
+    cfg: RunConfig,
+    folder: vscode.WorkspaceFolder,
+    opts?: RunOpts,
+  ): Promise<vscode.TaskExecution | undefined> {
     if (this.running.has(cfg.id)) return undefined;
 
     const adapter = this.registry.get(cfg.type);
@@ -40,18 +51,35 @@ export class ExecutionService {
 
     // Resolve ${VAR} / ${env:VAR} / ${workspaceFolder} etc. in every text field
     // of the config. Unresolved variables become empty strings and are logged.
-    const cwd = buildCwd(cfg, folder);
-    const ctx = makeRunContext({ workspaceFolder: folder.uri.fsPath, cwd });
+    const initialCwd = buildCwd(cfg, folder);
+    const ctx = makeRunContext({ workspaceFolder: folder.uri.fsPath, cwd: initialCwd });
     const { value: resolvedCfg, unresolved } = resolveConfig(cfg, ctx);
     if (unresolved.length) {
       log.warn(`Unresolved variable(s) in "${cfg.name}": ${unresolved.join(', ')} (expanded to empty string)`);
     }
 
+    // Let the adapter prep any filesystem state / env vars (Tomcat writes its
+    // CATALINA_BASE scaffold here). prepareLaunch may override cwd.
+    let prepared: { env?: Record<string, string>; cwd?: string } = {};
+    if (adapter.prepareLaunch) {
+      try {
+        prepared = await adapter.prepareLaunch(resolvedCfg, folder, {
+          debug: opts?.debug ?? false,
+          debugPort: opts?.debugPort,
+        });
+      } catch (e) {
+        log.error(`prepareLaunch failed for ${cfg.name}`, e);
+        vscode.window.showErrorMessage(`Failed to prepare "${cfg.name}": ${(e as Error).message}`);
+        return undefined;
+      }
+    }
+
+    const cwd = prepared.cwd ?? initialCwd;
     const { command, args } = adapter.buildCommand(resolvedCfg, folder);
 
     const shell = new vscode.ShellExecution(command, args, {
       cwd,
-      env: { ...resolvedCfg.env },
+      env: { ...resolvedCfg.env, ...(prepared.env ?? {}) },
     });
 
     const task = new vscode.Task(

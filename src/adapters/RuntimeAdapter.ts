@@ -38,9 +38,36 @@ export interface RuntimeAdapter {
     folder?: vscode.WorkspaceFolder,
   ): { command: string; args: string[] };
 
+  // Optional pre-launch hook. Runs after variable resolution but before
+  // buildCommand. Adapters can set up filesystem state (CATALINA_BASE for
+  // Tomcat, classpath reshuffle, etc.) and contribute additional env vars
+  // that flow into ShellExecution.
+  prepareLaunch?(
+    cfg: RunConfig,
+    folder: vscode.WorkspaceFolder,
+    ctx: PrepareContext,
+  ): Promise<PrepareResult>;
+
   // Only required when supportsDebug === true. Adapters that don't support
   // debug can omit this method.
   getDebugConfig?(cfg: RunConfig, folder: vscode.WorkspaceFolder): DebugConfiguration;
+}
+
+export interface PrepareContext {
+  // True when the launch is for debug, false for a normal run. Adapters use
+  // this to wire in JDWP agent flags, enable JMX differently, etc.
+  debug: boolean;
+  // Resolved debug port that the caller will attach to. Tomcat uses this to
+  // set JPDA_ADDRESS.
+  debugPort?: number;
+}
+
+export interface PrepareResult {
+  // Additional env vars merged on top of cfg.env + process.env.
+  env?: Record<string, string>;
+  // Working directory override. When set, takes precedence over ExecutionService's
+  // default buildCwd logic.
+  cwd?: string;
 }
 
 // A streaming patch: adapters emit one of these whenever a piece of detection

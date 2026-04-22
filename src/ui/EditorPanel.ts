@@ -73,7 +73,8 @@ export class EditorPanel {
     const seed = (this.args.seedDefaults ?? {}) as Record<string, unknown>;
     const type = ((seed.type as string | undefined) ?? this.args.existing?.type ?? 'npm') as
       | 'npm'
-      | 'spring-boot';
+      | 'spring-boot'
+      | 'tomcat';
 
     const baseCommon = {
       name: '',
@@ -89,12 +90,25 @@ export class EditorPanel {
     // would survive mergeBlanks (it's truthy) and poison the recompute path
     // when the project is actually Gradle.
     const isStreaming = Boolean(this.args.streaming);
-    const typeDefaults: Record<string, unknown> =
-      type === 'npm'
-        ? { scriptName: '', packageManager: 'npm' }
-        : isStreaming
-        ? { profiles: '' }
-        : { buildTool: 'maven', profiles: '' };
+    let typeDefaults: Record<string, unknown>;
+    if (type === 'npm') {
+      typeDefaults = { scriptName: '', packageManager: 'npm' };
+    } else if (type === 'tomcat') {
+      // Seed only the non-detected fields. tomcatHome / jdkPath / artifactPath
+      // all come from streaming detection and pre-filling them would poison
+      // mergeBlanks the same way buildTool did for Spring Boot.
+      typeDefaults = {
+        httpPort: 8080,
+        applicationContext: '/',
+        artifactKind: 'war',
+        buildTool: 'gradle',
+        gradleCommand: './gradlew',
+        reloadable: true,
+        rebuildOnSave: false,
+      };
+    } else {
+      typeDefaults = isStreaming ? { profiles: '' } : { buildTool: 'maven', profiles: '' };
+    }
 
     const seedTypeOptions = (seed.typeOptions as Record<string, unknown> | undefined) ?? {};
 
@@ -249,6 +263,34 @@ export class EditorPanel {
       programArgs: cfg.programArgs ?? '',
       vmArgs: cfg.vmArgs ?? '',
     };
+    if (cfg.type === 'tomcat') {
+      const to = cfg.typeOptions as Partial<import('../shared/types').TomcatTypeOptions> | undefined;
+      return {
+        ...common,
+        type: 'tomcat',
+        typeOptions: {
+          tomcatHome: to?.tomcatHome ?? '',
+          jdkPath: to?.jdkPath ?? '',
+          httpPort: to?.httpPort ?? 8080,
+          httpsPort: to?.httpsPort,
+          ajpPort: to?.ajpPort,
+          jmxPort: to?.jmxPort,
+          debugPort: to?.debugPort,
+          buildProjectPath: to?.buildProjectPath ?? '',
+          buildRoot: to?.buildRoot ?? '',
+          buildTool: (to?.buildTool ?? 'gradle') as 'gradle' | 'maven' | 'none',
+          gradleCommand: (to?.gradleCommand ?? './gradlew') as './gradlew' | 'gradle',
+          gradlePath: to?.gradlePath ?? '',
+          mavenPath: to?.mavenPath ?? '',
+          artifactPath: to?.artifactPath ?? '',
+          artifactKind: (to?.artifactKind ?? 'war') as 'war' | 'exploded',
+          applicationContext: to?.applicationContext ?? '/',
+          vmOptions: to?.vmOptions ?? '',
+          reloadable: to?.reloadable ?? true,
+          rebuildOnSave: to?.rebuildOnSave ?? false,
+        },
+      };
+    }
     if (cfg.type === 'spring-boot') {
       const to = cfg.typeOptions as Partial<import('../shared/types').SpringBootTypeOptions> | undefined;
       const buildTool = to?.buildTool ?? 'maven';

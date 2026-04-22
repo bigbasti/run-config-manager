@@ -58,6 +58,48 @@ const commonFields = {
   port: z.number().int().positive().optional(),
 };
 
+export const ArtifactKindSchema = z.enum(['war', 'exploded']);
+export const TomcatBuildToolSchema = z.enum(['gradle', 'maven', 'none']);
+
+export const TomcatTypeOptionsSchema = z
+  .object({
+    tomcatHome: z.string(),
+    jdkPath: z.string(),
+    httpPort: z.number().int().min(1).max(65535),
+    httpsPort: z.number().int().min(1).max(65535).optional(),
+    ajpPort: z.number().int().min(1).max(65535).optional(),
+    jmxPort: z.number().int().min(1).max(65535).optional(),
+    debugPort: z.number().int().min(1).max(65535).optional(),
+    buildProjectPath: z.string(),
+    buildRoot: z.string(),
+    buildTool: TomcatBuildToolSchema,
+    gradleCommand: GradleCommandSchema,
+    gradlePath: z.string(),
+    mavenPath: z.string(),
+    artifactPath: z.string(),
+    artifactKind: ArtifactKindSchema,
+    applicationContext: z.string(),
+    vmOptions: z.string(),
+    reloadable: z.boolean(),
+    rebuildOnSave: z.boolean(),
+  })
+  .superRefine((opts, ctx) => {
+    if (!opts.tomcatHome.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'tomcatHome is required',
+        path: ['tomcatHome'],
+      });
+    }
+    if (!opts.artifactPath.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'artifactPath is required — pick a WAR or exploded directory',
+        path: ['artifactPath'],
+      });
+    }
+  });
+
 export const RunConfigSchema = z.discriminatedUnion('type', [
   z.object({
     ...commonFields,
@@ -68,6 +110,11 @@ export const RunConfigSchema = z.discriminatedUnion('type', [
     ...commonFields,
     type: z.literal('spring-boot'),
     typeOptions: SpringBootTypeOptionsSchema,
+  }),
+  z.object({
+    ...commonFields,
+    type: z.literal('tomcat'),
+    typeOptions: TomcatTypeOptionsSchema,
   }),
 ]);
 

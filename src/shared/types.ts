@@ -1,4 +1,4 @@
-export type RunConfigType = 'npm' | 'spring-boot';
+export type RunConfigType = 'npm' | 'spring-boot' | 'tomcat';
 
 export type PackageManager = 'npm' | 'yarn' | 'pnpm';
 
@@ -59,9 +59,43 @@ interface RunConfigBase {
   port?: number;
 }
 
+export type ArtifactKind = 'war' | 'exploded';
+
+export interface TomcatTypeOptions {
+  tomcatHome: string;          // /opt/apache-tomcat-10.1.18 — empty = required to pick
+  jdkPath: string;             // same semantics as Spring Boot: empty = PATH
+  httpPort: number;
+  httpsPort?: number;
+  ajpPort?: number;
+  jmxPort?: number;
+  debugPort?: number;          // default 8000 when launched in debug mode
+  // Path to the Gradle/Maven project whose artifact we deploy. Relative to
+  // workspaceFolder. Empty = workspace root.
+  buildProjectPath: string;
+  // Where the build lives (for multi-module). Empty = same as buildProjectPath.
+  buildRoot: string;
+  // Whether to invoke Gradle/Maven before deploy, and what command to run.
+  buildTool: 'gradle' | 'maven' | 'none';
+  gradleCommand: './gradlew' | 'gradle';
+  gradlePath: string;
+  mavenPath: string;
+  // What to deploy: absolute path to a .war file OR an exploded directory.
+  artifactPath: string;
+  artifactKind: ArtifactKind;
+  // Context under which Tomcat mounts the deployment. "" / "/" = root context.
+  applicationContext: string;
+  // Extra -D / -X options appended to CATALINA_OPTS.
+  vmOptions: string;
+  // Tomcat <Context reloadable="true"/> — reloads webapp on class changes.
+  reloadable: boolean;
+  // Same as Spring Boot: spawn a `gradle -t :module:classes` side task.
+  rebuildOnSave: boolean;
+}
+
 export type RunConfig =
   | (RunConfigBase & { type: 'npm'; typeOptions: NpmTypeOptions })
-  | (RunConfigBase & { type: 'spring-boot'; typeOptions: SpringBootTypeOptions });
+  | (RunConfigBase & { type: 'spring-boot'; typeOptions: SpringBootTypeOptions })
+  | (RunConfigBase & { type: 'tomcat'; typeOptions: TomcatTypeOptions });
 
 export interface RunFile {
   version: 1;

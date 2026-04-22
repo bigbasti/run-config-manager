@@ -73,6 +73,9 @@ export class DebugService {
     if (conf.type === 'java' && conf.request === 'attach' && resolvedCfg.type === 'spring-boot') {
       return await this.startAttachFlow(resolvedCfg, folder, conf);
     }
+    if (conf.type === 'java' && conf.request === 'attach' && resolvedCfg.type === 'tomcat') {
+      return await this.startTomcatAttachFlow(resolvedCfg, folder, conf);
+    }
 
     // Launch-mode Java (java-main) or non-Java: startDebugging handles the JVM.
     try {
@@ -148,6 +151,44 @@ export class DebugService {
       return started;
     } catch (e) {
       log.error(`Debug attach failed for ${cfg.name}`, e);
+      vscode.window.showErrorMessage(`Debug attach failed: ${(e as Error).message}`);
+      await this.exec.stop(cfg.id);
+      return false;
+    }
+  }
+
+  // Tomcat: the adapter's prepareLaunch({debug:true}) does the JDWP wiring
+  // (via CATALINA_OPTS). We delegate JVM launch to exec.run and attach after
+  // a short delay.
+  private async startTomcatAttachFlow(
+    cfg: Extract<RunConfig, { type: 'tomcat' }>,
+    folder: vscode.WorkspaceFolder,
+    attachConf: vscode.DebugConfiguration,
+  ): Promise<boolean> {
+    if (!this.exec) {
+      vscode.window.showErrorMessage('Internal error: ExecutionService not wired into DebugService.');
+      return false;
+    }
+    const port = (attachConf.port as number | undefined) ?? cfg.typeOptions.debugPort ?? 8000;
+
+    const execution = await this.exec.run(cfg, folder, { debug: true, debugPort: port });
+    if (!execution) return false;
+
+    // Tomcat takes longer to boot than Spring Boot — wait 2s then attach; the
+    // debug client retries on connection-refused anyway.
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const started = await vscode.debug.startDebugging(folder, attachConf);
+      if (started) {
+        this.running.set(cfg.id, cfg.name);
+        this.emitter.fire(cfg.id);
+        log.info(`Debug attached to Tomcat: ${cfg.name} (port ${port})`);
+      } else {
+        await this.exec.stop(cfg.id);
+      }
+      return started;
+    } catch (e) {
+      log.error(`Tomcat debug attach failed for ${cfg.name}`, e);
       vscode.window.showErrorMessage(`Debug attach failed: ${(e as Error).message}`);
       await this.exec.stop(cfg.id);
       return false;
