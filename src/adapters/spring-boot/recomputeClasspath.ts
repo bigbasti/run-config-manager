@@ -30,11 +30,46 @@ export async function recomputeClasspath(args: RecomputeArgs): Promise<string> {
     log.warn(`Java extension classpath API failed: ${(e as Error).message}`);
   }
 
-  // 2. Build-tool probe.
-  if (args.buildTool === 'maven') {
+  // 2. Build-tool probe. Before trusting typeOptions.buildTool (which may be
+  // a stale 'maven' from an earlier detection path), verify against the actual
+  // files at buildRoot. If the claimed build tool doesn't match reality,
+  // swap to the one that does — this rescues configs created before the
+  // streaming-detect fix.
+  const effective = await detectEffectiveBuildTool(args.buildRoot, args.buildTool);
+  if (effective !== args.buildTool) {
+    log.warn(`buildTool was ${args.buildTool} but ${args.buildRoot.fsPath} looks like ${effective}; using ${effective}.`);
+  }
+  if (effective === 'maven') {
     return await mavenClasspath(args);
   }
-  return await gradleClasspath(args);
+  return await gradleClasspath({ ...args, buildTool: 'gradle' });
+}
+
+async function detectEffectiveBuildTool(
+  root: vscode.Uri,
+  claimed: 'maven' | 'gradle',
+): Promise<'maven' | 'gradle'> {
+  const hasPom = await fileExists(vscode.Uri.joinPath(root, 'pom.xml'));
+  const hasGradle =
+    (await fileExists(vscode.Uri.joinPath(root, 'build.gradle'))) ||
+    (await fileExists(vscode.Uri.joinPath(root, 'build.gradle.kts')));
+  // Prefer the claimed tool when both markers exist (users who ran polyglot
+  // builds know what they want). Otherwise use whatever's actually there.
+  if (hasPom && hasGradle) return claimed;
+  if (hasPom) return 'maven';
+  if (hasGradle) return 'gradle';
+  // Neither marker — fall back to the claim and let the command fail with a
+  // clear error.
+  return claimed;
+}
+
+async function fileExists(uri: vscode.Uri): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(uri);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function mavenClasspath(args: RecomputeArgs): Promise<string> {

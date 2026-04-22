@@ -83,9 +83,16 @@ export class EditorPanel {
       vmArgs: '',
     };
 
+    // For Spring Boot in streaming mode we deliberately leave build-tool
+    // fields unset so detection can populate them. Pre-filling 'maven' here
+    // would survive mergeBlanks (it's truthy) and poison the recompute path
+    // when the project is actually Gradle.
+    const isStreaming = Boolean(this.args.streaming);
     const typeDefaults: Record<string, unknown> =
       type === 'npm'
         ? { scriptName: '', packageManager: 'npm' }
+        : isStreaming
+        ? { profiles: '' }
         : { buildTool: 'maven', profiles: '' };
 
     const seedTypeOptions = (seed.typeOptions as Record<string, unknown> | undefined) ?? {};

@@ -83,8 +83,19 @@ export class SpringBootAdapter implements RuntimeAdapter {
     const info = await readSpringBootInfo(folder);
     if (!info || !info.hasSpringBootApplication) return;
 
-    const initialCtx: Record<string, unknown> = { buildTool: info.buildTool };
-    emit({ contextPatch: initialCtx, resolved: [] });
+    // Emit the build-tool verdict immediately so the form knows whether it's
+    // Maven or Gradle — this drives which recompute path we dispatch later.
+    emit({
+      contextPatch: { buildTool: info.buildTool },
+      defaultsPatch: {
+        type: 'spring-boot' as const,
+        typeOptions: {
+          buildTool: info.buildTool,
+          launchMode: info.buildTool,  // default launch mode follows build tool
+        } as any,
+      },
+      resolved: [],
+    });
 
     // gradleCommand + buildRoot: file-system stats, sub-second.
     (async () => {
