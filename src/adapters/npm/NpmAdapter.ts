@@ -32,6 +32,8 @@ export class NpmAdapter implements RuntimeAdapter {
           key: 'typeOptions.scriptName',
           label: 'Script',
           options: scripts.map(s => ({ value: s, label: s })),
+          help: 'Which package.json script to invoke. The dropdown lists every script we detected in your package.json.',
+          examples: ['start', 'dev', 'build'],
         }
       : {
           kind: 'text',
@@ -39,12 +41,29 @@ export class NpmAdapter implements RuntimeAdapter {
           label: 'Script',
           required: true,
           placeholder: 'start',
+          help: 'Name of the script to run. We did not detect any scripts in package.json — type the name you want to invoke (it will run as "<pm> run <name>").',
+          examples: ['start', 'dev', 'serve'],
         };
 
     return {
       common: [
-        { kind: 'text', key: 'name', label: 'Name', required: true, placeholder: 'My App' },
-        { kind: 'folderPath', key: 'projectPath', label: 'Project path', relativeTo: 'workspaceFolder' },
+        {
+          kind: 'text',
+          key: 'name',
+          label: 'Name',
+          required: true,
+          placeholder: 'My App',
+          help: 'Display name shown in the sidebar. Purely cosmetic — pick whatever you like.',
+          examples: ['Angular Dev', 'API server', 'Storybook'],
+        },
+        {
+          kind: 'folderPath',
+          key: 'projectPath',
+          label: 'Project path',
+          relativeTo: 'workspaceFolder',
+          help: 'Path to your project, relative to the workspace folder. Leave blank if package.json lives at the workspace root.',
+          examples: ['', 'web', 'packages/api'],
+        },
       ],
       typeSpecific: [
         scriptField,
@@ -57,13 +76,41 @@ export class NpmAdapter implements RuntimeAdapter {
             { value: 'yarn', label: 'yarn' },
             { value: 'pnpm', label: 'pnpm' },
           ],
+          help: 'Which package manager to invoke. We auto-detect from the lockfile (yarn.lock → yarn, pnpm-lock.yaml → pnpm, otherwise npm) — override only if needed.',
+          examples: ['npm', 'pnpm'],
         },
-        { kind: 'number', key: 'port', label: 'Port (optional)', min: 1, max: 65535 },
+        {
+          kind: 'number',
+          key: 'port',
+          label: 'Port (optional)',
+          min: 1,
+          max: 65535,
+          help: 'Informational only in v1 — lets you remember which port the app uses. The script itself is responsible for actually binding to this port.',
+          examples: ['4200', '3000', '8080'],
+        },
       ],
       advanced: [
-        { kind: 'kv', key: 'env', label: 'Environment variables' },
-        { kind: 'text', key: 'programArgs', label: 'Program args', placeholder: '--port 5000' },
-        { kind: 'text', key: 'vmArgs', label: 'VM args (unused for npm)' },
+        {
+          kind: 'kv',
+          key: 'env',
+          label: 'Environment variables',
+          help: 'Extra environment variables merged on top of VS Code\'s inherited env. Values are strings. Do not quote values here — the shell sees them literally.',
+          examples: ['NODE_ENV=development', 'DEBUG=app:*'],
+        },
+        {
+          kind: 'text',
+          key: 'programArgs',
+          label: 'Program args',
+          placeholder: '--port 5000',
+          help: 'Arguments passed to the script after "--". Quote values with spaces using double quotes.',
+          examples: ['--port 5000', '--open --host 0.0.0.0', '--title "My App"'],
+        },
+        {
+          kind: 'text',
+          key: 'vmArgs',
+          label: 'VM args (unused for npm)',
+          help: 'Reserved for future runtime types (e.g., Java -Xmx flags). Ignored for npm configurations.',
+        },
       ],
     };
   }
