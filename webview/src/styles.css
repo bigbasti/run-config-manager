@@ -59,3 +59,32 @@ button:hover { filter: brightness(1.1); }
   word-break: break-all;
   border-radius: 3px;
 }
+
+.container {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+.container .form { flex: 1; min-width: 0; }
+
+.help-panel {
+  width: 280px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 16px;
+  padding: 12px 14px;
+  background: var(--vscode-sideBar-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+.help-panel h4 { margin: 0 0 8px; font-size: 13px; }
+.help-panel p { margin: 0 0 10px; color: var(--vscode-foreground); }
+.help-panel .examples {
+  margin: 0; padding-left: 18px;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family);
+}
+.help-panel .empty { color: var(--vscode-descriptionForeground); font-style: italic; }

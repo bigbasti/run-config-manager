@@ -3,12 +3,11 @@ import type { RunConfig } from '../../src/shared/types';
 import type { FormSchema } from '../../src/shared/formSchema';
 import type { Inbound, Outbound } from '../../src/shared/protocol';
 import { ConfigForm } from './ConfigForm';
+import { HelpPanel } from './HelpPanel';
 
-// VS Code webview API handle (injected by the webview host).
 declare function acquireVsCodeApi(): { postMessage(msg: Outbound): void; getState<T>(): T; setState<T>(s: T): void };
 
 const vscode = acquireVsCodeApi();
-
 function post(msg: Outbound) { vscode.postMessage(msg); }
 
 export function App() {
@@ -16,6 +15,7 @@ export function App() {
   const [values, setValues] = useState<Partial<RunConfig>>({});
   const [mode, setMode] = useState<'create' | 'edit'>('create');
   const [error, setError] = useState<string | null>(null);
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent<Inbound>) => {
@@ -55,12 +55,16 @@ export function App() {
     <>
       <h2>{mode === 'create' ? 'New run configuration' : 'Edit run configuration'}</h2>
       {error && <div style={{ color: 'var(--vscode-errorForeground)', marginBottom: 8 }}>{error}</div>}
-      <ConfigForm
-        schema={schema}
-        values={values}
-        onChange={setValues}
-        onPickFolder={() => post({ cmd: 'pickFolder', current: values.projectPath })}
-      />
+      <div className="container">
+        <ConfigForm
+          schema={schema}
+          values={values}
+          onChange={setValues}
+          onPickFolder={() => post({ cmd: 'pickFolder', current: values.projectPath })}
+          onFocusField={setFocusedKey}
+        />
+        <HelpPanel schema={schema} focusedKey={focusedKey} />
+      </div>
       <div className="footer">
         <button className="secondary" onClick={() => post({ cmd: 'cancel' })}>Cancel</button>
         <button onClick={save}>Save</button>

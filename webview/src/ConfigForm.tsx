@@ -9,9 +9,10 @@ interface Props {
   values: Partial<RunConfig>;
   onChange: (next: Partial<RunConfig>) => void;
   onPickFolder: () => void;
+  onFocusField: (key: string | null) => void;
 }
 
-export function ConfigForm({ schema, values, onChange, onPickFolder }: Props) {
+export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField }: Props) {
   const preview = useMemo(() => {
     try { return buildCommandPreview(values as RunConfig); } catch { return ''; }
   }, [values]);
@@ -22,19 +23,26 @@ export function ConfigForm({ schema, values, onChange, onPickFolder }: Props) {
     <div className="form">
       <section>
         {schema.common.map(f => (
-          <Field key={f.key} field={f} values={values as any} onChange={change} onPickFolder={onPickFolder} />
+          <Field
+            key={f.key}
+            field={f}
+            values={values as any}
+            onChange={change}
+            onPickFolder={onPickFolder}
+            onFocusField={onFocusField}
+          />
         ))}
       </section>
       <section>
         <h3>Run configuration</h3>
         {schema.typeSpecific.map(f => (
-          <Field key={f.key} field={f} values={values as any} onChange={change} />
+          <Field key={f.key} field={f} values={values as any} onChange={change} onFocusField={onFocusField} />
         ))}
       </section>
       <section>
         <h3>Advanced</h3>
         {schema.advanced.map(f => (
-          <Field key={f.key} field={f} values={values as any} onChange={change} />
+          <Field key={f.key} field={f} values={values as any} onChange={change} onFocusField={onFocusField} />
         ))}
       </section>
       <div className="preview">{preview}</div>
