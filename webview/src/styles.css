@@ -49,6 +49,27 @@ button:hover { filter: brightness(1.1); }
 
 .footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 
+.side-column {
+  width: 280px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.side-column .help-panel {
+  width: 100%;
+  position: static;
+  top: auto;
+}
+.side-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.side-actions button { flex: 1; }
+
 .preview {
   margin-top: 16px;
   padding: 10px 12px;

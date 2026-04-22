@@ -117,11 +117,13 @@ export function App() {
           onFieldAction={onFieldAction}
           busyActionId={busyActionId}
         />
-        <HelpPanel schema={schema} focusedKey={focusedKey} />
-      </div>
-      <div className="footer">
-        <button className="secondary" onClick={() => post({ cmd: 'cancel' })}>Cancel</button>
-        <button onClick={save}>Save</button>
+        <div className="side-column">
+          <HelpPanel schema={schema} focusedKey={focusedKey} />
+          <div className="side-actions">
+            <button className="secondary" onClick={() => post({ cmd: 'cancel' })}>Cancel</button>
+            <button onClick={save}>Save</button>
+          </div>
+        </div>
       </div>
     </>
   );
