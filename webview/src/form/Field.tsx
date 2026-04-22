@@ -3,6 +3,7 @@ import { getPath, setPath } from '../state';
 import { KvEditor } from './KvEditor';
 import { FolderPathInput } from './FolderPathInput';
 import { SelectOrCustom } from './SelectOrCustom';
+import { CsvChecklist } from './CsvChecklist';
 
 interface Props {
   field: FormField;
@@ -101,6 +102,17 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
     case 'selectOrCustom':
       return (
         <SelectOrCustom
+          value={(v as string) ?? ''}
+          options={field.options}
+          placeholder={field.placeholder}
+          onChange={set}
+          onFocus={h.focus}
+          onBlur={h.blur}
+        />
+      );
+    case 'csvChecklist':
+      return (
+        <CsvChecklist
           value={(v as string) ?? ''}
           options={field.options}
           placeholder={field.placeholder}

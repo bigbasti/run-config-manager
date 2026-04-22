@@ -8,6 +8,7 @@ import { detectJdks } from './detectJdks';
 import { suggestClasspath } from './suggestClasspath';
 import { detectBuildTools } from './detectBuildTools';
 import { findGradleRoot, findMavenRoot } from './findBuildRoot';
+import { findSpringProfiles } from './findProfiles';
 import { splitArgs } from '../npm/splitArgs';
 
 export class SpringBootAdapter implements RuntimeAdapter {
@@ -20,7 +21,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
     if (!info) return null;
     if (!info.hasSpringBootApplication) return null;
 
-    const [mainClasses, gradleCommand, jdks, classpath, buildTools, gradleRoot, mavenRoot] =
+    const [mainClasses, gradleCommand, jdks, classpath, buildTools, gradleRoot, mavenRoot, profiles] =
       await Promise.all([
         findMainClasses(folder),
         detectGradleCommand(folder),
@@ -29,6 +30,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
         detectBuildTools(),
         info.buildTool === 'gradle' ? findGradleRoot(folder) : Promise.resolve(folder),
         info.buildTool === 'maven' ? findMavenRoot(folder) : Promise.resolve(folder),
+        findSpringProfiles(folder),
       ]);
 
     // If the user selected a sub-module, the build root might be a parent dir.
@@ -65,6 +67,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
         gradleInstalls: buildTools.gradleInstalls,
         mavenInstalls: buildTools.mavenInstalls,
         buildRoot,
+        profiles,
       },
     };
   }
@@ -86,6 +89,8 @@ export class SpringBootAdapter implements RuntimeAdapter {
     const jdkOptions = jdks.map(p => ({ value: p, label: p }));
     const gradleInstallOptions = gradleInstalls.map(p => ({ value: p, label: p }));
     const mavenInstallOptions = mavenInstalls.map(p => ({ value: p, label: p }));
+    const detectedProfiles = (context.profiles as string[] | undefined) ?? [];
+    const profileOptions = detectedProfiles.map(p => ({ value: p, label: p }));
 
     return {
       common: [
@@ -118,11 +123,16 @@ export class SpringBootAdapter implements RuntimeAdapter {
           help: `How to start the app. Maven/Gradle invoke the build tool's Spring Boot task (slower but picks up source changes). java-main runs the compiled class directly — fastest, but you must build first. Detected build tool: ${detectedBuildTool}.`,
         },
         {
-          kind: 'text',
+          kind: 'csvChecklist',
           key: 'typeOptions.profiles',
           label: 'Active profiles',
-          placeholder: 'dev,local',
-          help: 'Spring profiles to activate (comma-separated).',
+          options: profileOptions,
+          placeholder: detectedProfiles.length
+            ? 'Custom profiles (comma-separated)'
+            : 'dev,local',
+          help: detectedProfiles.length
+            ? `Detected ${detectedProfiles.length} profile(s) from application-*.{properties,yml,yaml}. Check the ones you want active; add custom ones in the text field.`
+            : 'Spring profiles to activate (comma-separated). No application-<profile>.properties files detected — type profile names manually.',
           examples: ['dev', 'dev,local', 'prod'],
         },
       ],
