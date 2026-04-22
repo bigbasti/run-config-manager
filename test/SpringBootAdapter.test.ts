@@ -4,7 +4,7 @@ import type { RunConfig } from '../src/shared/types';
 
 const adapter = new SpringBootAdapter();
 
-function cfg(overrides: Partial<RunConfig> = {}): RunConfig {
+function cfg(overrides: any = {}): RunConfig {
   const base = {
     id: 'bbbbbbbb-1111-2222-3333-444444444444',
     name: 'x',
@@ -14,9 +14,22 @@ function cfg(overrides: Partial<RunConfig> = {}): RunConfig {
     env: {} as Record<string, string>,
     programArgs: '',
     vmArgs: '',
-    typeOptions: { buildTool: 'maven' as const, profiles: '' },
+    typeOptions: {
+      launchMode: 'maven' as const,
+      buildTool: 'maven' as const,
+      gradleCommand: './gradlew' as const,
+      profiles: '',
+      mainClass: '',
+      classpath: '',
+      jdkPath: '',
+      module: '',
+    },
   };
-  return { ...base, ...overrides } as RunConfig;
+  return {
+    ...base,
+    ...overrides,
+    typeOptions: { ...base.typeOptions, ...(overrides.typeOptions ?? {}) },
+  } as RunConfig;
 }
 
 describe('SpringBootAdapter.detect', () => {
@@ -73,7 +86,7 @@ describe('SpringBootAdapter.buildCommand (Maven)', () => {
   });
 
   test('adds -Dspring-boot.run.profiles when profiles set', () => {
-    const r = adapter.buildCommand(cfg({ typeOptions: { buildTool: 'maven', profiles: 'dev,local' } }));
+    const r = adapter.buildCommand(cfg({ typeOptions: { launchMode: 'maven', profiles: 'dev,local' } }));
     expect(r.args).toContain('-Dspring-boot.run.profiles=dev,local');
   });
 
@@ -90,19 +103,19 @@ describe('SpringBootAdapter.buildCommand (Maven)', () => {
 
 describe('SpringBootAdapter.buildCommand (Gradle)', () => {
   test('basic ./gradlew bootRun', () => {
-    const r = adapter.buildCommand(cfg({ typeOptions: { buildTool: 'gradle', profiles: '' } }));
+    const r = adapter.buildCommand(cfg({ typeOptions: { launchMode: 'gradle', buildTool: 'gradle', profiles: '' } }));
     expect(r.command).toBe('./gradlew');
     expect(r.args).toEqual(['bootRun']);
   });
 
   test('adds --args with profile flag when profiles set', () => {
-    const r = adapter.buildCommand(cfg({ typeOptions: { buildTool: 'gradle', profiles: 'dev' } }));
+    const r = adapter.buildCommand(cfg({ typeOptions: { launchMode: 'gradle', buildTool: 'gradle', profiles: 'dev' } }));
     expect(r.args.some(a => a.startsWith("--args='--spring.profiles.active=dev"))).toBe(true);
   });
 
   test('merges program args into --args', () => {
     const r = adapter.buildCommand(cfg({
-      typeOptions: { buildTool: 'gradle', profiles: 'dev' },
+      typeOptions: { launchMode: 'gradle', buildTool: 'gradle', profiles: 'dev' },
       programArgs: '--server.port=9090',
     }));
     const argsFlag = r.args.find(a => a.startsWith('--args='));
@@ -114,7 +127,7 @@ describe('SpringBootAdapter.buildCommand (Gradle)', () => {
 
 describe('SpringBootAdapter form schema', () => {
   test('every field has non-empty help', () => {
-    const schema = adapter.getFormSchema({ buildTool: 'maven' });
+    const schema = adapter.getFormSchema({ buildTool: 'maven', mainClasses: [], jdks: [] });
     const allFields = [...schema.common, ...schema.typeSpecific, ...schema.advanced];
     for (const f of allFields) {
       expect(typeof f.help).toBe('string');
@@ -122,10 +135,17 @@ describe('SpringBootAdapter form schema', () => {
     }
   });
 
-  test('typeSpecific fields include buildTool, profiles, port', () => {
-    const schema = adapter.getFormSchema({ buildTool: 'maven' });
+  test('typeSpecific fields include new fields', () => {
+    const schema = adapter.getFormSchema({ buildTool: 'maven', mainClasses: [], jdks: [] });
     const keys = schema.typeSpecific.map(f => f.key);
-    expect(keys).toEqual(['typeOptions.buildTool', 'typeOptions.profiles', 'port']);
+    expect(keys).toEqual(expect.arrayContaining([
+      'typeOptions.gradleCommand',
+      'typeOptions.jdkPath',
+      'typeOptions.mainClass',
+      'typeOptions.classpath',
+      'typeOptions.module',
+      'port',
+    ]));
   });
 });
 
