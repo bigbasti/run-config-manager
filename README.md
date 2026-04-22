@@ -44,8 +44,10 @@ In VS Code, open the Command Palette → **Extensions: Install from VSIX…** �
 1. Open any folder containing a `package.json` (or a multi-root workspace).
 2. Click the **Run Configurations** icon in the Activity Bar.
 3. Click **+** in the view title.
-4. Pick a workspace folder (if multi-root), then a project folder, then a configuration type (`npm / Node.js`).
-5. The form is pre-filled from your `package.json` scripts. Adjust as needed and click **Save**.
+4. Pick a workspace folder (if multi-root), then a project folder, then a configuration type:
+   - **npm / Node.js** — runs `npm run <script>` for Angular / Node apps.
+   - **Spring Boot** — choose between Maven (`mvn spring-boot:run`), Gradle (`gradle bootRun`), or **java-main** (`java -cp ... MainClass`, IntelliJ-style). Main classes and JDKs are auto-detected.
+5. The form is pre-filled from your `package.json` scripts (npm) or auto-detected classes (Spring Boot). Adjust as needed and click **Save**.
 6. Back in the sidebar, each configuration has inline ▶️ Run, 🐞 Debug, ✏️ Edit, 🗑 Delete actions. While running, the ▶️ switches to ⏹ Stop.
 
 ## Where are configurations stored?
@@ -68,3 +70,5 @@ In VS Code, open the Command Palette → **Extensions: Install from VSIX…** �
 - Compound configurations (run multiple at once).
 - Persistent "last run" state across window reloads.
 - `${workspaceFolder}` variable expansion in env values.
+- Java debug (Spring Boot launches run-only in v1; debug is a future sub-project).
+- JPMS `--module-path` for java-main launch.

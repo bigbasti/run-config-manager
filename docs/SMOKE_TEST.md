@@ -83,3 +83,20 @@ Run through this list before tagging a release. Mark items PASS / FAIL with note
 - [ ] Repeat: corrupt an entry; click ✏️ Edit instead of Fix. Webview opens with recovered data. Save → entry becomes valid.
 - [ ] Repeat: corrupt an entry; click 📄 Open run.json. The file opens in the editor.
 - [ ] Repeat: corrupt an entry; click 🗑 Delete. Entry is removed from sidebar AND run.json.
+
+## 15. Spring Boot — launch modes
+- [ ] Existing spring-boot configs from before 1c still load (no warning toast about invalid).
+- [ ] Add a new config on a Spring Boot project:
+  - [ ] The form shows a "Launch mode" dropdown with Maven / Gradle / java-main.
+  - [ ] For Gradle: the "Gradle command" dropdown is visible only in Gradle mode.
+  - [ ] For java-main: JDK, Main class, Classpath, "Recompute classpath" button appear.
+  - [ ] The Main class dropdown is populated with 🚀-prefixed @SpringBootApplication candidates.
+  - [ ] The JDK dropdown includes JAVA_HOME + any /usr/lib/jvm entries.
+- [ ] Selecting "Custom…" in Main class or JDK swaps to a text input.
+- [ ] Run each mode:
+  - [ ] Maven mode: terminal starts `mvn spring-boot:run …`.
+  - [ ] Gradle mode with wrapper: `./gradlew bootRun`.
+  - [ ] Gradle mode when wrapper is missing: form defaults `gradleCommand` to `gradle`; terminal starts `gradle bootRun`.
+  - [ ] java-main mode: terminal starts `/jdk/bin/java -cp … com.example.App`.
+- [ ] "Recompute classpath" button invokes Maven/Gradle and populates the textarea.
+- [ ] Stop button stops Maven/Gradle/java-main processes (consistent with other modes).
