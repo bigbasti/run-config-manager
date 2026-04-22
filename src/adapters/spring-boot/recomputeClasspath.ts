@@ -1,18 +1,22 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import { pathSeparator } from './suggestClasspath';
+import { gradleModulePrefix } from './findBuildRoot';
 import { log } from '../../utils/logger';
 
 export interface RecomputeArgs {
-  projectRoot: vscode.Uri;
+  projectRoot: vscode.Uri;       // submodule we care about (for classpath output)
+  buildRoot: vscode.Uri;         // where to invoke the build tool (may equal projectRoot)
   buildTool: 'maven' | 'gradle';
   gradleCommand: './gradlew' | 'gradle';
-  jdkPath: string;  // optional; sets JAVA_HOME for the build tool
+  gradlePath: string;            // install dir; used when gradleCommand === 'gradle'
+  mavenPath: string;             // install dir; used for 'mvn' binary
+  jdkPath: string;               // sets JAVA_HOME for the build tool
 }
 
 // Resolves to a classpath string. Times out after 30 seconds.
 export async function recomputeClasspath(args: RecomputeArgs): Promise<string> {
-  // 1. Try Java extension first.
+  // 1. Try Java extension first — it knows the whole project graph.
   try {
     const ext = vscode.extensions.getExtension('redhat.java');
     if (ext) {
@@ -28,53 +32,77 @@ export async function recomputeClasspath(args: RecomputeArgs): Promise<string> {
 
   // 2. Build-tool probe.
   if (args.buildTool === 'maven') {
-    return await mavenClasspath(args.projectRoot, args.jdkPath);
+    return await mavenClasspath(args);
   }
-  return await gradleClasspath(args.projectRoot, args.gradleCommand, args.jdkPath);
+  return await gradleClasspath(args);
 }
 
-async function mavenClasspath(projectRoot: vscode.Uri, jdkPath: string): Promise<string> {
+async function mavenClasspath(args: RecomputeArgs): Promise<string> {
+  const mvn = args.mavenPath ? `${args.mavenPath.replace(/[/\\]$/, '')}/bin/mvn` : 'mvn';
+  // Run from the submodule dir — maven resolves the reactor parent on its own.
   const cpOut = await spawnCollect(
-    'mvn',
+    mvn,
     ['-q', 'dependency:build-classpath', '-DincludeScope=runtime', '-Dmdep.outputFile=/dev/stdout'],
-    projectRoot.fsPath,
-    jdkPath,
+    args.projectRoot.fsPath,
+    args.jdkPath,
   );
   const raw = cpOut.trim();
   const classes = 'target/classes';
   return raw ? `${classes}${pathSeparator()}${raw}` : classes;
 }
 
-async function gradleClasspath(
-  projectRoot: vscode.Uri,
-  gradleCommand: './gradlew' | 'gradle',
-  jdkPath: string,
-): Promise<string> {
+async function gradleClasspath(args: RecomputeArgs): Promise<string> {
+  // Register a task that prints the runtimeClasspath for the CURRENT project
+  // (which will be the submodule when we invoke `:<module>:<task>`).
   const init = `
     allprojects {
       tasks.register('__printRuntimeClasspath') {
         doLast {
           def cp = configurations.findByName('runtimeClasspath')
           if (cp != null) {
+            println 'RCM_CP_BEGIN'
             println cp.asPath
+            println 'RCM_CP_END'
           } else {
+            println 'RCM_CP_BEGIN'
             println ''
+            println 'RCM_CP_END'
           }
         }
       }
     }
   `;
-  const initFile = vscode.Uri.joinPath(projectRoot, '.vscode', 'rcm-cp-init.gradle');
+  // Write the init script somewhere user-writable. We use the project's .vscode
+  // dir since that's guaranteed to be writable if run.json lives there.
+  const initFile = vscode.Uri.joinPath(args.projectRoot, '.vscode', 'rcm-cp-init.gradle');
   await vscode.workspace.fs.writeFile(initFile, new TextEncoder().encode(init));
+
+  // Compute the Gradle task path. For multi-module projects where buildRoot !=
+  // projectRoot, we want `:api:__printRuntimeClasspath`. For a single-module
+  // project we want the unqualified task name.
+  const prefix = gradleModulePrefix(args.buildRoot.fsPath, args.projectRoot.fsPath);
+  const taskName = prefix
+    ? `${prefix}:__printRuntimeClasspath`
+    : '__printRuntimeClasspath';
+
+  // Pick binary: prefer wrapper when user chose it; otherwise gradlePath/bin.
+  const gradleBinary =
+    args.gradleCommand === './gradlew'
+      ? './gradlew'
+      : args.gradlePath
+      ? `${args.gradlePath.replace(/[/\\]$/, '')}/bin/gradle`
+      : 'gradle';
 
   try {
     const cpOut = await spawnCollect(
-      gradleCommand,
-      ['-q', '--init-script', initFile.fsPath, '__printRuntimeClasspath'],
-      projectRoot.fsPath,
-      jdkPath,
+      gradleBinary,
+      ['-q', '--console=plain', '--init-script', initFile.fsPath, taskName],
+      args.buildRoot.fsPath,
+      args.jdkPath,
     );
-    const raw = cpOut.split('\n').pop()?.trim() ?? '';
+    // Extract between the sentinels so we don't pick up any stray log output.
+    const m = cpOut.match(/RCM_CP_BEGIN\s*\n([\s\S]*?)\n?RCM_CP_END/);
+    const raw = (m?.[1] ?? '').trim();
     const classes = 'build/classes/java/main';
     return raw ? `${classes}${pathSeparator()}${raw}` : classes;
   } finally {

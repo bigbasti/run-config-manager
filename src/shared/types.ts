@@ -23,6 +23,14 @@ export interface SpringBootTypeOptions {
   classpath: string;
   jdkPath: string;
   module: string;
+  // New in 1c.1: path to the build tool's executable. Empty means "use the
+  // gradleCommand / 'mvn' off PATH" (legacy behavior).
+  gradlePath: string;
+  mavenPath: string;
+  // Path to the Gradle/Maven project root (where settings.gradle[.kts] / pom.xml
+  // with <modules> lives). Empty means "same as projectPath". The walker fills
+  // this on detect; user can override.
+  buildRoot: string;
 }
 
 export type TypeOptions =

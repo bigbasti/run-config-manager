@@ -22,6 +22,9 @@ export const SpringBootTypeOptionsSchema = z
     classpath: z.string(),
     jdkPath: z.string(),
     module: z.string(),
+    gradlePath: z.string(),
+    mavenPath: z.string(),
+    buildRoot: z.string(),
   })
   .superRefine((opts, ctx) => {
     if (opts.launchMode === 'java-main') {

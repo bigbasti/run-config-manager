@@ -125,10 +125,15 @@ export class EditorPanel {
         if (msg.config.type !== 'spring-boot') return;
         const to = msg.config.typeOptions;
         try {
+          const projectRoot = resolveProjectUri(this.args.folder, msg.config.projectPath);
+          const buildRoot = to.buildRoot ? vscode.Uri.file(to.buildRoot) : projectRoot;
           const cp = await recomputeClasspath({
-            projectRoot: resolveProjectUri(this.args.folder, msg.config.projectPath),
+            projectRoot,
+            buildRoot,
             buildTool: to.buildTool,
             gradleCommand: to.gradleCommand,
+            gradlePath: to.gradlePath,
+            mavenPath: to.mavenPath,
             jdkPath: to.jdkPath,
           });
           const reply: Inbound = { cmd: 'classpathComputed', classpath: cp };
@@ -183,6 +188,9 @@ export class EditorPanel {
           classpath: to?.classpath ?? '',
           jdkPath: to?.jdkPath ?? '',
           module: to?.module ?? '',
+          gradlePath: to?.gradlePath ?? '',
+          mavenPath: to?.mavenPath ?? '',
+          buildRoot: to?.buildRoot ?? '',
         },
       };
     }

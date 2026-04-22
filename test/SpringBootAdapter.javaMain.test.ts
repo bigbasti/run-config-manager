@@ -22,6 +22,9 @@ function cfg(overrides: any = {}): RunConfig {
       classpath: 'target/classes:lib/*',
       jdkPath: '',
       module: '',
+      gradlePath: '',
+      mavenPath: '',
+      buildRoot: '',
     },
   };
   return {

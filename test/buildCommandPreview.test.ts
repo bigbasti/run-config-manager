@@ -51,6 +51,9 @@ const springBase = {
     classpath: '',
     jdkPath: '',
     module: '',
+    gradlePath: '',
+    mavenPath: '',
+    buildRoot: '',
   } satisfies SpringBootTypeOptions,
 };
 

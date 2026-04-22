@@ -31,6 +31,10 @@ export function migrateSpringBootConfig(raw: unknown): unknown {
       classpath: typeof to.classpath === 'string' ? to.classpath : '',
       jdkPath: typeof to.jdkPath === 'string' ? to.jdkPath : '',
       module: typeof to.module === 'string' ? to.module : '',
+      // 1c.1 additions — legacy configs default to empty.
+      gradlePath: typeof to.gradlePath === 'string' ? to.gradlePath : '',
+      mavenPath: typeof to.mavenPath === 'string' ? to.mavenPath : '',
+      buildRoot: typeof to.buildRoot === 'string' ? to.buildRoot : '',
     },
   };
 }

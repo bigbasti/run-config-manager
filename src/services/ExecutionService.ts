@@ -30,7 +30,10 @@ export class ExecutionService {
     }
 
     const { command, args } = adapter.buildCommand(cfg);
-    const cwd = resolveProjectUri(folder, cfg.projectPath).fsPath;
+    // Spring Boot's Gradle/Maven modes run best from the build-tool root
+    // (where settings.gradle / reactor pom.xml lives). The adapter stores that
+    // in typeOptions.buildRoot when multi-module; fall back to projectPath.
+    const cwd = buildCwd(cfg, folder);
 
     const shell = new vscode.ShellExecution(command, args, {
       cwd,
@@ -86,4 +89,17 @@ export class ExecutionService {
     this.taskEndSub.dispose();
     this.emitter.dispose();
   }
+}
+
+// For Spring Boot maven/gradle modes, prefer the absolute `buildRoot` so
+// multi-module projects pick up the correct settings.gradle / reactor pom.xml.
+// java-main mode still runs from the project path (classpath is absolute-ish).
+function buildCwd(cfg: RunConfig, folder: vscode.WorkspaceFolder): string {
+  if (cfg.type === 'spring-boot') {
+    const to = cfg.typeOptions;
+    if ((to.launchMode === 'maven' || to.launchMode === 'gradle') && to.buildRoot) {
+      return to.buildRoot;
+    }
+  }
+  return resolveProjectUri(folder, cfg.projectPath).fsPath;
 }

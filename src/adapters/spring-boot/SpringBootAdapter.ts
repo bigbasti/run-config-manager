@@ -6,6 +6,8 @@ import { readSpringBootInfo } from './detectSpringBoot';
 import { findMainClasses, type MainClassCandidate } from './findMainClasses';
 import { detectJdks } from './detectJdks';
 import { suggestClasspath } from './suggestClasspath';
+import { detectBuildTools } from './detectBuildTools';
+import { findGradleRoot, findMavenRoot } from './findBuildRoot';
 import { splitArgs } from '../npm/splitArgs';
 
 export class SpringBootAdapter implements RuntimeAdapter {
@@ -18,32 +20,51 @@ export class SpringBootAdapter implements RuntimeAdapter {
     if (!info) return null;
     if (!info.hasSpringBootApplication) return null;
 
-    const [mainClasses, gradleCommand, jdks, classpath] = await Promise.all([
-      findMainClasses(folder),
-      detectGradleCommand(folder),
-      detectJdks(),
-      suggestClasspath(folder, info.buildTool),
-    ]);
+    const [mainClasses, gradleCommand, jdks, classpath, buildTools, gradleRoot, mavenRoot] =
+      await Promise.all([
+        findMainClasses(folder),
+        detectGradleCommand(folder),
+        detectJdks(),
+        suggestClasspath(folder, info.buildTool),
+        detectBuildTools(),
+        info.buildTool === 'gradle' ? findGradleRoot(folder) : Promise.resolve(folder),
+        info.buildTool === 'maven' ? findMavenRoot(folder) : Promise.resolve(folder),
+      ]);
+
+    // If the user selected a sub-module, the build root might be a parent dir.
+    // Store it so recompute / run can cd to the right place.
+    const buildRoot = info.buildTool === 'gradle' ? gradleRoot.fsPath : mavenRoot.fsPath;
+    // If the wrapper exists in the detected root (not the sub-module), prefer it.
+    const effectiveGradleCommand: 'gradle' | './gradlew' =
+      info.buildTool === 'gradle' && (await fileExists(vscode.Uri.joinPath(gradleRoot, 'gradlew')))
+        ? './gradlew'
+        : gradleCommand;
 
     return {
       defaults: {
         type: 'spring-boot',
         typeOptions: {
-          launchMode: info.buildTool, // default: same as the detected build tool
+          launchMode: info.buildTool,
           buildTool: info.buildTool,
-          gradleCommand,
+          gradleCommand: effectiveGradleCommand,
           profiles: '',
           mainClass: mainClasses[0]?.fqn ?? '',
           classpath,
           jdkPath: jdks[0] ?? '',
           module: '',
+          gradlePath: buildTools.gradleInstalls[0] ?? '',
+          mavenPath: buildTools.mavenInstalls[0] ?? '',
+          buildRoot: buildRoot === folder.fsPath ? '' : buildRoot,
         },
       },
       context: {
         buildTool: info.buildTool,
-        gradleCommand,
+        gradleCommand: effectiveGradleCommand,
         mainClasses,
         jdks,
+        gradleInstalls: buildTools.gradleInstalls,
+        mavenInstalls: buildTools.mavenInstalls,
+        buildRoot,
       },
     };
   }
@@ -51,8 +72,11 @@ export class SpringBootAdapter implements RuntimeAdapter {
   getFormSchema(context: Record<string, unknown>): FormSchema {
     const mainClasses = (context.mainClasses as MainClassCandidate[] | undefined) ?? [];
     const jdks = (context.jdks as string[] | undefined) ?? [];
+    const gradleInstalls = (context.gradleInstalls as string[] | undefined) ?? [];
+    const mavenInstalls = (context.mavenInstalls as string[] | undefined) ?? [];
     const detectedBuildTool = (context.buildTool as string | undefined) ?? 'maven';
     const detectedGradle = (context.gradleCommand as string | undefined) ?? './gradlew';
+    const detectedBuildRoot = (context.buildRoot as string | undefined) ?? '';
 
     const mainClassOptions = mainClasses.map(m => ({
       value: m.fqn,
@@ -60,6 +84,8 @@ export class SpringBootAdapter implements RuntimeAdapter {
     }));
 
     const jdkOptions = jdks.map(p => ({ value: p, label: p }));
+    const gradleInstallOptions = gradleInstalls.map(p => ({ value: p, label: p }));
+    const mavenInstallOptions = mavenInstalls.map(p => ({ value: p, label: p }));
 
     return {
       common: [
@@ -111,6 +137,34 @@ export class SpringBootAdapter implements RuntimeAdapter {
           ],
           help: `Which gradle binary to invoke. Detected: ${detectedGradle}. Override if the wrapper is missing or out-of-date.`,
           dependsOn: { key: 'typeOptions.launchMode', equals: 'gradle' },
+        },
+        {
+          kind: 'selectOrCustom',
+          key: 'typeOptions.gradlePath',
+          label: 'Gradle installation',
+          options: gradleInstallOptions,
+          placeholder: '/opt/gradle/gradle-7.6.2',
+          help: `Gradle install directory. Used only when "Gradle command" is set to "gradle" (system). Leave blank to use "gradle" from PATH. Auto-detected installs appear in the dropdown.`,
+          examples: ['/opt/gradle/gradle-8.5', '/usr/share/gradle'],
+          dependsOn: { key: 'typeOptions.gradleCommand', equals: 'gradle' },
+        },
+        {
+          kind: 'selectOrCustom',
+          key: 'typeOptions.mavenPath',
+          label: 'Maven installation',
+          options: mavenInstallOptions,
+          placeholder: '/opt/maven/apache-maven-3.9.6',
+          help: 'Maven install directory. Leave blank to use "mvn" from PATH.',
+          examples: ['/opt/maven/apache-maven-3.9.6', '/usr/share/maven'],
+          dependsOn: { key: 'typeOptions.launchMode', equals: 'maven' },
+        },
+        {
+          kind: 'text',
+          key: 'typeOptions.buildRoot',
+          label: 'Build root',
+          placeholder: '(auto-detected)',
+          help: `Absolute path to the Gradle/Maven project root (where settings.gradle / reactor pom.xml lives). Detected: ${detectedBuildRoot || '(same as project path)'}. Override only if auto-detection picked wrong.`,
+          dependsOn: { key: 'typeOptions.launchMode', equals: ['maven', 'gradle', 'java-main'] },
         },
         {
           kind: 'selectOrCustom',
@@ -211,6 +265,25 @@ async function detectGradleCommand(folder: vscode.Uri): Promise<'./gradlew' | 'g
   }
 }
 
+async function fileExists(uri: vscode.Uri): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(uri);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function mavenBinary(to: Extract<RunConfig, { type: 'spring-boot' }>['typeOptions']): string {
+  return to.mavenPath ? `${to.mavenPath.replace(/[/\\]$/, '')}/bin/mvn` : 'mvn';
+}
+
+function gradleBinary(to: Extract<RunConfig, { type: 'spring-boot' }>['typeOptions']): string {
+  // If user picked wrapper, trust it — cwd is set to buildRoot so `./gradlew` resolves.
+  if (to.gradleCommand === './gradlew') return './gradlew';
+  return to.gradlePath ? `${to.gradlePath.replace(/[/\\]$/, '')}/bin/gradle` : 'gradle';
+}
+
 function buildMaven(cfg: Extract<RunConfig, { type: 'spring-boot' }>) {
   const to = cfg.typeOptions;
   const programArgs = splitArgs(cfg.programArgs ?? '');
@@ -223,7 +296,7 @@ function buildMaven(cfg: Extract<RunConfig, { type: 'spring-boot' }>) {
     args.push(`-Dspring-boot.run.arguments=${shellQuote(programArgs.join(' '))}`);
   }
   if (vmArgs) args.push(`-Dspring-boot.run.jvmArguments=${shellQuote(vmArgs)}`);
-  return { command: 'mvn', args };
+  return { command: mavenBinary(to), args };
 }
 
 function buildGradle(cfg: Extract<RunConfig, { type: 'spring-boot' }>) {
@@ -236,7 +309,7 @@ function buildGradle(cfg: Extract<RunConfig, { type: 'spring-boot' }>) {
   if (profiles) runArgs.push(`--spring.profiles.active=${profiles}`);
   runArgs.push(...programArgs);
   if (runArgs.length > 0) args.push(`--args=${shellQuote(runArgs.join(' '))}`);
-  return { command: to.gradleCommand, args };
+  return { command: gradleBinary(to), args };
 }
 
 function buildJavaMain(cfg: Extract<RunConfig, { type: 'spring-boot' }>) {
