@@ -228,3 +228,7 @@ export class ThemeIcon {
 export const RelativePattern = class {
   constructor(public base: any, public pattern: string) {}
 };
+
+export const extensions = {
+  getExtension: jest.fn((_id: string) => undefined),
+};
