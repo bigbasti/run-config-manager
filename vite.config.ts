@@ -11,9 +11,12 @@ export default defineConfig({
     rollupOptions: {
       input: resolve(__dirname, 'webview/index.html'),
       output: {
-        entryFileNames: 'assets/[name].js',
+        entryFileNames: 'assets/main.js',
         chunkFileNames: 'assets/[name].js',
-        assetFileNames: 'assets/[name][extname]',
+        assetFileNames: (info) => {
+          if (info.name && info.name.endsWith('.css')) return 'assets/main.css';
+          return 'assets/[name][extname]';
+        },
       },
     },
     sourcemap: true,
