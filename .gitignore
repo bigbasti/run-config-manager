@@ -1,0 +1,6 @@
+node_modules
+out
+media/webview
+*.vsix
+.DS_Store
+coverage
