@@ -6,6 +6,9 @@ type BaseFieldMeta = {
   // When set, the webview hides this field unless the value at `key` in the
   // current form state equals `equals` (or is contained in `equals` when an array).
   dependsOn?: { key: string; equals: string | string[] };
+  // Renders an inline action button beside the input. The id is passed back
+  // to the App via the `onFieldAction` prop so App can map it to a postMessage.
+  action?: { id: string; label: string; busyLabel?: string };
 };
 
 export type FormField =

@@ -10,13 +10,20 @@ declare function acquireVsCodeApi(): { postMessage(msg: Outbound): void; getStat
 const vscode = acquireVsCodeApi();
 function post(msg: Outbound) { vscode.postMessage(msg); }
 
+// The hint emitted by suggestClasspath contains a `/*` glob that isn't valid
+// as a literal classpath entry — treat it (and empty) as "not yet computed".
+function classpathLooksLikeHint(cp: string): boolean {
+  return cp.trim() === '' || /\/\*(\s*[:;]|\s*$)/.test(cp)
+    || cp.includes('target/dependency/*') || cp.includes('build/libs/*');
+}
+
 export function App() {
   const [schema, setSchema] = useState<FormSchema | null>(null);
   const [values, setValues] = useState<Partial<RunConfig>>({});
   const [mode, setMode] = useState<'create' | 'edit'>('create');
   const [error, setError] = useState<string | null>(null);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
-  const [recomputing, setRecomputing] = useState(false);
+  const [busyActionId, setBusyActionId] = useState<string | null>(null);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent<Inbound>) => {
@@ -26,6 +33,15 @@ export function App() {
         setSchema(msg.schema);
         setValues(msg.config);
         setError(null);
+        // Auto-recompute classpath in java-main mode when the current value looks
+        // like the hint. Avoids launching against the placeholder.
+        if (msg.config.type === 'spring-boot') {
+          const to = msg.config.typeOptions as { launchMode?: string; classpath?: string } | undefined;
+          if (to?.launchMode === 'java-main' && classpathLooksLikeHint(to.classpath ?? '')) {
+            setBusyActionId('recomputeClasspath');
+            post({ cmd: 'recomputeClasspath', config: msg.config as RunConfig });
+          }
+        }
       } else if (msg.cmd === 'folderPicked') {
         setValues(v => ({ ...v, projectPath: msg.path }));
       } else if (msg.cmd === 'classpathComputed') {
@@ -36,16 +52,24 @@ export function App() {
             typeOptions: { ...(v.typeOptions as any), classpath: msg.classpath },
           } as any;
         });
-        setRecomputing(false);
+        setBusyActionId(null);
       } else if (msg.cmd === 'error') {
         setError(msg.message);
-        setRecomputing(false);
+        setBusyActionId(null);
       }
     };
     window.addEventListener('message', onMessage);
     post({ cmd: 'ready' });
     return () => window.removeEventListener('message', onMessage);
   }, []);
+
+  const onFieldAction = (actionId: string) => {
+    if (actionId === 'recomputeClasspath') {
+      setBusyActionId(actionId);
+      setError(null);
+      post({ cmd: 'recomputeClasspath', config: values as RunConfig });
+    }
+  };
 
   if (!schema) return <div>Loading…</div>;
 
@@ -54,14 +78,26 @@ export function App() {
       setError('Name is required');
       return;
     }
-    // npm-only validation: script name must be set. Spring Boot has its own
-    // defaults that never need a manual entry.
     if (values.type === 'npm') {
       const to = values.typeOptions as { scriptName?: string } | undefined;
       const script = to?.scriptName?.trim();
       if (!script) {
         setError('Script is required. If your package.json has no scripts, type the command name (e.g. "start").');
         return;
+      }
+    }
+    if (values.type === 'spring-boot') {
+      const to = values.typeOptions as { launchMode?: string; classpath?: string; mainClass?: string } | undefined;
+      if (to?.launchMode === 'java-main') {
+        if (!to.mainClass?.trim()) {
+          setError('Main class is required for java-main launch mode.');
+          return;
+        }
+        const cp = to.classpath ?? '';
+        if (classpathLooksLikeHint(cp)) {
+          setError('Classpath is empty or still the placeholder hint. Click "Recompute classpath" next to the field to populate it from your build tool before saving.');
+          return;
+        }
       }
     }
     post({ cmd: 'save', config: values as RunConfig });
@@ -78,24 +114,11 @@ export function App() {
           onChange={setValues}
           onPickFolder={() => post({ cmd: 'pickFolder', current: values.projectPath })}
           onFocusField={setFocusedKey}
+          onFieldAction={onFieldAction}
+          busyActionId={busyActionId}
         />
         <HelpPanel schema={schema} focusedKey={focusedKey} />
       </div>
-      {values.type === 'spring-boot' && (values.typeOptions as any)?.launchMode === 'java-main' && (
-        <div style={{ marginTop: 8 }}>
-          <button
-            type="button"
-            className="secondary"
-            disabled={recomputing}
-            onClick={() => {
-              setRecomputing(true);
-              post({ cmd: 'recomputeClasspath', config: values as RunConfig });
-            }}
-          >
-            {recomputing ? 'Recomputing…' : 'Recompute classpath'}
-          </button>
-        </div>
-      )}
       <div className="footer">
         <button className="secondary" onClick={() => post({ cmd: 'cancel' })}>Cancel</button>
         <button onClick={save}>Save</button>

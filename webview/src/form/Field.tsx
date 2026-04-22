@@ -10,9 +10,11 @@ interface Props {
   onChange: (next: Record<string, unknown>) => void;
   onPickFolder?: () => void;
   onFocusField?: (key: string | null) => void;
+  onFieldAction?: (actionId: string) => void;
+  busyActionId?: string | null;
 }
 
-export function Field({ field, values, onChange, onPickFolder, onFocusField }: Props) {
+export function Field({ field, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId }: Props) {
   // Honor dependsOn: hide the field if its dependency's current value doesn't match.
   if (field.dependsOn) {
     const dep = getPath(values, field.dependsOn.key);
@@ -26,10 +28,25 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField }: P
   const focus = () => onFocusField?.(field.key);
   const blur = () => onFocusField?.(null);
 
+  const action = field.action;
+  const actionBusy = action ? busyActionId === action.id : false;
+
   return (
     <div>
       <label>{field.label}{'required' in field && field.required ? ' *' : ''}</label>
       {renderInput(field, v, set, { onPickFolder, focus, blur })}
+      {action && (
+        <div style={{ marginTop: 4 }}>
+          <button
+            type="button"
+            className="secondary"
+            disabled={actionBusy}
+            onClick={() => onFieldAction?.(action.id)}
+          >
+            {actionBusy ? (action.busyLabel ?? 'Working…') : action.label}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

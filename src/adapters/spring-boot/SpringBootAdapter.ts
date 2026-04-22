@@ -140,8 +140,9 @@ export class SpringBootAdapter implements RuntimeAdapter {
           label: 'Classpath',
           rows: 3,
           placeholder: 'target/classes:lib/*',
-          help: 'Colon-separated on macOS/Linux, semicolon on Windows. Run "Recompute classpath" (button below) to refresh from your build tool. You must compile at least once so classes exist on disk.',
+          help: 'Colon-separated on macOS/Linux, semicolon on Windows. Click "Recompute classpath" to populate from your build tool. Values containing "*" are a placeholder hint — recompute before saving.',
           dependsOn: { key: 'typeOptions.launchMode', equals: 'java-main' },
+          action: { id: 'recomputeClasspath', label: 'Recompute classpath', busyLabel: 'Recomputing…' },
         },
         {
           kind: 'text',
