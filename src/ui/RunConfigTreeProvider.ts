@@ -4,11 +4,12 @@ import type { ConfigStore } from '../services/ConfigStore';
 import type { ExecutionService } from '../services/ExecutionService';
 import type { DebugService } from '../services/DebugService';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
-import type { RunConfig } from '../shared/types';
+import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 
-type Node =
+export type Node =
   | { kind: 'folder'; folderKey: string; label: string }
-  | { kind: 'config'; folderKey: string; config: RunConfig };
+  | { kind: 'config'; folderKey: string; config: RunConfig }
+  | { kind: 'invalid'; folderKey: string; entry: InvalidConfigEntry };
 
 export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
   private emitter = new vscode.EventEmitter<Node | undefined>();
@@ -36,6 +37,17 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       item.iconPath = new vscode.ThemeIcon('folder');
       return item;
     }
+    if (n.kind === 'invalid') {
+      const item = new vscode.TreeItem(`$(warning) ${n.entry.name}`, vscode.TreeItemCollapsibleState.None);
+      const shortErr = n.entry.error.length > 80 ? n.entry.error.slice(0, 77) + '…' : n.entry.error;
+      item.description = `(invalid — ${shortErr})`;
+      item.tooltip = `${n.entry.error}\n\n${n.entry.rawText.slice(0, 400)}`;
+      item.iconPath = new vscode.ThemeIcon('warning');
+      item.contextValue = 'configInvalid';
+      item.command = { command: 'runConfig.edit', title: 'Edit', arguments: [n] };
+      return item;
+    }
+
     const running = this.exec.isRunning(n.config.id) || this.dbg.isRunning(n.config.id);
     const prefix = running ? '$(sync~spin) ' : '';
     const item = new vscode.TreeItem(prefix + n.config.name, vscode.TreeItemCollapsibleState.None);
@@ -43,11 +55,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     item.tooltip = `${n.config.type} · ${n.config.projectPath || '.'}`;
     item.iconPath = new vscode.ThemeIcon(iconForType(n.config.type));
     item.contextValue = running ? 'configRunning' : 'configIdle';
-    item.command = {
-      command: 'runConfig.edit',
-      title: 'Edit',
-      arguments: [n],
-    };
+    item.command = { command: 'runConfig.edit', title: 'Edit', arguments: [n] };
     return item;
   }
 
@@ -55,20 +63,23 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     if (!parent) {
       const keys = this.store.folderKeys();
       if (keys.length <= 1) {
-        return keys.flatMap(key => this.configNodes(key));
+        return keys.flatMap(key => this.allNodes(key));
       }
       return keys.map(key => {
         const label = this.store.getFolder(key)?.name ?? key;
-        return { kind: 'folder', folderKey: key, label };
+        return { kind: 'folder', folderKey: key, label } as const;
       });
     }
-    if (parent.kind === 'folder') return this.configNodes(parent.folderKey);
+    if (parent.kind === 'folder') return this.allNodes(parent.folderKey);
     return [];
   }
 
-  private configNodes(folderKey: string): Node[] {
+  private allNodes(folderKey: string): Node[] {
     const file = this.store.getForFolder(folderKey);
-    return file.configurations.map(config => ({ kind: 'config', folderKey, config } as const));
+    const invalid = this.store.invalidForFolder(folderKey);
+    const valid: Node[] = file.configurations.map(config => ({ kind: 'config', folderKey, config } as const));
+    const bad: Node[] = invalid.map(entry => ({ kind: 'invalid', folderKey, entry } as const));
+    return [...valid, ...bad];
   }
 }
 
