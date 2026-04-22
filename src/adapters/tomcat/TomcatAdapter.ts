@@ -413,9 +413,18 @@ export class TomcatAdapter implements RuntimeAdapter {
     return prepareTomcatLaunch(cfg, folder, ctx);
   }
 
-  getDebugConfig(cfg: RunConfig, _folder: vscode.WorkspaceFolder): vscode.DebugConfiguration {
+  getDebugConfig(cfg: RunConfig, folder: vscode.WorkspaceFolder): vscode.DebugConfiguration {
     if (cfg.type !== 'tomcat') throw new Error('TomcatAdapter received non-tomcat config');
     const port = cfg.typeOptions.debugPort ?? 8000;
+
+    // Source mapping for attach-mode Java debug. Without sourcePaths, the
+    // Java debugger connects fine but can't bind breakpoints because it
+    // doesn't know which source files correspond to the remote classes.
+    // We walk the workspace for standard Maven/Gradle source layouts under
+    // the chosen build root. (Synchronous-ish here because getDebugConfig
+    // itself is sync; we restrict to shallow well-known paths.)
+    const sourcePaths = collectSourcePaths(cfg, folder);
+
     return {
       type: 'java',
       request: 'attach',
@@ -423,8 +432,40 @@ export class TomcatAdapter implements RuntimeAdapter {
       hostName: 'localhost',
       port,
       timeout: 60_000,
+      // Same "don't consult the redhat.java project model" trick we use for
+      // java-main. Prevents the debugger from stalling on workspace indexing.
+      projectName: '',
+      sourcePaths,
     };
   }
+}
+
+// Best-effort list of source roots to hand the Java debugger. We DON'T scan
+// the filesystem here (getDebugConfig is sync + cheap). We list the known
+// conventional paths; the debugger silently ignores non-existent entries.
+function collectSourcePaths(
+  cfg: Extract<RunConfig, { type: 'tomcat' }>,
+  folder: vscode.WorkspaceFolder,
+): string[] {
+  const root = cfg.typeOptions.buildRoot || folder.uri.fsPath;
+  const wsRoot = folder.uri.fsPath;
+  const project = cfg.typeOptions.buildProjectPath || cfg.projectPath;
+  const projectAbs = project ? `${wsRoot.replace(/[/\\]$/, '')}/${project}` : wsRoot;
+
+  const paths = new Set<string>([
+    // The submodule we're launching.
+    `${projectAbs}/src/main/java`,
+    `${projectAbs}/src/main/kotlin`,
+    `${projectAbs}/src/main/resources`,
+    // Build root itself (for single-module or reactor-level source).
+    `${root}/src/main/java`,
+    `${root}/src/main/kotlin`,
+    // Compiled classes — needed so the debugger resolves class names.
+    `${projectAbs}/build/classes/java/main`,
+    `${projectAbs}/build/resources/main`,
+    `${projectAbs}/target/classes`,
+  ]);
+  return Array.from(paths);
 }
 
 // Exported for tests / runtime helpers.

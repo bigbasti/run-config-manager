@@ -66,9 +66,12 @@ export async function prepareTomcatLaunch(
   }
   if (ctx.debug) {
     const port = ctx.debugPort ?? to.debugPort ?? 8000;
+    // Listen on all interfaces so localhost attach definitely resolves.
+    // `address=*:<port>` needs JDK 9+; `0.0.0.0:<port>` works on older JDKs too.
     catalinaOpts.push(
-      `-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}`,
+      `-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=0.0.0.0:${port}`,
     );
+    log.info(`Tomcat debug: JDWP listening on 0.0.0.0:${port}`);
   }
   if (to.colorOutput) {
     // Covers Spring Boot apps running inside Tomcat; generic ANSI tooling

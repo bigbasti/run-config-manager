@@ -174,9 +174,22 @@ export class DebugService {
     const execution = await this.exec.run(cfg, folder, { debug: true, debugPort: port });
     if (!execution) return false;
 
-    // Tomcat takes longer to boot than Spring Boot — wait 2s then attach; the
-    // debug client retries on connection-refused anyway.
-    await new Promise(r => setTimeout(r, 2000));
+    // Poll for the JDWP socket to actually accept connections before handing
+    // off to the Java debugger. vscode-java-debug's own attach logic tries
+    // once and fails hard on ECONNREFUSED — unlike the Node debugger it does
+    // NOT retry. So we probe ourselves, then call startDebugging when the
+    // socket is alive. 5-minute cap covers Tomcat cold-start on slow machines.
+    log.info(`Tomcat debug: waiting for JDWP on localhost:${port}…`);
+    const ready = await waitForPort('localhost', port, 5 * 60_000);
+    if (!ready) {
+      vscode.window.showErrorMessage(
+        `Debug attach failed: JDWP port ${port} did not open within 5 minutes.`,
+      );
+      await this.exec.stop(cfg.id);
+      return false;
+    }
+    log.info(`Tomcat debug: JDWP socket open, attaching…`);
+
     try {
       const started = await vscode.debug.startDebugging(folder, attachConf);
       if (started) {
@@ -246,4 +259,25 @@ function debugCwd(cfg: RunConfig, folder: vscode.WorkspaceFolder): string {
     }
   }
   return resolveProjectUri(folder, cfg.projectPath).fsPath;
+}
+
+// Probe the given TCP port until it accepts a connection OR the budget
+// expires. Resolves true on first successful connect, false on timeout.
+// Short poll interval (500ms) keeps the attach feel responsive once the JVM
+// gets going.
+async function waitForPort(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  const net = await import('net');
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const alive = await new Promise<boolean>(resolve => {
+      const sock = net.createConnection({ host, port });
+      const onDone = (ok: boolean) => { sock.destroy(); resolve(ok); };
+      sock.once('connect', () => onDone(true));
+      sock.once('error', () => onDone(false));
+      sock.setTimeout(400, () => onDone(false));
+    });
+    if (alive) return true;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return false;
 }
