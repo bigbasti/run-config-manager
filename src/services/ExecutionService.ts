@@ -4,6 +4,7 @@ import type { RunConfig } from '../shared/types';
 import { log } from '../utils/logger';
 import { resolveProjectUri } from '../utils/paths';
 import { gradleModulePrefix } from '../adapters/spring-boot/findBuildRoot';
+import { makeRunContext, resolveConfig } from '../utils/resolveVars';
 
 interface Entry {
   execution: vscode.TaskExecution;
@@ -37,12 +38,20 @@ export class ExecutionService {
       return undefined;
     }
 
-    const { command, args } = adapter.buildCommand(cfg, folder);
+    // Resolve ${VAR} / ${env:VAR} / ${workspaceFolder} etc. in every text field
+    // of the config. Unresolved variables become empty strings and are logged.
     const cwd = buildCwd(cfg, folder);
+    const ctx = makeRunContext({ workspaceFolder: folder.uri.fsPath, cwd });
+    const { value: resolvedCfg, unresolved } = resolveConfig(cfg, ctx);
+    if (unresolved.length) {
+      log.warn(`Unresolved variable(s) in "${cfg.name}": ${unresolved.join(', ')} (expanded to empty string)`);
+    }
+
+    const { command, args } = adapter.buildCommand(resolvedCfg, folder);
 
     const shell = new vscode.ShellExecution(command, args, {
       cwd,
-      env: { ...cfg.env },
+      env: { ...resolvedCfg.env },
     });
 
     const task = new vscode.Task(
@@ -61,9 +70,9 @@ export class ExecutionService {
       // Opt-in continuous rebuild: spawns a parallel `./gradlew -t :mod:classes`
       // task alongside the main run. DevTools (if present on the classpath)
       // triggers a warm restart each time classes change.
-      if (cfg.type === 'spring-boot' && shouldStartWatcher(cfg)) {
+      if (resolvedCfg.type === 'spring-boot' && shouldStartWatcher(resolvedCfg)) {
         try {
-          entry.watcher = await startRebuildWatcher(cfg, folder);
+          entry.watcher = await startRebuildWatcher(resolvedCfg, folder);
         } catch (e) {
           log.warn(`Rebuild watcher failed to start for ${cfg.name}: ${(e as Error).message}`);
         }

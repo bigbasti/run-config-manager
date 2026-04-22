@@ -10,6 +10,16 @@ import { detectBuildTools } from './detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from './findBuildRoot';
 import { findSpringProfiles } from './findProfiles';
 import { resolveProjectUri } from '../../utils/paths';
+
+// Shared help-text footer for fields where ${VAR} expansion applies. The
+// actual expansion happens at launch (ExecutionService / DebugService) —
+// the stored text keeps its ${VAR} literal so the same config works across
+// environments. Click the "Test variables" icon in the side panel to see
+// which variables resolve vs. fail in the current environment.
+const VAR_SYNTAX_HINT =
+  'Supports ${VAR} and ${env:VAR} (environment variables), ' +
+  '${workspaceFolder}, ${userHome}, and ${cwd}/${projectPath}. ' +
+  'Unresolved variables expand to an empty string at launch.';
 import { splitArgs } from '../npm/splitArgs';
 
 export class SpringBootAdapter implements RuntimeAdapter {
@@ -354,24 +364,27 @@ export class SpringBootAdapter implements RuntimeAdapter {
           kind: 'kv',
           key: 'env',
           label: 'Environment variables',
-          help: 'Merged on top of inherited env.',
-          examples: ['SPRING_PROFILES_ACTIVE=dev', 'JAVA_HOME=/opt/jdk-21'],
+          help: 'Merged on top of inherited env. ' + VAR_SYNTAX_HINT,
+          examples: ['SPRING_PROFILES_ACTIVE=dev', 'JAVA_HOME=/opt/jdk-21', 'DB_URL=${DB_URL}'],
         },
         {
           kind: 'text',
           key: 'programArgs',
           label: 'Program args',
           placeholder: '--server.port=8081',
-          help: 'Passed to the Spring Boot app.',
-          examples: ['--server.port=8081', '--debug'],
+          help: 'Passed to the Spring Boot app. ' + VAR_SYNTAX_HINT,
+          examples: ['--server.port=8081', '--debug', '--config=${workspaceFolder}/conf'],
         },
         {
           kind: 'text',
           key: 'vmArgs',
           label: 'VM args',
           placeholder: '-Xmx1g',
-          help: 'JVM flags. Applied directly in java-main mode; wrapped in -Dspring-boot.run.jvmArguments for Maven; ignored by Gradle.',
-          examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC'],
+          help:
+            'JVM flags. Applied directly in java-main mode; wrapped in ' +
+            '-Dspring-boot.run.jvmArguments for Maven; ignored by Gradle. ' +
+            VAR_SYNTAX_HINT,
+          examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC', '-Dapp.home=${workspaceFolder}'],
         },
       ],
     };

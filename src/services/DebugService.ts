@@ -3,6 +3,8 @@ import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import type { RunConfig } from '../shared/types';
 import type { ExecutionService } from './ExecutionService';
 import { log } from '../utils/logger';
+import { makeRunContext, resolveConfig } from '../utils/resolveVars';
+import { resolveProjectUri } from '../utils/paths';
 
 // Required for `type: 'java'` debug configurations. The Spring Boot adapter
 // needs this extension; npm uses the built-in `pwa-node` and doesn't.
@@ -42,7 +44,17 @@ export class DebugService {
       return false;
     }
 
-    const conf = adapter.getDebugConfig(cfg, folder);
+    // Resolve variables the same way ExecutionService does. ExecutionService
+    // resolves again for attach-mode's run; the duplicate work is cheap and
+    // keeps each service independently correct.
+    const cwd = debugCwd(cfg, folder);
+    const ctx = makeRunContext({ workspaceFolder: folder.uri.fsPath, cwd });
+    const { value: resolvedCfg, unresolved } = resolveConfig(cfg, ctx);
+    if (unresolved.length) {
+      log.warn(`Unresolved variable(s) in debug of "${cfg.name}": ${unresolved.join(', ')} (expanded to empty string)`);
+    }
+
+    const conf = adapter.getDebugConfig(resolvedCfg, folder);
 
     // Java-type debug requires the Java Debugger extension.
     if (conf.type === 'java' && !vscode.extensions.getExtension(JAVA_DEBUG_EXTENSION_ID)) {
@@ -58,8 +70,8 @@ export class DebugService {
     // output with the right -agentlib:jdwp arg and run it through ExecutionService,
     // then hand over to startDebugging after a short delay so the JVM has time
     // to open the port.
-    if (conf.type === 'java' && conf.request === 'attach' && cfg.type === 'spring-boot') {
-      return await this.startAttachFlow(cfg, folder, conf);
+    if (conf.type === 'java' && conf.request === 'attach' && resolvedCfg.type === 'spring-boot') {
+      return await this.startAttachFlow(resolvedCfg, folder, conf);
     }
 
     // Launch-mode Java (java-main) or non-Java: startDebugging handles the JVM.
@@ -180,4 +192,17 @@ export class DebugService {
     this.running.clear();
     this.emitter.dispose();
   }
+}
+
+// Mirrors ExecutionService.buildCwd — for Spring Boot maven/gradle we prefer
+// the build-tool root; otherwise the resolved projectPath. Exposed here so
+// variable resolution can use ${cwd} / ${projectPath} consistently with run.
+function debugCwd(cfg: RunConfig, folder: vscode.WorkspaceFolder): string {
+  if (cfg.type === 'spring-boot') {
+    const to = cfg.typeOptions;
+    if ((to.launchMode === 'maven' || to.launchMode === 'gradle') && to.buildRoot) {
+      return to.buildRoot;
+    }
+  }
+  return resolveProjectUri(folder, cfg.projectPath).fsPath;
 }

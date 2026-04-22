@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RunConfig } from '../../src/shared/types';
 import type { FormSchema } from '../../src/shared/formSchema';
 import type { Inbound, Outbound } from '../../src/shared/protocol';
@@ -17,8 +17,6 @@ function classpathLooksLikeHint(cp: string): boolean {
     || cp.includes('target/dependency/*') || cp.includes('build/libs/*');
 }
 
-// Merge detected defaults into a Partial<RunConfig>, but only where the target
-// slot is currently blank. Preserves anything the user has already typed.
 function mergeBlanks<T extends Record<string, any>>(cur: T, patch: any): T {
   if (!patch || typeof patch !== 'object') return cur;
   const out: any = { ...cur };
@@ -33,6 +31,11 @@ function mergeBlanks<T extends Record<string, any>>(cur: T, patch: any): T {
   return out;
 }
 
+interface TestResult {
+  unresolved: string[];
+  builtins: { workspaceFolder: string; userHome: string; cwd: string };
+}
+
 export function App() {
   const [schema, setSchema] = useState<FormSchema | null>(null);
   const [values, setValues] = useState<Partial<RunConfig>>({});
@@ -41,6 +44,11 @@ export function App() {
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const [busyActionId, setBusyActionId] = useState<string | null>(null);
   const [pending, setPending] = useState<Set<string>>(new Set());
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
+  // When non-null, a save is queued waiting for an async precondition (e.g.,
+  // classpath recompute). We fire it after the precondition resolves.
+  const pendingSaveRef = useRef<boolean>(false);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent<Inbound>) => {
@@ -51,8 +59,7 @@ export function App() {
         setValues(msg.config);
         setPending(new Set(msg.pending ?? []));
         setError(null);
-        // Auto-recompute classpath in java-main mode when the current value looks
-        // like the hint. Avoids launching against the placeholder.
+        setTestResult(null);
         if (msg.config.type === 'spring-boot') {
           const to = msg.config.typeOptions as { launchMode?: string; classpath?: string } | undefined;
           if (to?.launchMode === 'java-main' && classpathLooksLikeHint(to.classpath ?? '')) {
@@ -64,8 +71,6 @@ export function App() {
         setSchema(msg.schema);
         setPending(new Set(msg.pending ?? []));
       } else if (msg.cmd === 'configPatch') {
-        // Merge in detected defaults, but only for fields the user hasn't
-        // already touched (= currently empty / undefined).
         setValues(v => mergeBlanks(v, msg.patch));
       } else if (msg.cmd === 'folderPicked') {
         setValues(v => ({ ...v, projectPath: msg.path }));
@@ -78,9 +83,25 @@ export function App() {
           } as any;
         });
         setBusyActionId(null);
+        // If the user clicked Save and we were waiting on recompute, fire the
+        // save now with the fresh classpath.
+        if (pendingSaveRef.current) {
+          pendingSaveRef.current = false;
+          setValues(v => {
+            const next = v as any;
+            if (!guardedSaveCheck(next, setError)) return v;
+            post({ cmd: 'save', config: next as RunConfig });
+            return v;
+          });
+        }
+      } else if (msg.cmd === 'variablesTested') {
+        setTesting(false);
+        setTestResult({ unresolved: msg.unresolved, builtins: msg.builtins });
       } else if (msg.cmd === 'error') {
         setError(msg.message);
         setBusyActionId(null);
+        setTesting(false);
+        pendingSaveRef.current = false; // abandon any queued save
       }
     };
     window.addEventListener('message', onMessage);
@@ -94,6 +115,13 @@ export function App() {
       setError(null);
       post({ cmd: 'recomputeClasspath', config: values as RunConfig });
     }
+  };
+
+  const runTestVariables = () => {
+    setError(null);
+    setTestResult(null);
+    setTesting(true);
+    post({ cmd: 'testVariables', config: values as RunConfig });
   };
 
   if (!schema) return <div>Loading…</div>;
@@ -120,7 +148,12 @@ export function App() {
         }
         const cp = to.classpath ?? '';
         if (classpathLooksLikeHint(cp)) {
-          setError('Classpath is empty or still the placeholder hint. Click "Recompute classpath" next to the field to populate it from your build tool before saving.');
+          // Auto-recompute and save when it completes. Errors from recompute
+          // arrive as cmd:'error' which clears pendingSaveRef.
+          setError(null);
+          setBusyActionId('recomputeClasspath');
+          pendingSaveRef.current = true;
+          post({ cmd: 'recomputeClasspath', config: values as RunConfig });
           return;
         }
       }
@@ -145,12 +178,70 @@ export function App() {
         />
         <div className="side-column">
           <HelpPanel schema={schema} focusedKey={focusedKey} />
+          {testResult && <TestResultPanel result={testResult} />}
           <div className="side-actions">
+            <button
+              className="secondary icon-button"
+              title="Test variables — resolve every field and report any unresolved ${VAR} references"
+              disabled={testing}
+              onClick={runTestVariables}
+              aria-label="Test variables"
+            >
+              {testing ? '⟳' : 'ⓘ ✓'}
+            </button>
             <button className="secondary" onClick={() => post({ cmd: 'cancel' })}>Cancel</button>
-            <button onClick={save}>Save</button>
+            <button
+              onClick={save}
+              disabled={busyActionId === 'recomputeClasspath' && pendingSaveRef.current}
+            >
+              {busyActionId === 'recomputeClasspath' && pendingSaveRef.current ? 'Saving…' : 'Save'}
+            </button>
           </div>
         </div>
       </div>
     </>
+  );
+}
+
+// Mirror of the server-side guards used by `save` so the queued-save path can
+// re-check without duplicating logic — returns true if the config is ready
+// to save right now.
+function guardedSaveCheck(values: any, setError: (s: string | null) => void): boolean {
+  if (!values.name || !values.name.trim()) { setError('Name is required'); return false; }
+  if (values.type === 'spring-boot' && values.typeOptions?.launchMode === 'java-main') {
+    const cp = values.typeOptions.classpath ?? '';
+    if (classpathLooksLikeHint(cp)) {
+      setError('Classpath recompute did not return a usable classpath.');
+      return false;
+    }
+  }
+  return true;
+}
+
+function TestResultPanel({ result }: { result: TestResult }) {
+  return (
+    <aside className="help-panel" aria-live="polite">
+      <h4>Variable resolution</h4>
+      {result.unresolved.length === 0 ? (
+        <p style={{ color: 'var(--vscode-terminal-ansiGreen, currentColor)' }}>
+          ✓ All variables resolved.
+        </p>
+      ) : (
+        <>
+          <p style={{ color: 'var(--vscode-errorForeground)', marginBottom: 6 }}>
+            ⚠ {result.unresolved.length} unresolved — these will expand to empty strings at launch:
+          </p>
+          <ul className="examples" style={{ marginBottom: 10 }}>
+            {result.unresolved.map(v => <li key={v}>{`\${${v}}`}</li>)}
+          </ul>
+        </>
+      )}
+      <p className="empty" style={{ marginBottom: 4 }}>Builtins used in this test:</p>
+      <ul className="examples">
+        <li>{`\${workspaceFolder} = ${result.builtins.workspaceFolder || '(empty)'}`}</li>
+        <li>{`\${cwd} = ${result.builtins.cwd || '(empty)'}`}</li>
+        <li>{`\${userHome} = ${result.builtins.userHome || '(empty)'}`}</li>
+      </ul>
+    </aside>
   );
 }

@@ -95,16 +95,23 @@ export class NpmAdapter implements RuntimeAdapter {
           kind: 'kv',
           key: 'env',
           label: 'Environment variables',
-          help: 'Extra environment variables merged on top of VS Code\'s inherited env. Values are strings. Do not quote values here — the shell sees them literally.',
-          examples: ['NODE_ENV=development', 'DEBUG=app:*'],
+          help:
+            'Extra environment variables merged on top of VS Code\'s inherited env. ' +
+            'Values are strings. Do not quote values here — the shell sees them literally. ' +
+            'Supports ${VAR} / ${env:VAR} / ${workspaceFolder} / ${cwd} / ${userHome}. ' +
+            'Unresolved variables expand to empty strings at launch.',
+          examples: ['NODE_ENV=development', 'DEBUG=app:*', 'DATA_DIR=${workspaceFolder}/data'],
         },
         {
           kind: 'text',
           key: 'programArgs',
           label: 'Program args',
           placeholder: '--port 5000',
-          help: 'Arguments passed to the script after "--". Quote values with spaces using double quotes.',
-          examples: ['--port 5000', '--open --host 0.0.0.0', '--title "My App"'],
+          help:
+            'Arguments passed to the script after "--". Quote values with spaces using double quotes. ' +
+            'Supports ${VAR} / ${env:VAR} / ${workspaceFolder} / ${cwd} / ${userHome}. ' +
+            'Unresolved variables expand to empty strings at launch.',
+          examples: ['--port 5000', '--open --host 0.0.0.0', '--config=${workspaceFolder}/cfg'],
         },
         {
           kind: 'text',

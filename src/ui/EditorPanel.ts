@@ -7,6 +7,7 @@ import type { RuntimeAdapter, StreamingPatch } from '../adapters/RuntimeAdapter'
 import { log } from '../utils/logger';
 import { relativeFromWorkspace, resolveProjectUri } from '../utils/paths';
 import { recomputeClasspath } from '../adapters/spring-boot/recomputeClasspath';
+import { makeRunContext, resolveConfig } from '../utils/resolveVars';
 
 interface OpenArgs {
   mode: 'create' | 'edit';
@@ -197,6 +198,27 @@ export class EditorPanel {
           this.panel.webview.postMessage(err);
           log.error('recomputeClasspath', e);
         }
+        return;
+      }
+      case 'testVariables': {
+        const cfg = msg.config;
+        const cwd = cfg.type === 'spring-boot'
+          && (cfg.typeOptions.launchMode === 'maven' || cfg.typeOptions.launchMode === 'gradle')
+          && cfg.typeOptions.buildRoot
+            ? cfg.typeOptions.buildRoot
+            : resolveProjectUri(this.args.folder, cfg.projectPath ?? '').fsPath;
+        const ctx = makeRunContext({ workspaceFolder: this.args.folder.uri.fsPath, cwd });
+        const { unresolved } = resolveConfig(cfg, ctx);
+        const reply: Inbound = {
+          cmd: 'variablesTested',
+          unresolved,
+          builtins: {
+            workspaceFolder: ctx.workspaceFolder,
+            userHome: ctx.userHome,
+            cwd: ctx.cwd,
+          },
+        };
+        this.panel.webview.postMessage(reply);
         return;
       }
       case 'save':
