@@ -1,14 +1,13 @@
 import type { RunConfig } from './types';
 import type { FormSchema } from './formSchema';
 
-// Messages from webview → extension host
 export type Outbound =
   | { cmd: 'ready' }
   | { cmd: 'save'; config: RunConfig }
   | { cmd: 'cancel' }
-  | { cmd: 'pickFolder'; current?: string };
+  | { cmd: 'pickFolder'; current?: string }
+  | { cmd: 'recomputeClasspath'; config: RunConfig };
 
-// Messages from extension host → webview
 export type Inbound =
   | {
       cmd: 'init';
@@ -17,4 +16,5 @@ export type Inbound =
       schema: FormSchema;
     }
   | { cmd: 'folderPicked'; path: string }
+  | { cmd: 'classpathComputed'; classpath: string }
   | { cmd: 'error'; message: string };

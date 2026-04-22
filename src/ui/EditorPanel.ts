@@ -4,7 +4,8 @@ import type { Inbound, Outbound } from '../shared/protocol';
 import type { FormSchema } from '../shared/formSchema';
 import type { RunConfigService } from '../services/RunConfigService';
 import { log } from '../utils/logger';
-import { relativeFromWorkspace } from '../utils/paths';
+import { relativeFromWorkspace, resolveProjectUri } from '../utils/paths';
+import { recomputeClasspath } from '../adapters/spring-boot/recomputeClasspath';
 
 interface OpenArgs {
   mode: 'create' | 'edit';
@@ -120,6 +121,25 @@ export class EditorPanel {
         this.panel.webview.postMessage(reply);
         return;
       }
+      case 'recomputeClasspath': {
+        if (msg.config.type !== 'spring-boot') return;
+        const to = msg.config.typeOptions;
+        try {
+          const cp = await recomputeClasspath({
+            projectRoot: resolveProjectUri(this.args.folder, msg.config.projectPath),
+            buildTool: to.buildTool,
+            gradleCommand: to.gradleCommand,
+            jdkPath: to.jdkPath,
+          });
+          const reply: Inbound = { cmd: 'classpathComputed', classpath: cp };
+          this.panel.webview.postMessage(reply);
+        } catch (e) {
+          const err: Inbound = { cmd: 'error', message: `Classpath recompute failed: ${(e as Error).message}` };
+          this.panel.webview.postMessage(err);
+          log.error('recomputeClasspath', e);
+        }
+        return;
+      }
       case 'save':
         try {
           const sanitized = this.sanitize(msg.config);
@@ -150,12 +170,19 @@ export class EditorPanel {
     };
     if (cfg.type === 'spring-boot') {
       const to = cfg.typeOptions as Partial<import('../shared/types').SpringBootTypeOptions> | undefined;
+      const buildTool = to?.buildTool ?? 'maven';
       return {
         ...common,
         type: 'spring-boot',
         typeOptions: {
-          buildTool: to?.buildTool ?? 'maven',
+          launchMode: to?.launchMode ?? buildTool,
+          buildTool,
+          gradleCommand: to?.gradleCommand ?? './gradlew',
           profiles: to?.profiles ?? '',
+          mainClass: to?.mainClass ?? '',
+          classpath: to?.classpath ?? '',
+          jdkPath: to?.jdkPath ?? '',
+          module: to?.module ?? '',
         },
       };
     }

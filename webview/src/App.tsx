@@ -16,6 +16,7 @@ export function App() {
   const [mode, setMode] = useState<'create' | 'edit'>('create');
   const [error, setError] = useState<string | null>(null);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  const [recomputing, setRecomputing] = useState(false);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent<Inbound>) => {
@@ -27,8 +28,18 @@ export function App() {
         setError(null);
       } else if (msg.cmd === 'folderPicked') {
         setValues(v => ({ ...v, projectPath: msg.path }));
+      } else if (msg.cmd === 'classpathComputed') {
+        setValues(v => {
+          if (v.type !== 'spring-boot') return v;
+          return {
+            ...v,
+            typeOptions: { ...(v.typeOptions as any), classpath: msg.classpath },
+          } as any;
+        });
+        setRecomputing(false);
       } else if (msg.cmd === 'error') {
         setError(msg.message);
+        setRecomputing(false);
       }
     };
     window.addEventListener('message', onMessage);
@@ -70,6 +81,21 @@ export function App() {
         />
         <HelpPanel schema={schema} focusedKey={focusedKey} />
       </div>
+      {values.type === 'spring-boot' && (values.typeOptions as any)?.launchMode === 'java-main' && (
+        <div style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="secondary"
+            disabled={recomputing}
+            onClick={() => {
+              setRecomputing(true);
+              post({ cmd: 'recomputeClasspath', config: values as RunConfig });
+            }}
+          >
+            {recomputing ? 'Recomputing…' : 'Recompute classpath'}
+          </button>
+        </div>
+      )}
       <div className="footer">
         <button className="secondary" onClick={() => post({ cmd: 'cancel' })}>Cancel</button>
         <button onClick={save}>Save</button>
