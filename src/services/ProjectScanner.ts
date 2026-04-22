@@ -15,9 +15,25 @@ export class ProjectScanner {
     if (!result) {
       log.info(`  → no ${type} project detected at ${folder.fsPath}`);
     } else {
-      const scripts = (result.context.scripts as string[] | undefined) ?? [];
-      log.info(`  → detected ${scripts.length} script(s): ${scripts.join(', ')}`);
+      // Let each adapter describe its own detection context — avoids assuming
+      // the context has a scripts array (that's npm-specific).
+      const summary = summarizeContext(result.context);
+      log.info(`  → detected: ${summary}`);
     }
     return result;
   }
+}
+
+function summarizeContext(ctx: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(ctx)) {
+    if (Array.isArray(v)) {
+      parts.push(`${k}=[${v.join(', ')}]`);
+    } else if (v && typeof v === 'object') {
+      parts.push(`${k}={…}`);
+    } else {
+      parts.push(`${k}=${String(v)}`);
+    }
+  }
+  return parts.length ? parts.join(', ') : '(no extra context)';
 }
