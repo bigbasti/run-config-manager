@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as os from 'os';
+import type { Prettifier } from './prettyOutput';
 
 // Pseudoterminal implementation that owns a child process and forwards its
 // stdout/stderr into the integrated terminal while simultaneously handing
@@ -16,6 +17,11 @@ export interface RunTerminalOpts {
   // Invoked once for every chunk of stdout+stderr. Exceptions bubble up as
   // unhandled rejections but don't affect the process; keep it cheap.
   onOutput?: (chunk: string) => void;
+  // Optional. When set, output is line-buffered through the prettifier before
+  // hitting the terminal (hyperlinks, bold ready/fail markers, level coloring).
+  // The readiness scanner (onOutput) still receives the raw, untransformed
+  // text so regex matches aren't thrown off by inserted ANSI codes.
+  prettifier?: Prettifier;
   // Invoked once when the child exits, before the terminal closes.
   onExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
 }
@@ -76,10 +82,13 @@ export class RunTerminal implements vscode.Pseudoterminal {
       return;
     }
 
+    const prettifier = this.opts.prettifier;
     const onChunk = (buf: Buffer) => {
       const text = buf.toString();
+      const transformed = prettifier ? prettifier.process(text) : text;
       // Normalize bare LF to CRLF for the VT100 terminal.
-      this.writeEmitter.fire(text.replace(/\r?\n/g, '\r\n'));
+      this.writeEmitter.fire(transformed.replace(/\r?\n/g, '\r\n'));
+      // Scanner sees raw text so inserted ANSI codes don't break its regexes.
       try { this.opts.onOutput?.(text); } catch { /* keep output flowing */ }
     };
 
@@ -92,6 +101,11 @@ export class RunTerminal implements vscode.Pseudoterminal {
     });
 
     this.child.on('exit', (code, signal) => {
+      // Flush any partial line the prettifier was still buffering.
+      if (prettifier) {
+        const tail = prettifier.flush();
+        if (tail) this.writeEmitter.fire(tail.replace(/\r?\n/g, '\r\n'));
+      }
       this.writeLine(`\r\nProcess exited with code ${code}${signal ? ` (signal ${signal})` : ''}.`);
       this.finish(code, signal);
     });

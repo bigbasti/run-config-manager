@@ -12,6 +12,7 @@ import {
   failurePatternsFor,
   chunkSignalsFailure,
 } from './readyPatterns';
+import { makePrettifier } from './prettyOutput';
 
 interface Entry {
   execution: vscode.TaskExecution;
@@ -151,6 +152,7 @@ export class ExecutionService {
       args,
       cwd,
       env: mergedEnv,
+      prettifier: makePrettifier(resolvedCfg, { cwd }),
       onOutput: chunk => {
         if (failPatterns.length && chunkSignalsFailure(chunk, failPatterns)) {
           markFailed('matched failure pattern');
