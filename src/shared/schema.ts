@@ -9,10 +9,38 @@ export const NpmTypeOptionsSchema = z.object({
   packageManager: PackageManagerSchema,
 });
 
-export const SpringBootTypeOptionsSchema = z.object({
-  buildTool: JavaBuildToolSchema,
-  profiles: z.string(),
-});
+export const SpringBootLaunchModeSchema = z.enum(['maven', 'gradle', 'java-main']);
+export const GradleCommandSchema = z.enum(['./gradlew', 'gradle']);
+
+export const SpringBootTypeOptionsSchema = z
+  .object({
+    launchMode: SpringBootLaunchModeSchema,
+    buildTool: JavaBuildToolSchema,
+    gradleCommand: GradleCommandSchema,
+    profiles: z.string(),
+    mainClass: z.string(),
+    classpath: z.string(),
+    jdkPath: z.string(),
+    module: z.string(),
+  })
+  .superRefine((opts, ctx) => {
+    if (opts.launchMode === 'java-main') {
+      if (!opts.mainClass.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'mainClass is required for java-main launch',
+          path: ['mainClass'],
+        });
+      }
+      if (!opts.classpath.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'classpath is required for java-main launch',
+          path: ['classpath'],
+        });
+      }
+    }
+  });
 
 const commonFields = {
   id: z.string().uuid(),

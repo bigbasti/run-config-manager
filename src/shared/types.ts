@@ -10,10 +10,19 @@ export interface NpmTypeOptions {
 // Maven by default. Gradle wrapper (./gradlew bootRun) is the other option.
 export type JavaBuildTool = 'maven' | 'gradle';
 
+export type SpringBootLaunchMode = 'maven' | 'gradle' | 'java-main';
+export type GradleCommand = './gradlew' | 'gradle';
+
 export interface SpringBootTypeOptions {
+  launchMode: SpringBootLaunchMode;
   buildTool: JavaBuildTool;
-  // Maven profiles (-P) or Gradle "-Pprofiles=..." — raw string, shell-split.
+  gradleCommand: GradleCommand;
   profiles: string;
+  // Used only when launchMode === 'java-main'. Safe to have as empty strings otherwise.
+  mainClass: string;
+  classpath: string;
+  jdkPath: string;
+  module: string;
 }
 
 export type TypeOptions =

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { RunFile, InvalidConfigEntry } from '../shared/types';
 import { parseRunFile, stringifyRunFile, RunConfigSchema } from '../shared/schema';
 import { log } from '../utils/logger';
+import { migrateSpringBootConfig } from './migrateSpringBoot';
 
 const EMPTY: RunFile = { version: 1, configurations: [] };
 
@@ -73,8 +74,10 @@ export class ConfigStore {
       return;
     }
 
-    // Fast path: strict parse.
-    const parsed = parseRunFile(raw);
+    // Fast path: strict parse. Apply per-row migrations first so legacy
+    // spring-boot configs keep validating.
+    const migrated = migrateRaw(raw);
+    const parsed = parseRunFile(migrated);
     if (parsed.ok) {
       entry.file = parsed.value;
       entry.invalid = [];
@@ -112,7 +115,7 @@ export class ConfigStore {
         log.warn(`Dropping unrecoverable entry from ${uri.fsPath} (missing id or name).`);
         continue;
       }
-      const per = RunConfigSchema.safeParse(item);
+      const per = RunConfigSchema.safeParse(migrateSpringBootConfig(item));
       if (per.success) {
         validList.push(per.data);
       } else {
@@ -186,5 +189,19 @@ export class ConfigStore {
     }
     this.entries.clear();
     this.emitter.dispose();
+  }
+}
+
+// Apply row-level migrations before strict schema parsing so legacy configs
+// don't get flagged invalid. The raw text stays unchanged on disk; only the
+// in-memory parsed value is migrated.
+function migrateRaw(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.configurations)) return raw;
+    parsed.configurations = parsed.configurations.map(migrateSpringBootConfig);
+    return JSON.stringify(parsed);
+  } catch {
+    return raw;
   }
 }
