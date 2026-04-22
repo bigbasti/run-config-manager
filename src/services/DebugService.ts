@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as net from 'net';
 import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import type { RunConfig } from '../shared/types';
 import type { ExecutionService } from './ExecutionService';
@@ -266,7 +267,6 @@ function debugCwd(cfg: RunConfig, folder: vscode.WorkspaceFolder): string {
 // Short poll interval (500ms) keeps the attach feel responsive once the JVM
 // gets going.
 async function waitForPort(host: string, port: number, timeoutMs: number): Promise<boolean> {
-  const net = await import('net');
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const alive = await new Promise<boolean>(resolve => {

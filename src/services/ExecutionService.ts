@@ -4,7 +4,9 @@ import type { RunConfig } from '../shared/types';
 import { log } from '../utils/logger';
 import { resolveProjectUri } from '../utils/paths';
 import { gradleModulePrefix } from '../adapters/spring-boot/findBuildRoot';
+import * as net from 'net';
 import { makeRunContext, resolveConfig } from '../utils/resolveVars';
+import { readServerPort } from '../adapters/spring-boot/readServerPort';
 
 interface Entry {
   execution: vscode.TaskExecution;
@@ -134,14 +136,14 @@ export class ExecutionService {
       this.emitter.fire(cfg.id);
       log.info(`Started: ${cfg.name} (${command} ${args.join(' ')})`);
 
-      // Poll the configured port to detect when the app has actually bound.
-      // When the socket accepts a TCP connection, flip to the 'started' state
+      // Poll the configured port(s) to detect when the app has actually bound.
+      // When any socket accepts a TCP connection, flip to the 'started' state
       // so the tree can show a green icon instead of a spinner. Runs as a
       // fire-and-forget side effect; doesn't block the executeTask return.
-      const readyPort = detectReadyPort(resolvedCfg);
-      if (readyPort) {
-        void this.watchReadyPort(cfg.id, readyPort);
-      }
+      void (async () => {
+        const ports = await detectReadyPorts(resolvedCfg, folder);
+        if (ports.length > 0) void this.watchReadyPort(cfg.id, ports);
+      })();
       return execution;
     } catch (e) {
       log.error(`Failed to start ${cfg.name}`, e);
@@ -150,18 +152,21 @@ export class ExecutionService {
     }
   }
 
-  private async watchReadyPort(configId: string, port: number): Promise<void> {
-    // Cap at 10 minutes — longer than any reasonable app start; if the port
-    // never opens we just stay in the spinner state and the user still sees
-    // the process running.
-    const open = await waitForTcp('localhost', port, 10 * 60_000, () =>
-      // Bail early if the task ended before the port ever opened.
-      !this.running.has(configId),
-    );
-    if (open && this.running.has(configId)) {
-      this.started.add(configId);
-      this.emitter.fire(configId);
-      log.info(`Ready: ${configId} listening on ${port}`);
+  private async watchReadyPort(configId: string, ports: number[]): Promise<void> {
+    // Race all candidate ports — first one to open wins. 10-minute cap.
+    const deadline = Date.now() + 10 * 60_000;
+    while (Date.now() < deadline && this.running.has(configId)) {
+      for (const p of ports) {
+        const alive = await tryTcp('localhost', p);
+        if (alive) {
+          if (!this.running.has(configId)) return;
+          this.started.add(configId);
+          this.emitter.fire(configId);
+          log.info(`Ready: ${configId} listening on ${p}`);
+          return;
+        }
+      }
+      await new Promise(r => setTimeout(r, 1000));
     }
   }
 
@@ -261,42 +266,49 @@ async function startRebuildWatcher(
   return vscode.tasks.executeTask(vsTask);
 }
 
-// Pick the port the tree should poll to learn when this config has "started".
+// Candidate ports the tree polls to detect when a config has "started".
 // Per type:
-//   - tomcat:       typeOptions.httpPort (always present)
-//   - spring-boot:  cfg.port (common field, user-configured for display)
-//   - npm:          cfg.port (same)
-// Falsy/invalid returns skip the poll entirely — tree stays in the spinner
-// state for the lifetime of the task.
-function detectReadyPort(cfg: RunConfig): number | null {
+//   - tomcat:       typeOptions.httpPort.
+//   - spring-boot:  user-set cfg.port first, else server.port from the active
+//                   profile's properties / yml, else Spring's default 8080.
+//   - npm:          user-set cfg.port first, else common dev-server ports
+//                   (3000 Node, 4200 Angular CLI, 5173 Vite, 8080 generic).
+// Returning multiple ports is fine — the watcher races them and takes the
+// first that opens.
+async function detectReadyPorts(cfg: RunConfig, folder: vscode.WorkspaceFolder): Promise<number[]> {
   if (cfg.type === 'tomcat') {
-    return cfg.typeOptions.httpPort || null;
+    return cfg.typeOptions.httpPort ? [cfg.typeOptions.httpPort] : [];
   }
-  return (typeof cfg.port === 'number' && cfg.port > 0) ? cfg.port : null;
+
+  const ports: number[] = [];
+  if (typeof cfg.port === 'number' && cfg.port > 0) ports.push(cfg.port);
+
+  if (cfg.type === 'spring-boot') {
+    const projectUri = resolveProjectUri(folder, cfg.projectPath);
+    try {
+      const fromFile = await readServerPort(projectUri, cfg.typeOptions.profiles ?? '');
+      if (fromFile !== null && !ports.includes(fromFile)) ports.push(fromFile);
+    } catch { /* best-effort */ }
+    if (!ports.includes(8080)) ports.push(8080); // Spring Boot default
+  } else if (cfg.type === 'npm') {
+    // Common dev-server defaults. Harmless to poll — first match wins, no
+    // false positive as long as the user isn't running two different apps
+    // on the same machine at once (and in that case we pick one; worst case
+    // the tree shows started slightly too early for one of them).
+    for (const p of [3000, 4200, 5173, 8080]) {
+      if (!ports.includes(p)) ports.push(p);
+    }
+  }
+  return ports;
 }
 
-// Poll a TCP port until it accepts a connection, the budget expires, or the
-// abort callback returns true (e.g., the underlying task ended). Returns
-// true only on a successful connect.
-async function waitForTcp(
-  host: string,
-  port: number,
-  timeoutMs: number,
-  abort: () => boolean,
-): Promise<boolean> {
-  const net = await import('net');
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (abort()) return false;
-    const alive = await new Promise<boolean>(resolve => {
-      const sock = net.createConnection({ host, port });
-      const onDone = (ok: boolean) => { sock.destroy(); resolve(ok); };
-      sock.once('connect', () => onDone(true));
-      sock.once('error', () => onDone(false));
-      sock.setTimeout(400, () => onDone(false));
-    });
-    if (alive) return true;
-    await new Promise(r => setTimeout(r, 1000));
-  }
-  return false;
+// Single-shot TCP probe — open a connection, accept any connect event, close.
+async function tryTcp(host: string, port: number): Promise<boolean> {
+  return await new Promise<boolean>(resolve => {
+    const sock = net.createConnection({ host, port });
+    const onDone = (ok: boolean) => { sock.destroy(); resolve(ok); };
+    sock.once('connect', () => onDone(true));
+    sock.once('error', () => onDone(false));
+    sock.setTimeout(400, () => onDone(false));
+  });
 }
