@@ -71,4 +71,44 @@ describe('RunFileSchema', () => {
     expect(outcome.ok).toBe(true);
     if (outcome.ok) expect(outcome.value.configurations).toEqual([]);
   });
+
+  test('accepts a Quarkus config', () => {
+    const quarkusConfig = {
+      id: '22222222-3333-4444-5555-666666666666',
+      name: 'Quarkus dev',
+      type: 'quarkus',
+      projectPath: 'api',
+      workspaceFolder: '',
+      env: {},
+      programArgs: '',
+      vmArgs: '',
+      typeOptions: {
+        launchMode: 'maven',
+        buildTool: 'maven',
+        gradleCommand: './gradlew',
+        profile: 'dev',
+        jdkPath: '',
+        module: '',
+        gradlePath: '',
+        mavenPath: '',
+        buildRoot: '',
+        debugPort: 5005,
+        colorOutput: true,
+      },
+    };
+    const result = RunFileSchema.safeParse({ version: 1, configurations: [quarkusConfig] });
+    expect(result.success).toBe(true);
+  });
+
+  test('rejects Quarkus config missing required typeOptions field', () => {
+    const result = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        ...minimalConfig,
+        type: 'quarkus',
+        typeOptions: { launchMode: 'maven' },  // missing everything else
+      }],
+    });
+    expect(result.success).toBe(false);
+  });
 });

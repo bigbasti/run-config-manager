@@ -60,6 +60,26 @@ describe('readyPatternsFor', () => {
     expect(patterns).toEqual([]);
     expect(chunkSignalsReady('anything', patterns)).toBe(false);
   });
+
+  test('Quarkus: Listening on: http://...', () => {
+    const patterns = readyPatternsFor(cfg({ type: 'quarkus' } as any));
+    expect(chunkSignalsReady(
+      '__  ____  __  _____   ___  __ ____  ______\nListening on: http://0.0.0.0:8080',
+      patterns,
+    )).toBe(true);
+    expect(chunkSignalsReady('Listening on:  http://localhost:8080', patterns)).toBe(true);
+  });
+
+  test('Quarkus: Profile dev activated. Live Coding activated.', () => {
+    const patterns = readyPatternsFor(cfg({ type: 'quarkus' } as any));
+    expect(chunkSignalsReady('Profile dev activated. Live Coding activated.', patterns)).toBe(true);
+  });
+
+  test('Quarkus: no false positive on build noise', () => {
+    const patterns = readyPatternsFor(cfg({ type: 'quarkus' } as any));
+    expect(chunkSignalsReady('> Task :compileJava', patterns)).toBe(false);
+    expect(chunkSignalsReady('[INFO] BUILD SUCCESS', patterns)).toBe(false);
+  });
 });
 
 describe('failurePatternsFor', () => {
@@ -122,5 +142,21 @@ describe('failurePatternsFor', () => {
 
   test('unknown type returns empty failure patterns', () => {
     expect(failurePatternsFor({ type: 'unknown' } as any)).toEqual([]);
+  });
+
+  test('Quarkus: Failed to start application', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'quarkus' } as any));
+    expect(chunkSignalsFailure('ERROR [io.quarkus] Failed to start application', patterns)).toBe(true);
+    expect(chunkSignalsFailure('Failed to start quarkus: ...', patterns)).toBe(true);
+  });
+
+  test('Quarkus: Port already in use', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'quarkus' } as any));
+    expect(chunkSignalsFailure('Port 8080 is already in use', patterns)).toBe(true);
+  });
+
+  test('Quarkus: Gradle BUILD FAILED', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'quarkus' } as any));
+    expect(chunkSignalsFailure('BUILD FAILED in 4s', patterns)).toBe(true);
   });
 });

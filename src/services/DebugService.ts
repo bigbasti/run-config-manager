@@ -77,6 +77,9 @@ export class DebugService {
     if (conf.type === 'java' && conf.request === 'attach' && resolvedCfg.type === 'tomcat') {
       return await this.startTomcatAttachFlow(resolvedCfg, folder, conf);
     }
+    if (conf.type === 'java' && conf.request === 'attach' && resolvedCfg.type === 'quarkus') {
+      return await this.startQuarkusAttachFlow(resolvedCfg, folder, conf);
+    }
 
     // Launch-mode Java (java-main) or non-Java: startDebugging handles the JVM.
     try {
@@ -209,6 +212,52 @@ export class DebugService {
     }
   }
 
+  // Quarkus: `-Ddebug=<port>` is already baked into buildCommand, so we don't
+  // need to mutate the config here. Just run and wait for the JDWP socket, same
+  // as Tomcat.
+  private async startQuarkusAttachFlow(
+    cfg: Extract<RunConfig, { type: 'quarkus' }>,
+    folder: vscode.WorkspaceFolder,
+    attachConf: vscode.DebugConfiguration,
+  ): Promise<boolean> {
+    if (!this.exec) {
+      vscode.window.showErrorMessage('Internal error: ExecutionService not wired into DebugService.');
+      return false;
+    }
+    const port = (attachConf.port as number | undefined) ?? cfg.typeOptions.debugPort ?? 5005;
+
+    const execution = await this.exec.run(cfg, folder, { debug: true, debugPort: port });
+    if (!execution) return false;
+
+    log.info(`Quarkus debug: waiting for JDWP on localhost:${port}…`);
+    const ready = await waitForPort('localhost', port, 5 * 60_000);
+    if (!ready) {
+      vscode.window.showErrorMessage(
+        `Debug attach failed: JDWP port ${port} did not open within 5 minutes.`,
+      );
+      await this.exec.stop(cfg.id);
+      return false;
+    }
+    log.info(`Quarkus debug: JDWP socket open, attaching…`);
+
+    try {
+      const started = await vscode.debug.startDebugging(folder, attachConf);
+      if (started) {
+        this.running.set(cfg.id, cfg.name);
+        this.emitter.fire(cfg.id);
+        log.info(`Debug attached to Quarkus: ${cfg.name} (port ${port})`);
+      } else {
+        await this.exec.stop(cfg.id);
+      }
+      return started;
+    } catch (e) {
+      log.error(`Quarkus debug attach failed for ${cfg.name}`, e);
+      vscode.window.showErrorMessage(`Debug attach failed: ${(e as Error).message}`);
+      await this.exec.stop(cfg.id);
+      return false;
+    }
+  }
+
   async stop(configId: string): Promise<void> {
     const sessionName = this.running.get(configId);
     if (!sessionName) return;
@@ -258,6 +307,9 @@ function debugCwd(cfg: RunConfig, folder: vscode.WorkspaceFolder): string {
     if ((to.launchMode === 'maven' || to.launchMode === 'gradle') && to.buildRoot) {
       return to.buildRoot;
     }
+  }
+  if (cfg.type === 'quarkus' && cfg.typeOptions.buildRoot) {
+    return cfg.typeOptions.buildRoot;
   }
   return resolveProjectUri(folder, cfg.projectPath).fsPath;
 }

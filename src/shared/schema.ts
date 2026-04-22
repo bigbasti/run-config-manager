@@ -59,6 +59,23 @@ const commonFields = {
   port: z.number().int().positive().optional(),
 };
 
+export const QuarkusLaunchModeSchema = z.enum(['maven', 'gradle']);
+
+export const QuarkusTypeOptionsSchema = z
+  .object({
+    launchMode: QuarkusLaunchModeSchema,
+    buildTool: JavaBuildToolSchema,
+    gradleCommand: GradleCommandSchema,
+    profile: z.string(),
+    jdkPath: z.string(),
+    module: z.string(),
+    gradlePath: z.string(),
+    mavenPath: z.string(),
+    buildRoot: z.string(),
+    debugPort: z.number().int().min(1).max(65535).optional(),
+    colorOutput: z.boolean().optional(),
+  });
+
 export const ArtifactKindSchema = z.enum(['war', 'exploded']);
 export const TomcatBuildToolSchema = z.enum(['gradle', 'maven', 'none']);
 
@@ -117,6 +134,11 @@ export const RunConfigSchema = z.discriminatedUnion('type', [
     ...commonFields,
     type: z.literal('tomcat'),
     typeOptions: TomcatTypeOptionsSchema,
+  }),
+  z.object({
+    ...commonFields,
+    type: z.literal('quarkus'),
+    typeOptions: QuarkusTypeOptionsSchema,
   }),
 ]);
 

@@ -9,6 +9,14 @@ import type { RunConfig } from '../shared/types';
 // matches early in the log stream. The patterns are intentionally broad — a
 // false negative (staying in the spinner) is better than a false positive.
 
+// BUILD FAILED / BUILD FAILURE appears as the last line of a Gradle or Maven
+// build that bailed before the app ever started. Every JVM-type config that
+// shells out to a build tool shares these, so we keep them in one place.
+const SHARED_BUILD_TOOL_FAILURES: RegExp[] = [
+  /^BUILD FAILED\b/m,
+  /^BUILD FAILURE\b/m,
+];
+
 export function readyPatternsFor(cfg: RunConfig): RegExp[] {
   if (cfg.type === 'spring-boot') {
     return [
@@ -30,6 +38,16 @@ export function readyPatternsFor(cfg: RunConfig): RegExp[] {
       /Server startup in \[?\d+\]? (ms|milliseconds)/,
       // Spring Boot apps deployed as WARs still emit their Started marker.
       /Started [\w$.]+ in [\d.]+ seconds/,
+    ];
+  }
+  if (cfg.type === 'quarkus') {
+    return [
+      // 'Listening on: http://0.0.0.0:8080' — Quarkus prints this exactly once
+      // when dev mode is fully up, immediately after the build.
+      /Listening on:\s*https?:\/\//,
+      // 'Profile dev activated. Live Coding activated.' — also once, at the
+      // tail of the startup banner.
+      /Profile \w+ activated\. Live Coding activated/,
     ];
   }
   if (cfg.type === 'npm') {
@@ -82,9 +100,7 @@ export function failurePatternsFor(cfg: RunConfig): RegExp[] {
       /Error starting ApplicationContext/,
       // Port already bound.
       /Web server failed to start/,
-      // Gradle / Maven build step that precedes bootRun.
-      /^BUILD FAILED\b/m,
-      /^BUILD FAILURE\b/m,
+      ...SHARED_BUILD_TOOL_FAILURES,
     ];
   }
   if (cfg.type === 'tomcat') {
@@ -96,9 +112,16 @@ export function failurePatternsFor(cfg: RunConfig): RegExp[] {
       // Port bind failure — "Failed to initialize connector" + BindException.
       /Failed to initialize (?:connector|end ?point)/,
       /java\.net\.BindException/,
-      // Build step that precedes launch.
-      /^BUILD FAILED\b/m,
-      /^BUILD FAILURE\b/m,
+      ...SHARED_BUILD_TOOL_FAILURES,
+    ];
+  }
+  if (cfg.type === 'quarkus') {
+    return [
+      // Quarkus's own startup-failure banner. Covers dev-mode + prod failures.
+      /Failed to start (?:application|quarkus)/i,
+      // Port bind failure — Quarkus prints this verbatim.
+      /Port \d+ is already in use/,
+      ...SHARED_BUILD_TOOL_FAILURES,
     ];
   }
   if (cfg.type === 'npm') {

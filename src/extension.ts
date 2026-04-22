@@ -8,6 +8,7 @@ import { AdapterRegistry } from './adapters/AdapterRegistry';
 import { NpmAdapter } from './adapters/npm/NpmAdapter';
 import { SpringBootAdapter } from './adapters/spring-boot/SpringBootAdapter';
 import { TomcatAdapter } from './adapters/tomcat/TomcatAdapter';
+import { QuarkusAdapter } from './adapters/quarkus/QuarkusAdapter';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
 import { log, initLogger } from './utils/logger';
@@ -27,6 +28,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.register(new NpmAdapter());
   registry.register(new SpringBootAdapter());
   registry.register(new TomcatAdapter());
+  registry.register(new QuarkusAdapter());
 
   const store = new ConfigStore();
   const svc = new RunConfigService(store);
@@ -312,6 +314,8 @@ async function addConfig(
           'typeOptions.tomcatHome',
           'typeOptions.artifactPath',
           'typeOptions.artifactKind',
+          // Quarkus-specific
+          'typeOptions.profile',
         ],
       },
     }, context, svc);
@@ -390,11 +394,12 @@ async function autoCreateConfigs(
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: 'Auto-creating run configurations…', cancellable: false },
     async (progress) => {
-      // Priority: spring-boot beats tomcat beats npm. Any project with both
-      // Spring Boot and a WAR output could match tomcat too; we pick the
-      // more specific one. npm is the catch-all — lots of Java projects have
-      // package.json for lint/docs tooling.
-      const priority: RunConfigType[] = ['spring-boot', 'tomcat', 'npm'];
+      // Priority: spring-boot > quarkus > tomcat > npm. Spring Boot first
+      // because a hybrid project with both plugins should pick Spring Boot;
+      // Quarkus second because it's more specific than Tomcat (which matches
+      // any project that produces a WAR). npm is last — lots of Java projects
+      // have package.json for lint/docs tooling.
+      const priority: RunConfigType[] = ['spring-boot', 'quarkus', 'tomcat', 'npm'];
 
       const children = await listDirectChildren(root);
       // Also scan the root itself as a candidate module (single-module repos).
@@ -497,7 +502,11 @@ function relativePath(root: string, child: string): string {
 
 function deriveConfigName(child: vscode.Uri, type: RunConfigType): string {
   const base = child.fsPath.split(/[/\\]/).filter(Boolean).pop() ?? 'app';
-  const suffix = type === 'spring-boot' ? 'API' : type === 'tomcat' ? 'Tomcat' : 'Web';
+  const suffix =
+    type === 'spring-boot' ? 'API' :
+    type === 'quarkus'     ? 'Quarkus' :
+    type === 'tomcat'      ? 'Tomcat' :
+                             'Web';
   // Capitalise first letter, keep the rest as-is ("api" → "Api").
   const pretty = base.charAt(0).toUpperCase() + base.slice(1);
   return `${pretty} ${suffix}`;
@@ -572,6 +581,26 @@ function mergeAutoCreateDefaults(
         vmOptions: '',
         reloadable: true,
         rebuildOnSave: false,
+      },
+    };
+  }
+  if (type === 'quarkus') {
+    const buildTool = typeOptions.buildTool ?? 'maven';
+    return {
+      ...base,
+      type: 'quarkus',
+      typeOptions: {
+        launchMode: typeOptions.launchMode ?? buildTool,
+        buildTool,
+        gradleCommand: typeOptions.gradleCommand ?? './gradlew',
+        profile: '',
+        jdkPath: typeOptions.jdkPath ?? '',
+        module: '',
+        gradlePath: typeOptions.gradlePath ?? '',
+        mavenPath: typeOptions.mavenPath ?? '',
+        buildRoot: typeOptions.buildRoot ?? '',
+        debugPort: 5005,
+        colorOutput: true,
       },
     };
   }

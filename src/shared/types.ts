@@ -1,4 +1,4 @@
-export type RunConfigType = 'npm' | 'spring-boot' | 'tomcat';
+export type RunConfigType = 'npm' | 'spring-boot' | 'tomcat' | 'quarkus';
 
 export type PackageManager = 'npm' | 'yarn' | 'pnpm';
 
@@ -98,10 +98,39 @@ export interface TomcatTypeOptions {
   colorOutput?: boolean;
 }
 
+// Quarkus has two launch modes: Maven's `quarkus:dev` and Gradle's `quarkusDev`.
+// No java-main mode — Quarkus's framework owns the main; users run the runner
+// jar only for production, and we don't cover that path in v1.
+export type QuarkusLaunchMode = 'maven' | 'gradle';
+
+export interface QuarkusTypeOptions {
+  launchMode: QuarkusLaunchMode;
+  // Kept for parity with Spring Boot so the form can surface a build-tool
+  // verdict independent of launchMode; usually echoes launchMode.
+  buildTool: JavaBuildTool;
+  gradleCommand: GradleCommand;
+  // Single active profile (Quarkus honors only one). Empty = don't pass
+  // -Dquarkus.profile at all.
+  profile: string;
+  jdkPath: string;
+  module: string;
+  gradlePath: string;
+  mavenPath: string;
+  buildRoot: string;
+  // JDWP port. Quarkus dev mode opens debug on 5005 by default; we pass
+  // `-Ddebug=<port>` unconditionally (see Q2 decision in the spec). When
+  // undefined the adapter falls back to 5005.
+  debugPort?: number;
+  // FORCE_COLOR=1 + CLICOLOR_FORCE=1 in env. No Spring-Boot-ansi system
+  // property needed — Quarkus's console does its own color detection.
+  colorOutput?: boolean;
+}
+
 export type RunConfig =
   | (RunConfigBase & { type: 'npm'; typeOptions: NpmTypeOptions })
   | (RunConfigBase & { type: 'spring-boot'; typeOptions: SpringBootTypeOptions })
-  | (RunConfigBase & { type: 'tomcat'; typeOptions: TomcatTypeOptions });
+  | (RunConfigBase & { type: 'tomcat'; typeOptions: TomcatTypeOptions })
+  | (RunConfigBase & { type: 'quarkus'; typeOptions: QuarkusTypeOptions });
 
 export interface RunFile {
   version: 1;

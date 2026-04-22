@@ -173,6 +173,7 @@ function labelForType(type: RunConfig['type']): string {
     case 'npm': return 'npm / Node.js';
     case 'spring-boot': return 'Spring Boot';
     case 'tomcat': return 'Tomcat';
+    case 'quarkus': return 'Quarkus';
     default: return type;
   }
 }
@@ -183,6 +184,7 @@ function iconForType(type: string): string {
     case 'npm': return 'package';
     case 'spring-boot': return 'rocket';
     case 'tomcat': return 'server-environment';
+    case 'quarkus': return 'zap';
     default: return 'circle-outline';
   }
 }

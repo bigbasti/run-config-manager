@@ -4,7 +4,7 @@ This document is written for a fresh LLM session taking over work on this repo. 
 
 ## What this is
 
-A VS Code extension that gives the editor IntelliJ-style run configurations. Configs live in `.vscode/run.json`, rendered as a tree in the Activity Bar. Each config has a type (`npm`, `spring-boot`, `tomcat`), and the extension spawns the right shell command for you, scanning the terminal output to show whether the app is starting, started, or failed. A webview-based editor lets the user create/edit configs with a schema-driven form.
+A VS Code extension that gives the editor IntelliJ-style run configurations. Configs live in `.vscode/run.json`, rendered as a tree in the Activity Bar. Each config has a type (`npm`, `spring-boot`, `tomcat`, `quarkus`), and the extension spawns the right shell command for you, scanning the terminal output to show whether the app is starting, started, or failed. A webview-based editor lets the user create/edit configs with a schema-driven form.
 
 Repo root: `/git/run-config-manager`. Main branch: `main`. It is an independent git repo (not a submodule of `/git/zebra`).
 
@@ -35,6 +35,7 @@ src/
     npm/                           # NpmAdapter + detectPackageJson + splitArgs
     spring-boot/                   # SpringBootAdapter + a stack of detect/resolve helpers
     tomcat/                        # TomcatAdapter + detectTomcat + tomcatRuntime (CATALINA_BASE scaffold)
+    quarkus/                       # QuarkusAdapter + detectQuarkus + findQuarkusProfiles
   services/                        # runtime orchestration (no UI)
     ConfigStore.ts                 # .vscode/run.json loader + watcher, per workspace folder
     RunConfigService.ts            # thin CRUD wrapper on top of store
@@ -60,7 +61,7 @@ webview/src/                       # React app that renders inside the EditorPan
   ConfigForm.tsx                   # renders common + typeSpecific + advanced sections
   form/                            # Field, InspectDialog, SelectOrCustom, KvEditor, CsvChecklist, FolderPathInput
   state.ts                         # local state helpers
-test/                              # jest tests (25 files, ~190 cases)
+test/                              # jest tests (28 files, ~230 cases)
 __mocks__/vscode.ts                # in-memory filesystem + event emitters
 ```
 
@@ -71,6 +72,7 @@ __mocks__/vscode.ts                # in-memory filesystem + event emitters
 - `{ type: 'npm', typeOptions: NpmTypeOptions }` — `scriptName`, `packageManager` (`npm|yarn|pnpm`).
 - `{ type: 'spring-boot', typeOptions: SpringBootTypeOptions }` — `launchMode` (`maven|gradle|java-main`), `buildTool`, `gradleCommand` (`./gradlew|gradle`), `profiles`, `mainClass`, `classpath`, `jdkPath`, `module`, `gradlePath`, `mavenPath`, `buildRoot`, `debugPort?`, `rebuildOnSave?`, `colorOutput?`.
 - `{ type: 'tomcat', typeOptions: TomcatTypeOptions }` — `tomcatHome`, `jdkPath`, `httpPort`, `buildProjectPath`, `buildRoot`, `buildTool`, `gradleCommand`, `gradlePath`, `mavenPath`, `artifactPath`, `artifactKind` (`war|exploded`), `applicationContext`, `vmOptions`, `reloadable`, `rebuildOnSave`, `colorOutput?`.
+- `{ type: 'quarkus', typeOptions: QuarkusTypeOptions }` — `launchMode` (`maven|gradle` — no java-main), `buildTool`, `gradleCommand`, `profile` (single, not CSV), `jdkPath`, `module`, `gradlePath`, `mavenPath`, `buildRoot`, `debugPort?`, `colorOutput?`. No `rebuildOnSave` (Quarkus has built-in Live Coding).
 
 Shared base fields: `id`, `name`, `projectPath`, `workspaceFolder`, `env`, `programArgs`, `vmArgs`, `port?`.
 
@@ -80,7 +82,7 @@ Zod schemas in `src/shared/schema.ts` use `z.discriminatedUnion('type', ...)` an
 
 ## The adapter contract (src/adapters/RuntimeAdapter.ts)
 
-Every runtime (npm, spring-boot, tomcat) implements:
+Every runtime (npm, spring-boot, tomcat, quarkus) implements:
 
 - **`type` / `label` / `supportsDebug`** — static metadata.
 - **`detect(folder): DetectionResult | null`** — synchronous probe of the project. Returns defaults (partial `RunConfig`) plus a context object consumed by `getFormSchema`. Null = this adapter doesn't recognize the folder.
@@ -96,6 +98,7 @@ Distinctive behaviors per adapter:
 - **NpmAdapter** — reads `package.json` scripts, simple. Debug uses `pwa-node` via `spawn` so breakpoints bind.
 - **SpringBootAdapter** — `findMainClasses`, `detectJdks`, `findProfiles`, `findBuildRoot`, `recomputeClasspath`, `readServerPort` are all called from here. Multi-module Gradle is handled by `gradleModulePrefix` scoping tasks as `:module:classes` / `:module:bootRun`. For `java-main` launch mode, `suggestClasspath` computes a runtime classpath via `./gradlew printRuntimeClasspath` (a custom task injected through `-I init.gradle`).
 - **TomcatAdapter** — delegates most prepare work to `tomcatRuntime.ts`. That file builds a per-config `CATALINA_BASE` (conf/, logs/, temp/, webapps/, work/), rewrites `server.xml` with user ports + context + `reloadable`, deploys the artifact (copies the WAR or symlinks the exploded dir), and returns `CATALINA_BASE`, `CATALINA_OPTS` (JDWP via `-agentlib:jdwp=...`), and `JAVA_HOME` as env.
+- **QuarkusAdapter** — two launch modes only (`maven` + `gradle`), no java-main mode (Quarkus owns the main). Dev mode is the only launch path: `mvn quarkus:dev` or `./gradlew --console=plain quarkusDev`. JDWP is opened by Quarkus itself via `-Ddebug=<port>` (default 5005) — no `JAVA_TOOL_OPTIONS` juggling. Single profile via `-Dquarkus.profile=<name>` (Quarkus accepts only one active profile). No rebuild watcher (Live Coding is built in). Reuses `findBuildRoot`, `detectJdks`, `detectBuildTools`, `gradleModulePrefix` from `spring-boot/`. Debug flow is the simplest of the attach adapters: run + `waitForPort` + attach.
 
 ## Services
 
@@ -107,7 +110,7 @@ Distinctive behaviors per adapter:
 
 **DebugService** — debugging has two flavors:
 - **Launch** (npm, spring-boot/java-main): calls `vscode.debug.startDebugging(folder, getDebugConfig(cfg))`. That's it.
-- **Attach** (spring-boot/maven or gradle, tomcat): injects JDWP into `JAVA_TOOL_OPTIONS` (Gradle) or CATALINA_OPTS (Tomcat) via `prepareLaunch`, calls `exec.run(cfg, folder, { debug: true, debugPort })`, waits for the JDWP socket to open (`waitForPort`), then `startDebugging` with an `attach` config. If attach fails the run task is killed.
+- **Attach** (spring-boot/maven or gradle, tomcat, quarkus): runs the config first (injecting JDWP via `JAVA_TOOL_OPTIONS` for Spring Boot Gradle, CATALINA_OPTS for Tomcat, or relying on Quarkus's own `-Ddebug=<port>` flag), waits for the JDWP socket to open (`waitForPort`), then `startDebugging` with an `attach` config. If attach fails the run task is killed.
 
 Tracks `running` sessions and fires `onRunningChanged` the same way ExecutionService does. The tree listens to both.
 
@@ -193,7 +196,8 @@ Supported tokens: `${VAR}`, `${env:VAR}`, `${workspaceFolder}`, `${userHome}`, `
 
 - **Port-poll readiness removed** (commit `6e17451`) — regex-only readiness + failure detection. Don't add port polling back.
 - **Prettifier added** (commit `80fe3ed`) — ANSI + OSC 8 hyperlinks in the pseudoterminal. Raw text still feeds the scanner.
-- **Auto Create + Stop All** (commit `d2da331`) — title-bar buttons. `rcm.anyRunning` context key gates Stop All visibility.
+- **Auto Create + Stop All** (commit `d2da331`) — title-bar buttons. `rcm.anyRunning` context key gates Stop All visibility. Auto-create priority: `spring-boot > quarkus > tomcat > npm`.
+- **Quarkus adapter** — fourth runtime type. Mirrors Spring Boot's shape but simplifies: only two launch modes (`maven`/`gradle`, no java-main), debug opens itself via `-Ddebug=<port>` instead of `JAVA_TOOL_OPTIONS` injection, single profile via `-Dquarkus.profile`. No rebuild watcher — Live Coding is built in.
 - **Streaming detection** — Tomcat/Gradle probes used to block editor open for 30+s. Now `detectStreaming` runs them in parallel and patches the form as results arrive.
 
 ## When you start a new task
