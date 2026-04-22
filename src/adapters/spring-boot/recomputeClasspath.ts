@@ -40,34 +40,46 @@ export async function recomputeClasspath(args: RecomputeArgs): Promise<string> {
 async function mavenClasspath(args: RecomputeArgs): Promise<string> {
   const mvn = args.mavenPath ? `${args.mavenPath.replace(/[/\\]$/, '')}/bin/mvn` : 'mvn';
   // Run from the submodule dir — maven resolves the reactor parent on its own.
+  // dependency:build-classpath only prints external deps, so we also add the
+  // absolute path to target/classes (which contains compiled classes AND
+  // resources — resources end up flattened into the same dir after `mvn
+  // process-resources`).
   const cpOut = await spawnCollect(
     mvn,
     ['-q', 'dependency:build-classpath', '-DincludeScope=runtime', '-Dmdep.outputFile=/dev/stdout'],
     args.projectRoot.fsPath,
     args.jdkPath,
   );
-  const raw = cpOut.trim();
-  const classes = 'target/classes';
-  return raw ? `${classes}${pathSeparator()}${raw}` : classes;
+  const deps = cpOut.trim();
+  const classes = `${args.projectRoot.fsPath}/target/classes`;
+  return deps ? `${classes}${pathSeparator()}${deps}` : classes;
 }
 
 async function gradleClasspath(args: RecomputeArgs): Promise<string> {
-  // Register a task that prints the runtimeClasspath for the CURRENT project
-  // (which will be the submodule when we invoke `:<module>:<task>`).
+  // Register a task that prints the FULL runtime classpath for the CURRENT
+  // project, matching what `java -cp` would need to actually launch. We use
+  // sourceSets.main.runtimeClasspath (not configurations.runtimeClasspath)
+  // because that includes:
+  //   - build/classes/java/main        (compiled classes)
+  //   - build/resources/main           (application-*.properties etc)
+  //   - sibling-module outputs         (project dependencies resolved)
+  //   - external JAR dependencies
+  // The configurations-only variant misses resources dirs and sibling modules
+  // in multi-module projects — Spring Boot then can't find the profile
+  // properties even when the profile is marked active.
   const init = `
     allprojects {
       tasks.register('__printRuntimeClasspath') {
         doLast {
-          def cp = configurations.findByName('runtimeClasspath')
-          if (cp != null) {
-            println 'RCM_CP_BEGIN'
-            println cp.asPath
-            println 'RCM_CP_END'
+          println 'RCM_CP_BEGIN'
+          def ss = project.extensions.findByName('sourceSets')
+          if (ss != null && ss.findByName('main') != null) {
+            println ss.main.runtimeClasspath.asPath
           } else {
-            println 'RCM_CP_BEGIN'
-            println ''
-            println 'RCM_CP_END'
+            def cfg = project.configurations.findByName('runtimeClasspath')
+            println cfg != null ? cfg.asPath : ''
           }
+          println 'RCM_CP_END'
         }
       }
     }
@@ -100,11 +112,12 @@ async function gradleClasspath(args: RecomputeArgs): Promise<string> {
       args.buildRoot.fsPath,
       args.jdkPath,
     );
-    // Extract between the sentinels so we don't pick up any stray log output.
+    // Extract between sentinels so we don't pick up stray log output.
     const m = cpOut.match(/RCM_CP_BEGIN\s*\n([\s\S]*?)\n?RCM_CP_END/);
     const raw = (m?.[1] ?? '').trim();
-    const classes = 'build/classes/java/main';
-    return raw ? `${classes}${pathSeparator()}${raw}` : classes;
+    // sourceSets.main.runtimeClasspath already contains build/classes/java/main
+    // and build/resources/main as absolute paths — no prepending needed.
+    return raw || 'build/classes/java/main';
   } finally {
     try {
       await vscode.workspace.fs.delete(initFile);
