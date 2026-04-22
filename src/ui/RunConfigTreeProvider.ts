@@ -61,6 +61,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     const preparing = this.exec.isPreparing(n.config.id);
     const running = this.exec.isRunning(n.config.id) || this.dbg.isRunning(n.config.id);
     const started = this.exec.isStarted(n.config.id);
+    const failed = this.exec.isFailed(n.config.id);
     const adapter = this.registry.get(n.config.type);
     const debuggable = adapter?.supportsDebug === true;
     const item = new vscode.TreeItem(n.config.name, vscode.TreeItemCollapsibleState.None);
@@ -70,20 +71,26 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       `Command: \`${buildCommandPreview(n.config)}\`` +
       (preparing
         ? '\n\n_Preparing (running build / writing scaffold)…_'
+        : failed
+        ? '\n\n_Startup failed — see terminal for details._'
         : running && !started
         ? '\n\n_Starting…_'
         : started
-        ? '\n\n_Running — listening on the configured port._'
+        ? '\n\n_Running._'
         : ''),
     );
-    // Four visual states, in order:
+    // Visual states, in order of precedence:
     //   preparing (blue sync-spin + "Preparing…")
-    //   starting  (loading-spin — running but port not yet open)
-    //   started   (green pass-filled — port is accepting connections)
+    //   failed    (red error — log scanner matched a failure banner)
+    //   starting  (loading-spin — running, no ready signal yet)
+    //   started   (green pass-filled — ready pattern matched)
     //   idle      (type icon)
     if (preparing) {
       item.iconPath = new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.blue'));
       item.description = 'Preparing…';
+    } else if (failed) {
+      item.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
+      item.description = 'Failed';
     } else if (running && !started) {
       item.iconPath = new vscode.ThemeIcon('loading~spin');
       item.description = 'Starting…';

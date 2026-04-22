@@ -4,11 +4,14 @@ import type { RunConfig } from '../shared/types';
 import { log } from '../utils/logger';
 import { resolveProjectUri } from '../utils/paths';
 import { gradleModulePrefix } from '../adapters/spring-boot/findBuildRoot';
-import * as net from 'net';
 import { makeRunContext, resolveConfig } from '../utils/resolveVars';
-import { readServerPort } from '../adapters/spring-boot/readServerPort';
 import { RunTerminal } from './RunTerminal';
-import { readyPatternsFor, chunkSignalsReady } from './readyPatterns';
+import {
+  readyPatternsFor,
+  chunkSignalsReady,
+  failurePatternsFor,
+  chunkSignalsFailure,
+} from './readyPatterns';
 
 interface Entry {
   execution: vscode.TaskExecution;
@@ -33,11 +36,15 @@ export class ExecutionService {
   // Gradle builds the WAR. Tree provider reads this to show a distinct
   // busy-but-not-yet-running state.
   private preparing = new Set<string>();
-  // "Started" is the window after the configured listen port accepts a TCP
-  // connection. Tree provider upgrades the spinner to a green check once the
-  // config transitions into this state. Configs with no discoverable port
-  // stay in the spinner state — correctness trumps a false "ready" signal.
+  // "Started" means the log scanner matched a readiness phrase for this
+  // config's type. Tree provider upgrades the spinner to a green check.
+  // Configs whose output never matches a known pattern just stay in the
+  // spinner state — correctness trumps a false "ready" signal.
   private started = new Set<string>();
+  // "Failed" means the log scanner matched a startup-failure pattern (e.g.
+  // "APPLICATION FAILED TO START"). Renders as a red circle; the process may
+  // still be alive but the tree reflects the terminal state.
+  private failed = new Set<string>();
   private emitter = new vscode.EventEmitter<string>();
   readonly onRunningChanged = this.emitter.event;
   private taskEndSub: vscode.Disposable;
@@ -56,6 +63,10 @@ export class ExecutionService {
 
   isStarted(configId: string): boolean {
     return this.started.has(configId);
+  }
+
+  isFailed(configId: string): boolean {
+    return this.failed.has(configId);
   }
 
   async run(
@@ -112,14 +123,26 @@ export class ExecutionService {
 
     // Custom terminal: we own the child process so we can scan stdout for
     // readiness phrases (e.g. Spring's "Started X in 4s", Angular's "Compiled
-    // successfully") alongside the terminal-visible output. Falls back to the
-    // port-poll signal for apps without a recognised pattern.
-    const patterns = readyPatternsFor(resolvedCfg);
+    // successfully") and failure banners (e.g. "APPLICATION FAILED TO START")
+    // alongside the terminal-visible output. Port polling was removed because
+    // dev-server ports tend to bind before the app is actually usable — the
+    // regex signal is slower but much more honest.
+    const readyPatterns = readyPatternsFor(resolvedCfg);
+    const failPatterns = failurePatternsFor(resolvedCfg);
     const markReady = (reason: string) => {
-      if (this.running.has(cfg.id) && !this.started.has(cfg.id)) {
+      if (this.running.has(cfg.id) && !this.started.has(cfg.id) && !this.failed.has(cfg.id)) {
         this.started.add(cfg.id);
         this.emitter.fire(cfg.id);
         log.info(`Ready: ${cfg.name} — ${reason}`);
+      }
+    };
+    const markFailed = (reason: string) => {
+      if (this.running.has(cfg.id) && !this.failed.has(cfg.id)) {
+        this.failed.add(cfg.id);
+        // Clear started in case a ready signal fired just before the failure.
+        this.started.delete(cfg.id);
+        this.emitter.fire(cfg.id);
+        log.warn(`Failed: ${cfg.name} — ${reason}`);
       }
     };
 
@@ -129,8 +152,12 @@ export class ExecutionService {
       cwd,
       env: mergedEnv,
       onOutput: chunk => {
-        if (patterns.length && chunkSignalsReady(chunk, patterns)) {
-          markReady(`matched readiness pattern`);
+        if (failPatterns.length && chunkSignalsFailure(chunk, failPatterns)) {
+          markFailed('matched failure pattern');
+          return;
+        }
+        if (readyPatterns.length && chunkSignalsReady(chunk, readyPatterns)) {
+          markReady('matched readiness pattern');
         }
       },
       onExit: () => {
@@ -165,40 +192,11 @@ export class ExecutionService {
       this.running.set(cfg.id, entry);
       this.emitter.fire(cfg.id);
       log.info(`Started: ${cfg.name} (${command} ${args.join(' ')})`);
-
-      // Fallback: port poll in parallel with the log scanner. The first signal
-      // to hit wins. Covers apps whose output doesn't match any known pattern
-      // but whose port is known or guessable (e.g. Tomcat's httpPort).
-      void (async () => {
-        const ports = await detectReadyPorts(resolvedCfg, folder);
-        if (ports.length > 0) void this.watchReadyPort(cfg.id, ports);
-      })();
       return execution;
     } catch (e) {
       log.error(`Failed to start ${cfg.name}`, e);
       vscode.window.showErrorMessage(`Failed to start "${cfg.name}": ${(e as Error).message}`);
       return undefined;
-    }
-  }
-
-  private async watchReadyPort(configId: string, ports: number[]): Promise<void> {
-    // Race all candidate ports — first one to open wins. Bail as soon as the
-    // log scanner has already marked us ready, so we don't spam log lines.
-    const deadline = Date.now() + 10 * 60_000;
-    while (Date.now() < deadline && this.running.has(configId)) {
-      if (this.started.has(configId)) return;
-      for (const p of ports) {
-        const alive = await tryTcp('localhost', p);
-        if (alive) {
-          if (!this.running.has(configId)) return;
-          if (this.started.has(configId)) return;
-          this.started.add(configId);
-          this.emitter.fire(configId);
-          log.info(`Ready: ${configId} listening on ${p}`);
-          return;
-        }
-      }
-      await new Promise(r => setTimeout(r, 1000));
     }
   }
 
@@ -209,6 +207,7 @@ export class ExecutionService {
     entry.watcher?.terminate();
     this.running.delete(configId);
     this.started.delete(configId);
+    this.failed.delete(configId);
     this.emitter.fire(configId);
   }
 
@@ -219,6 +218,7 @@ export class ExecutionService {
         entry.watcher?.terminate();
         this.running.delete(id);
         this.started.delete(id);
+        this.failed.delete(id);
         this.emitter.fire(id);
         return;
       }
@@ -239,6 +239,7 @@ export class ExecutionService {
     }
     this.running.clear();
     this.started.clear();
+    this.failed.clear();
     this.taskEndSub.dispose();
     this.emitter.dispose();
   }
@@ -296,51 +297,4 @@ async function startRebuildWatcher(
   );
   log.info(`Started rebuild watcher: ${gradleBinary} -t ${task} (cwd ${buildRoot})`);
   return vscode.tasks.executeTask(vsTask);
-}
-
-// Candidate ports the tree polls to detect when a config has "started".
-// Per type:
-//   - tomcat:       typeOptions.httpPort.
-//   - spring-boot:  user-set cfg.port first, else server.port from the active
-//                   profile's properties / yml, else Spring's default 8080.
-//   - npm:          user-set cfg.port first, else common dev-server ports
-//                   (3000 Node, 4200 Angular CLI, 5173 Vite, 8080 generic).
-// Returning multiple ports is fine — the watcher races them and takes the
-// first that opens.
-async function detectReadyPorts(cfg: RunConfig, folder: vscode.WorkspaceFolder): Promise<number[]> {
-  if (cfg.type === 'tomcat') {
-    return cfg.typeOptions.httpPort ? [cfg.typeOptions.httpPort] : [];
-  }
-
-  const ports: number[] = [];
-  if (typeof cfg.port === 'number' && cfg.port > 0) ports.push(cfg.port);
-
-  if (cfg.type === 'spring-boot') {
-    const projectUri = resolveProjectUri(folder, cfg.projectPath);
-    try {
-      const fromFile = await readServerPort(projectUri, cfg.typeOptions.profiles ?? '');
-      if (fromFile !== null && !ports.includes(fromFile)) ports.push(fromFile);
-    } catch { /* best-effort */ }
-    if (!ports.includes(8080)) ports.push(8080); // Spring Boot default
-  } else if (cfg.type === 'npm') {
-    // Common dev-server defaults. Harmless to poll — first match wins, no
-    // false positive as long as the user isn't running two different apps
-    // on the same machine at once (and in that case we pick one; worst case
-    // the tree shows started slightly too early for one of them).
-    for (const p of [3000, 4200, 5173, 8080]) {
-      if (!ports.includes(p)) ports.push(p);
-    }
-  }
-  return ports;
-}
-
-// Single-shot TCP probe — open a connection, accept any connect event, close.
-async function tryTcp(host: string, port: number): Promise<boolean> {
-  return await new Promise<boolean>(resolve => {
-    const sock = net.createConnection({ host, port });
-    const onDone = (ok: boolean) => { sock.destroy(); resolve(ok); };
-    sock.once('connect', () => onDone(true));
-    sock.once('error', () => onDone(false));
-    sock.setTimeout(400, () => onDone(false));
-  });
 }

@@ -1,4 +1,9 @@
-import { readyPatternsFor, chunkSignalsReady } from '../src/services/readyPatterns';
+import {
+  readyPatternsFor,
+  chunkSignalsReady,
+  failurePatternsFor,
+  chunkSignalsFailure,
+} from '../src/services/readyPatterns';
 import type { RunConfig } from '../src/shared/types';
 
 function cfg(overrides: Partial<RunConfig>): RunConfig {
@@ -54,5 +59,68 @@ describe('readyPatternsFor', () => {
     const patterns = readyPatternsFor({ type: 'unknown' } as any);
     expect(patterns).toEqual([]);
     expect(chunkSignalsReady('anything', patterns)).toBe(false);
+  });
+});
+
+describe('failurePatternsFor', () => {
+  test('Spring Boot: APPLICATION FAILED TO START banner', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'spring-boot' }));
+    expect(chunkSignalsFailure(
+      '***************************\nAPPLICATION FAILED TO START\n***************************',
+      patterns,
+    )).toBe(true);
+  });
+
+  test('Spring Boot: Web server failed to start', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'spring-boot' }));
+    expect(chunkSignalsFailure('Web server failed to start. Port 8080 was already in use.', patterns)).toBe(true);
+  });
+
+  test('Spring Boot: Gradle BUILD FAILED', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'spring-boot' }));
+    expect(chunkSignalsFailure('BUILD FAILED in 3s', patterns)).toBe(true);
+  });
+
+  test('Tomcat: BindException', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'tomcat' }));
+    expect(chunkSignalsFailure(
+      'Caused by: java.net.BindException: Address already in use',
+      patterns,
+    )).toBe(true);
+  });
+
+  test('Tomcat: context startup failed', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'tomcat' }));
+    expect(chunkSignalsFailure(
+      'Context [/api] startup failed due to previous errors',
+      patterns,
+    )).toBe(true);
+  });
+
+  test('npm: Angular bundle generation failed', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'npm' } as any));
+    expect(chunkSignalsFailure('✘ Application bundle generation failed. [2.345 seconds]', patterns)).toBe(true);
+  });
+
+  test('npm: EADDRINUSE', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'npm' } as any));
+    expect(chunkSignalsFailure('Error: listen EADDRINUSE: address already in use :::3000', patterns)).toBe(true);
+  });
+
+  test('npm: npm ERR!', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'npm' } as any));
+    expect(chunkSignalsFailure('npm ERR! Missing script: "stort"', patterns)).toBe(true);
+  });
+
+  test('no false positive on happy-path log lines', () => {
+    const sb = failurePatternsFor(cfg({ type: 'spring-boot' }));
+    expect(chunkSignalsFailure('INFO  Started DdsSWebApiApplication in 8.1 seconds', sb)).toBe(false);
+    expect(chunkSignalsFailure('BUILD SUCCESSFUL in 4s', sb)).toBe(false);
+    const npm = failurePatternsFor(cfg({ type: 'npm' } as any));
+    expect(chunkSignalsFailure('✔ Compiled successfully.', npm)).toBe(false);
+  });
+
+  test('unknown type returns empty failure patterns', () => {
+    expect(failurePatternsFor({ type: 'unknown' } as any)).toEqual([]);
   });
 });

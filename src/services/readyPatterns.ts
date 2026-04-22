@@ -66,3 +66,60 @@ export function chunkSignalsReady(text: string, patterns: RegExp[]): boolean {
   }
   return false;
 }
+
+// Returns regex patterns whose first match in the terminal output signals that
+// startup has failed. ExecutionService flips the config to a 'failed' state and
+// the tree renders a red circle instead of green. As with ready patterns, err
+// on the side of false negatives — a single noisy log line shouldn't shout
+// "failed" when it's actually fine.
+export function failurePatternsFor(cfg: RunConfig): RegExp[] {
+  if (cfg.type === 'spring-boot') {
+    return [
+      // Canonical Spring Boot startup failure banner — appears once when
+      // ApplicationContext fails to refresh.
+      /APPLICATION FAILED TO START/,
+      /Application run failed/,
+      /Error starting ApplicationContext/,
+      // Port already bound.
+      /Web server failed to start/,
+      // Gradle / Maven build step that precedes bootRun.
+      /^BUILD FAILED\b/m,
+      /^BUILD FAILURE\b/m,
+    ];
+  }
+  if (cfg.type === 'tomcat') {
+    return [
+      // Tomcat writes this on catastrophic startup.
+      /A child container failed during start/,
+      /Context \[[^\]]*\] startup failed due to previous errors/,
+      /Error deploying web application/,
+      // Port bind failure — "Failed to initialize connector" + BindException.
+      /Failed to initialize (?:connector|end ?point)/,
+      /java\.net\.BindException/,
+      // Build step that precedes launch.
+      /^BUILD FAILED\b/m,
+      /^BUILD FAILURE\b/m,
+    ];
+  }
+  if (cfg.type === 'npm') {
+    return [
+      // Angular CLI 15+ prints this for build-time errors.
+      /Application bundle generation failed/,
+      /Failed to compile\./,
+      // webpack.
+      /webpack [\w.]+ compiled with \d+ errors?/i,
+      // npm itself bailed (script not found, lifecycle error, etc).
+      /npm ERR!/,
+      // Port already in use — Node throws this before the server binds.
+      /Error: listen EADDRINUSE/,
+    ];
+  }
+  return [];
+}
+
+export function chunkSignalsFailure(text: string, patterns: RegExp[]): boolean {
+  for (const p of patterns) {
+    if (p.test(text)) return true;
+  }
+  return false;
+}
