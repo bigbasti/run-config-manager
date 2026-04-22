@@ -300,12 +300,22 @@ export class SpringBootAdapter implements RuntimeAdapter {
         request: 'launch',
         name: cfg.name,
         mainClass: to.mainClass,
+        // Empty projectName tells the Java debugger NOT to resolve the project
+        // from redhat.java's workspace model — it uses only the classPaths we
+        // provide. Otherwise the debugger waits for the Java extension to
+        // finish indexing the entire workspace before starting the JVM.
+        projectName: '',
         classPaths,
+        // Don't let the debugger tack on anything from the resolved project.
+        modulePaths: [],
+        sourcePaths: [],
         ...(to.jdkPath ? { javaExec: `${to.jdkPath.replace(/[/\\]$/, '')}/bin/java` } : {}),
         ...(composedVmArgs ? { vmArgs: composedVmArgs } : {}),
         ...(args ? { args } : {}),
         env: cfg.env ?? {},
         console: 'integratedTerminal',
+        // Skip the "resolve main class" workflow — we already know it.
+        shortenCommandLine: 'auto',
       };
     }
 

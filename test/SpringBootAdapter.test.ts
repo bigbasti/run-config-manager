@@ -172,6 +172,9 @@ describe('SpringBootAdapter debug', () => {
     expect(r.mainClass).toBe('com.example.App');
     expect(r.classPaths).toEqual(['/a', '/b', '/c']);
     expect(r.javaExec).toBe('/opt/jdk-21/bin/java');
+    // Empty projectName tells the Java debugger to skip project-model
+    // resolution and use only our classpath.
+    expect(r.projectName).toBe('');
   });
 
   test('getDebugConfig for maven returns an attach config on default port 5005', () => {
