@@ -170,7 +170,7 @@ export class ConfigStore {
     const tmp = vscode.Uri.joinPath(dir, 'run.json.tmp');
     const encoded = new TextEncoder().encode(stringifyRunFile(file));
     await vscode.workspace.fs.writeFile(tmp, encoded);
-    await vscode.workspace.fs.rename(tmp, target);
+    await vscode.workspace.fs.rename(tmp, target, { overwrite: true });
     entry.file = file;
     if (opts?.removeInvalidIds?.length) {
       entry.invalid = entry.invalid.filter(e => !opts.removeInvalidIds!.includes(e.id));

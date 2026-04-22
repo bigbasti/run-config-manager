@@ -44,6 +44,25 @@ export class DebugService {
     }
   }
 
+  async stop(configId: string): Promise<void> {
+    const sessionName = this.running.get(configId);
+    if (!sessionName) return;
+    const session = vscode.debug.activeDebugSession?.name === sessionName
+      ? vscode.debug.activeDebugSession
+      : undefined;
+    try {
+      // Prefer stopping the exact session when we can find it; otherwise fall
+      // back to stopping the active session (VS Code API forgives extra calls).
+      await vscode.debug.stopDebugging(session);
+    } catch (e) {
+      log.error(`Debug stop failed for ${sessionName}`, e);
+    }
+    // handleEnd via onDidTerminateDebugSession will clear state; as a
+    // safety net, clear eagerly too.
+    this.running.delete(configId);
+    this.emitter.fire(configId);
+  }
+
   private handleEnd(sessionName: string): void {
     for (const [id, name] of this.running.entries()) {
       if (name === sessionName) {

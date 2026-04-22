@@ -110,7 +110,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     vscode.commands.registerCommand('runConfig.stop', async (arg: ConfigNodeArg) => {
       if (!arg || arg.kind !== 'config') return;
-      await exec.stop(arg.config.id);
+      // A single config can be either in a run task OR a debug session.
+      // Stop whichever is actually tracking it.
+      if (dbg.isRunning(arg.config.id)) {
+        await dbg.stop(arg.config.id);
+      } else {
+        await exec.stop(arg.config.id);
+      }
     }),
 
     vscode.commands.registerCommand('runConfig.debug', async (arg: ConfigNodeArg) => {

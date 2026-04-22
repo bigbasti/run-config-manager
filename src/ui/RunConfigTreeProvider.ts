@@ -38,7 +38,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       return item;
     }
     if (n.kind === 'invalid') {
-      const item = new vscode.TreeItem(`$(warning) ${n.entry.name}`, vscode.TreeItemCollapsibleState.None);
+      const item = new vscode.TreeItem(n.entry.name, vscode.TreeItemCollapsibleState.None);
       const shortErr = n.entry.error.length > 80 ? n.entry.error.slice(0, 77) + '…' : n.entry.error;
       item.description = `(invalid — ${shortErr})`;
       item.tooltip = `${n.entry.error}\n\n${n.entry.rawText.slice(0, 400)}`;
@@ -49,11 +49,14 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     }
 
     const running = this.exec.isRunning(n.config.id) || this.dbg.isRunning(n.config.id);
-    const prefix = running ? '$(sync~spin) ' : '';
-    const item = new vscode.TreeItem(prefix + n.config.name, vscode.TreeItemCollapsibleState.None);
+    const item = new vscode.TreeItem(n.config.name, vscode.TreeItemCollapsibleState.None);
     item.description = buildCommandPreview(n.config);
     item.tooltip = `${n.config.type} · ${n.config.projectPath || '.'}`;
-    item.iconPath = new vscode.ThemeIcon(iconForType(n.config.type));
+    // `loading~spin` is a built-in animated codicon; when not running, show the
+    // type-specific icon.
+    item.iconPath = running
+      ? new vscode.ThemeIcon('loading~spin')
+      : new vscode.ThemeIcon(iconForType(n.config.type));
     item.contextValue = running ? 'configRunning' : 'configIdle';
     item.command = { command: 'runConfig.edit', title: 'Edit', arguments: [n] };
     return item;
@@ -84,8 +87,10 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
 }
 
 function iconForType(type: string): string {
+  // Codicon names only — see https://code.visualstudio.com/api/references/icons-in-labels
   switch (type) {
-    case 'npm': return 'nodejs';
+    case 'npm': return 'package';
+    case 'spring-boot': return 'rocket';
     default: return 'circle-outline';
   }
 }
