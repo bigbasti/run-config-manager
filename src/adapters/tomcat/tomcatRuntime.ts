@@ -76,6 +76,21 @@ export async function prepareTomcatLaunch(
     catalinaOpts.push('-Dspring.output.ansi.enabled=ALWAYS');
     env.FORCE_COLOR = '1';
     env.CLICOLOR_FORCE = '1';
+    env.SPRING_OUTPUT_ANSI_ENABLED = 'ALWAYS';
+    // JAVA_TOOL_OPTIONS overrides the user's logging.pattern.console (which is
+    // commonly set without %clr() tokens → plain output even with ansi=always).
+    // JVM tokenises JAVA_TOOL_OPTIONS on ASCII whitespace, so we use the NBSP
+    // trick for the pattern's separators.
+    const nbsp = ' ';
+    const pattern = [
+      `%clr(%d{yyyy-MM-dd'T'HH:mm:ss.SSS}){faint}`,
+      `%clr(%5p)`,
+      `%clr([%t]){faint}`,
+      `%clr(%-40.40logger{39}){cyan}`,
+      `%clr(:){faint}%m%n%wEx`,
+    ].join(nbsp);
+    env.JAVA_TOOL_OPTIONS =
+      `-Dspring.output.ansi.enabled=ALWAYS -Dlogging.pattern.console=${pattern}`;
   }
   if (catalinaOpts.length > 0) env.CATALINA_OPTS = catalinaOpts.join(' ');
 

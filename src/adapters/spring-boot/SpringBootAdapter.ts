@@ -20,6 +20,24 @@ const VAR_SYNTAX_HINT =
   'Supports ${VAR} and ${env:VAR} (environment variables), ' +
   '${workspaceFolder}, ${userHome}, and ${cwd}/${projectPath}. ' +
   'Unresolved variables expand to an empty string at launch.';
+
+// Colored console pattern for Spring Boot. Each %clr(...){color} wraps a
+// segment in the ANSI escape for that color when ansi is enabled.
+//
+// Passed as a single -D token via JAVA_TOOL_OPTIONS. The JVM tokenises
+// JAVA_TOOL_OPTIONS on ASCII whitespace with no quoting support, so we can't
+// use literal spaces — we use %X{} or the non-breaking-space pattern trick.
+// Logback allows concatenating conversion words directly; we substitute spaces
+// inside the pattern with   (non-breaking space) which Logback prints
+// and the JVM tokenises fine. The visual result looks like a regular space.
+const NBSP = ' ';
+const COLORED_LOG_PATTERN = [
+  `%clr(%d{yyyy-MM-dd'T'HH:mm:ss.SSS}){faint}`,
+  `%clr(%5p)`,
+  `%clr([%t]){faint}`,
+  `%clr(%-40.40logger{39}){cyan}`,
+  `%clr(:){faint}%m%n%wEx`,
+].join(NBSP);
 import { splitArgs } from '../npm/splitArgs';
 
 export class SpringBootAdapter implements RuntimeAdapter {
@@ -422,10 +440,20 @@ export class SpringBootAdapter implements RuntimeAdapter {
     if (cfg.typeOptions.colorOutput) {
       env.FORCE_COLOR = '1';
       env.CLICOLOR_FORCE = '1';
-      // Spring Boot reads this at app startup; setting it in env works for all
-      // three launch modes (maven forwards env to the forked JVM; gradle
-      // likewise; java-main reads it directly).
       env.SPRING_OUTPUT_ANSI_ENABLED = 'ALWAYS';
+      // JAVA_TOOL_OPTIONS is the only knob reliably picked up by ALL forked
+      // JVMs — whether the parent is Gradle, Maven, or `java`. It also
+      // overrides anything in application.properties because system
+      // properties take precedence over property files.
+      //
+      // We inject:
+      //   - spring.output.ansi.enabled=ALWAYS     → enable color markers
+      //   - logging.pattern.console=<with %clr()> → replace any user pattern
+      //                                             that has no color instructions
+      env.JAVA_TOOL_OPTIONS = (
+        `-Dspring.output.ansi.enabled=ALWAYS ` +
+        `-Dlogging.pattern.console=${COLORED_LOG_PATTERN}`
+      );
     }
     return { env };
   }
