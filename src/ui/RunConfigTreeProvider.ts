@@ -3,6 +3,7 @@ import type { RunConfigService } from '../services/RunConfigService';
 import type { ConfigStore } from '../services/ConfigStore';
 import type { ExecutionService } from '../services/ExecutionService';
 import type { DebugService } from '../services/DebugService';
+import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 
@@ -20,6 +21,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     private readonly svc: RunConfigService,
     private readonly exec: ExecutionService,
     private readonly dbg: DebugService,
+    private readonly registry: AdapterRegistry,
   ) {
     store.onChange(() => this.refresh());
     exec.onRunningChanged(() => this.refresh());
@@ -49,6 +51,8 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     }
 
     const running = this.exec.isRunning(n.config.id) || this.dbg.isRunning(n.config.id);
+    const adapter = this.registry.get(n.config.type);
+    const debuggable = adapter?.supportsDebug === true;
     const item = new vscode.TreeItem(n.config.name, vscode.TreeItemCollapsibleState.None);
     item.description = buildCommandPreview(n.config);
     item.tooltip = `${n.config.type} · ${n.config.projectPath || '.'}`;
@@ -57,7 +61,12 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     item.iconPath = running
       ? new vscode.ThemeIcon('loading~spin')
       : new vscode.ThemeIcon(iconForType(n.config.type));
-    item.contextValue = running ? 'configRunning' : 'configIdle';
+    // Context value encodes both run state AND debug capability so the
+    // `when` clauses in package.json can hide the Debug button when the
+    // adapter doesn't support it.
+    item.contextValue = running
+      ? debuggable ? 'configRunning' : 'configRunningNoDebug'
+      : debuggable ? 'configIdle' : 'configIdleNoDebug';
     item.command = { command: 'runConfig.edit', title: 'Edit', arguments: [n] };
     return item;
   }

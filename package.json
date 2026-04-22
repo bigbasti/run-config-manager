@@ -46,13 +46,13 @@
         { "command": "runConfig.refresh", "when": "view == runConfigurations", "group": "navigation@2" }
       ],
       "view/item/context": [
-        { "command": "runConfig.run", "when": "view == runConfigurations && viewItem == configIdle", "group": "inline@1" },
-        { "command": "runConfig.stop", "when": "view == runConfigurations && viewItem == configRunning", "group": "inline@1" },
+        { "command": "runConfig.run", "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?$/", "group": "inline@1" },
+        { "command": "runConfig.stop", "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?$/", "group": "inline@1" },
         { "command": "runConfig.debug", "when": "view == runConfigurations && viewItem == configIdle", "group": "inline@2" },
         { "command": "runConfig.fix", "when": "view == runConfigurations && viewItem == configInvalid", "group": "inline@1" },
         { "command": "runConfig.openFile", "when": "view == runConfigurations && viewItem == configInvalid", "group": "inline@2" },
-        { "command": "runConfig.edit", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)$/", "group": "inline@3" },
-        { "command": "runConfig.delete", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)$/", "group": "inline@4" }
+        { "command": "runConfig.edit", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/", "group": "inline@3" },
+        { "command": "runConfig.delete", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/", "group": "inline@4" }
       ]
     }
   },

@@ -22,7 +22,7 @@ describe('buildRecoveredConfig', () => {
     expect(out.id).toBe('abc');
     expect(out.name).toBe('MyApp');
     expect(out.projectPath).toBe('web');
-    expect(out.typeOptions?.scriptName).toBe('dev');
+    expect((out.typeOptions as { scriptName?: string } | undefined)?.scriptName).toBe('dev');
     expect(out.env).toEqual({ FOO: 'bar' });
   });
 

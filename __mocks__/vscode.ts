@@ -71,17 +71,47 @@ export const workspace = {
       fsStore.set(uri.fsPath, content);
     },
     async stat(uri: Uri) {
-      if (!fsStore.has(uri.fsPath)) throw new FsStubError('FileNotFound', uri.fsPath);
-      return { type: FileType.File, size: fsStore.get(uri.fsPath)!.byteLength, ctime: 0, mtime: 0 };
+      if (fsStore.has(uri.fsPath)) {
+        return { type: FileType.File, size: fsStore.get(uri.fsPath)!.byteLength, ctime: 0, mtime: 0 };
+      }
+      // Treat the path as a directory if any file exists under it.
+      const prefix = uri.fsPath.endsWith('/') ? uri.fsPath : uri.fsPath + '/';
+      for (const p of fsStore.keys()) {
+        if (p.startsWith(prefix)) {
+          return { type: FileType.Directory, size: 0, ctime: 0, mtime: 0 };
+        }
+      }
+      throw new FsStubError('FileNotFound', uri.fsPath);
     },
     async delete(uri: Uri): Promise<void> {
       fsStore.delete(uri.fsPath);
     },
-    async rename(a: Uri, b: Uri): Promise<void> {
+    async rename(a: Uri, b: Uri, _opts?: { overwrite?: boolean }): Promise<void> {
       const data = fsStore.get(a.fsPath);
       if (!data) throw new FsStubError('FileNotFound', a.fsPath);
       fsStore.set(b.fsPath, data);
       fsStore.delete(a.fsPath);
+    },
+    async readDirectory(uri: Uri): Promise<Array<[string, number]>> {
+      // Enumerate files whose fsPath is a direct child of `uri.fsPath`.
+      const prefix = uri.fsPath.endsWith('/') ? uri.fsPath : uri.fsPath + '/';
+      const directChildren = new Map<string, number>();
+      for (const path of fsStore.keys()) {
+        if (!path.startsWith(prefix)) continue;
+        const rest = path.slice(prefix.length);
+        if (!rest) continue;
+        const slash = rest.indexOf('/');
+        if (slash === -1) {
+          directChildren.set(rest, FileType.File);
+        } else {
+          directChildren.set(rest.slice(0, slash), FileType.Directory);
+        }
+      }
+      if (directChildren.size === 0) {
+        // Match real VS Code behavior for a non-existent dir.
+        throw new FsStubError('FileNotFound', uri.fsPath);
+      }
+      return Array.from(directChildren.entries());
     },
   },
   workspaceFolders: [] as Array<{ uri: Uri; name: string; index: number }>,

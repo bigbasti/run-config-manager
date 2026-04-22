@@ -8,6 +8,7 @@ import { splitArgs } from './splitArgs';
 export class NpmAdapter implements RuntimeAdapter {
   readonly type = 'npm' as const;
   readonly label = 'npm / Node.js';
+  readonly supportsDebug = true;
 
   async detect(folder: vscode.Uri): Promise<DetectionResult | null> {
     const info = await readPackageJsonInfo(folder);
@@ -116,6 +117,7 @@ export class NpmAdapter implements RuntimeAdapter {
   }
 
   buildCommand(cfg: RunConfig): { command: string; args: string[] } {
+    if (cfg.type !== 'npm') throw new Error('NpmAdapter received non-npm config');
     const pm = cfg.typeOptions.packageManager;
     const script = cfg.typeOptions.scriptName;
     const args = ['run', script];
@@ -127,6 +129,7 @@ export class NpmAdapter implements RuntimeAdapter {
   }
 
   getDebugConfig(cfg: RunConfig, folder: vscode.WorkspaceFolder): vscode.DebugConfiguration {
+    if (cfg.type !== 'npm') throw new Error('NpmAdapter received non-npm config');
     const pm = cfg.typeOptions.packageManager;
     const cwd = cfg.projectPath
       ? `${folder.uri.fsPath}/${cfg.projectPath}`

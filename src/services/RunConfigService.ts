@@ -27,7 +27,9 @@ export class RunConfigService {
   }
 
   async create(folderKey: string, data: Omit<RunConfig, 'id'>): Promise<RunConfig> {
-    const cfg: RunConfig = { ...data, id: newId() };
+    // Spread across a discriminated union loses the discriminant in TS;
+    // the runtime shape is correct because `data` already matched one variant.
+    const cfg = { ...data, id: newId() } as RunConfig;
     const file = this.store.getForFolder(folderKey);
     await this.store.write(folderKey, {
       ...file,

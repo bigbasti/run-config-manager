@@ -59,31 +59,41 @@ export class EditorPanel {
   }
 
   private sendInit(): void {
-    const baseDefaults: Partial<RunConfig> = {
+    const seed = (this.args.seedDefaults ?? {}) as Record<string, unknown>;
+    const type = ((seed.type as string | undefined) ?? this.args.existing?.type ?? 'npm') as
+      | 'npm'
+      | 'spring-boot';
+
+    const baseCommon = {
       name: '',
       projectPath: '',
       workspaceFolder: this.args.folder.name,
       env: {},
       programArgs: '',
       vmArgs: '',
-      type: 'npm',
-      typeOptions: { scriptName: '', packageManager: 'npm' },
     };
-    const seed = this.args.seedDefaults ?? {};
-    const config: Partial<RunConfig> = this.args.existing
+
+    const typeDefaults: Record<string, unknown> =
+      type === 'npm'
+        ? { scriptName: '', packageManager: 'npm' }
+        : { buildTool: 'maven', profiles: '' };
+
+    const seedTypeOptions = (seed.typeOptions as Record<string, unknown> | undefined) ?? {};
+
+    const config: Record<string, unknown> = this.args.existing
       ? { ...this.args.existing }
       : {
-          ...baseDefaults,
+          ...baseCommon,
           ...seed,
-          // Merge typeOptions rather than overwrite, so detection can contribute
-          // scriptName/packageManager without losing other future fields.
-          typeOptions: { ...baseDefaults.typeOptions!, ...(seed.typeOptions ?? {}) },
+          type,
+          // Merge typeOptions so detection can contribute without losing other fields.
+          typeOptions: { ...typeDefaults, ...seedTypeOptions },
         };
 
     const init: Inbound = {
       cmd: 'init',
       mode: this.args.mode,
-      config,
+      config: config as Partial<RunConfig>,
       schema: this.args.schema,
     };
     this.panel.webview.postMessage(init);
@@ -132,14 +142,30 @@ export class EditorPanel {
   // Fill missing keys so the config passes schema validation even if the webview
   // posted a partial object (e.g., the user never touched the script select).
   private sanitize(cfg: RunConfig): RunConfig {
-    return {
+    const common = {
       ...cfg,
       env: cfg.env ?? {},
       programArgs: cfg.programArgs ?? '',
       vmArgs: cfg.vmArgs ?? '',
+    };
+    if (cfg.type === 'spring-boot') {
+      const to = cfg.typeOptions as Partial<import('../shared/types').SpringBootTypeOptions> | undefined;
+      return {
+        ...common,
+        type: 'spring-boot',
+        typeOptions: {
+          buildTool: to?.buildTool ?? 'maven',
+          profiles: to?.profiles ?? '',
+        },
+      };
+    }
+    const to = cfg.typeOptions as Partial<import('../shared/types').NpmTypeOptions> | undefined;
+    return {
+      ...common,
+      type: 'npm',
       typeOptions: {
-        scriptName: cfg.typeOptions?.scriptName ?? '',
-        packageManager: cfg.typeOptions?.packageManager ?? 'npm',
+        scriptName: to?.scriptName ?? '',
+        packageManager: to?.packageManager ?? 'npm',
       },
     };
   }

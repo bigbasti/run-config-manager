@@ -27,6 +27,10 @@ export class DebugService {
       vscode.window.showErrorMessage(`No adapter for type: ${cfg.type}`);
       return false;
     }
+    if (!adapter.supportsDebug || !adapter.getDebugConfig) {
+      vscode.window.showErrorMessage(`Debug is not supported for type: ${cfg.type}`);
+      return false;
+    }
 
     const conf = adapter.getDebugConfig(cfg, folder);
     try {

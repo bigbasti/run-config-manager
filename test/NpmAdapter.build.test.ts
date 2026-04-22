@@ -4,18 +4,18 @@ import type { RunConfig } from '../src/shared/types';
 const adapter = new NpmAdapter();
 
 function cfg(overrides: Partial<RunConfig> = {}): RunConfig {
-  return {
+  const base = {
     id: 'a'.repeat(8) + '-1111-2222-3333-444444444444',
     name: 'x',
-    type: 'npm',
+    type: 'npm' as const,
     projectPath: 'frontend',
     workspaceFolder: '',
-    env: {},
+    env: {} as Record<string, string>,
     programArgs: '',
     vmArgs: '',
-    typeOptions: { scriptName: 'start', packageManager: 'npm' },
-    ...overrides,
+    typeOptions: { scriptName: 'start', packageManager: 'npm' as const },
   };
+  return { ...base, ...overrides } as RunConfig;
 }
 
 describe('NpmAdapter.buildCommand', () => {

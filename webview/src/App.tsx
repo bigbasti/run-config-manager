@@ -43,10 +43,15 @@ export function App() {
       setError('Name is required');
       return;
     }
-    const script = values.typeOptions?.scriptName?.trim();
-    if (!script) {
-      setError('Script is required. If your package.json has no scripts, type the command name (e.g. "start").');
-      return;
+    // npm-only validation: script name must be set. Spring Boot has its own
+    // defaults that never need a manual entry.
+    if (values.type === 'npm') {
+      const to = values.typeOptions as { scriptName?: string } | undefined;
+      const script = to?.scriptName?.trim();
+      if (!script) {
+        setError('Script is required. If your package.json has no scripts, type the command name (e.g. "start").');
+        return;
+      }
     }
     post({ cmd: 'save', config: values as RunConfig });
   };

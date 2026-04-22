@@ -31,11 +31,20 @@ export function buildRecoveredConfig(entry: InvalidConfigEntry): Partial<RunConf
   if (typeof o.port === 'number' && Number.isInteger(o.port) && o.port > 0) out.port = o.port;
   if (o.typeOptions && typeof o.typeOptions === 'object' && !Array.isArray(o.typeOptions)) {
     const t = o.typeOptions as Record<string, unknown>;
-    const scriptName = typeof t.scriptName === 'string' ? t.scriptName : '';
-    const pmRaw = typeof t.packageManager === 'string' ? t.packageManager : 'npm';
-    const packageManager =
-      pmRaw === 'npm' || pmRaw === 'yarn' || pmRaw === 'pnpm' ? pmRaw : 'npm';
-    out.typeOptions = { scriptName, packageManager };
+    const type = typeof o.type === 'string' ? o.type : '';
+    if (type === 'spring-boot') {
+      const btRaw = typeof t.buildTool === 'string' ? t.buildTool : 'maven';
+      const buildTool = btRaw === 'maven' || btRaw === 'gradle' ? btRaw : 'maven';
+      const profiles = typeof t.profiles === 'string' ? t.profiles : '';
+      (out as any).typeOptions = { buildTool, profiles };
+    } else {
+      // Default to npm-shaped typeOptions for unknown/npm types.
+      const scriptName = typeof t.scriptName === 'string' ? t.scriptName : '';
+      const pmRaw = typeof t.packageManager === 'string' ? t.packageManager : 'npm';
+      const packageManager =
+        pmRaw === 'npm' || pmRaw === 'yarn' || pmRaw === 'pnpm' ? pmRaw : 'npm';
+      (out as any).typeOptions = { scriptName, packageManager };
+    }
   }
 
   return out;

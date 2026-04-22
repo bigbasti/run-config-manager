@@ -1,0 +1,140 @@
+import { Uri, __resetFs, __writeFs } from 'vscode';
+import { SpringBootAdapter } from '../src/adapters/spring-boot/SpringBootAdapter';
+import type { RunConfig } from '../src/shared/types';
+
+const adapter = new SpringBootAdapter();
+
+function cfg(overrides: Partial<RunConfig> = {}): RunConfig {
+  const base = {
+    id: 'bbbbbbbb-1111-2222-3333-444444444444',
+    name: 'x',
+    type: 'spring-boot' as const,
+    projectPath: 'backend',
+    workspaceFolder: '',
+    env: {} as Record<string, string>,
+    programArgs: '',
+    vmArgs: '',
+    typeOptions: { buildTool: 'maven' as const, profiles: '' },
+  };
+  return { ...base, ...overrides } as RunConfig;
+}
+
+describe('SpringBootAdapter.detect', () => {
+  beforeEach(() => __resetFs());
+
+  test('returns null for empty folder', async () => {
+    const result = await adapter.detect(Uri.file('/proj'));
+    expect(result).toBeNull();
+  });
+
+  test('returns null when pom.xml present but no Spring Boot signal', async () => {
+    __writeFs('/proj/pom.xml', '<project><artifactId>nope</artifactId></project>');
+    const result = await adapter.detect(Uri.file('/proj'));
+    expect(result).toBeNull();
+  });
+
+  test('detects Spring Boot from pom.xml mentioning spring-boot-starter', async () => {
+    __writeFs('/proj/pom.xml', '<project><dependency><artifactId>spring-boot-starter-web</artifactId></dependency></project>');
+    const result = await adapter.detect(Uri.file('/proj'));
+    expect(result).not.toBeNull();
+    expect(result!.defaults.type).toBe('spring-boot');
+    expect((result!.defaults.typeOptions as any).buildTool).toBe('maven');
+    expect((result!.context as any).buildTool).toBe('maven');
+  });
+
+  test('detects Spring Boot from build.gradle mentioning spring-boot-maven-plugin', async () => {
+    __writeFs('/proj/build.gradle', 'plugins { id "org.springframework.boot" version "3.2.0" }');
+    const result = await adapter.detect(Uri.file('/proj'));
+    expect(result).not.toBeNull();
+    expect((result!.defaults.typeOptions as any).buildTool).toBe('gradle');
+  });
+
+  test('detects Spring Boot from @SpringBootApplication annotation alone', async () => {
+    __writeFs('/proj/pom.xml', '<project/>');
+    __writeFs('/proj/src/main/java/com/example/App.java',
+      'package com.example; @SpringBootApplication class App {}');
+    const result = await adapter.detect(Uri.file('/proj'));
+    expect(result).not.toBeNull();
+  });
+
+  test('prefers maven when both pom.xml and build.gradle exist', async () => {
+    __writeFs('/proj/pom.xml', '<project><dependency><artifactId>spring-boot-starter</artifactId></dependency></project>');
+    __writeFs('/proj/build.gradle', 'plugins {}');
+    const result = await adapter.detect(Uri.file('/proj'));
+    expect((result!.defaults.typeOptions as any).buildTool).toBe('maven');
+  });
+});
+
+describe('SpringBootAdapter.buildCommand (Maven)', () => {
+  test('basic mvn spring-boot:run', () => {
+    const r = adapter.buildCommand(cfg());
+    expect(r.command).toBe('mvn');
+    expect(r.args).toEqual(['spring-boot:run']);
+  });
+
+  test('adds -Dspring-boot.run.profiles when profiles set', () => {
+    const r = adapter.buildCommand(cfg({ typeOptions: { buildTool: 'maven', profiles: 'dev,local' } }));
+    expect(r.args).toContain('-Dspring-boot.run.profiles=dev,local');
+  });
+
+  test('adds -Dspring-boot.run.arguments (quoted) when programArgs set', () => {
+    const r = adapter.buildCommand(cfg({ programArgs: '--server.port=8081' }));
+    expect(r.args.some(a => a.startsWith("-Dspring-boot.run.arguments='--server.port=8081'"))).toBe(true);
+  });
+
+  test('adds -Dspring-boot.run.jvmArguments (quoted) when vmArgs set', () => {
+    const r = adapter.buildCommand(cfg({ vmArgs: '-Xmx1g' }));
+    expect(r.args.some(a => a === "-Dspring-boot.run.jvmArguments='-Xmx1g'")).toBe(true);
+  });
+});
+
+describe('SpringBootAdapter.buildCommand (Gradle)', () => {
+  test('basic ./gradlew bootRun', () => {
+    const r = adapter.buildCommand(cfg({ typeOptions: { buildTool: 'gradle', profiles: '' } }));
+    expect(r.command).toBe('./gradlew');
+    expect(r.args).toEqual(['bootRun']);
+  });
+
+  test('adds --args with profile flag when profiles set', () => {
+    const r = adapter.buildCommand(cfg({ typeOptions: { buildTool: 'gradle', profiles: 'dev' } }));
+    expect(r.args.some(a => a.startsWith("--args='--spring.profiles.active=dev"))).toBe(true);
+  });
+
+  test('merges program args into --args', () => {
+    const r = adapter.buildCommand(cfg({
+      typeOptions: { buildTool: 'gradle', profiles: 'dev' },
+      programArgs: '--server.port=9090',
+    }));
+    const argsFlag = r.args.find(a => a.startsWith('--args='));
+    expect(argsFlag).toBeDefined();
+    expect(argsFlag).toContain('--spring.profiles.active=dev');
+    expect(argsFlag).toContain('--server.port=9090');
+  });
+});
+
+describe('SpringBootAdapter form schema', () => {
+  test('every field has non-empty help', () => {
+    const schema = adapter.getFormSchema({ buildTool: 'maven' });
+    const allFields = [...schema.common, ...schema.typeSpecific, ...schema.advanced];
+    for (const f of allFields) {
+      expect(typeof f.help).toBe('string');
+      expect(f.help!.length).toBeGreaterThan(0);
+    }
+  });
+
+  test('typeSpecific fields include buildTool, profiles, port', () => {
+    const schema = adapter.getFormSchema({ buildTool: 'maven' });
+    const keys = schema.typeSpecific.map(f => f.key);
+    expect(keys).toEqual(['typeOptions.buildTool', 'typeOptions.profiles', 'port']);
+  });
+});
+
+describe('SpringBootAdapter debug', () => {
+  test('supportsDebug is false in v1', () => {
+    expect(adapter.supportsDebug).toBe(false);
+  });
+
+  test('does not expose getDebugConfig', () => {
+    expect((adapter as any).getDebugConfig).toBeUndefined();
+  });
+});

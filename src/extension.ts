@@ -6,6 +6,7 @@ import { ExecutionService } from './services/ExecutionService';
 import { DebugService } from './services/DebugService';
 import { AdapterRegistry } from './adapters/AdapterRegistry';
 import { NpmAdapter } from './adapters/npm/NpmAdapter';
+import { SpringBootAdapter } from './adapters/spring-boot/SpringBootAdapter';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
 import { log, initLogger } from './utils/logger';
@@ -23,6 +24,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const registry = new AdapterRegistry();
   registry.register(new NpmAdapter());
+  registry.register(new SpringBootAdapter());
 
   const store = new ConfigStore();
   const svc = new RunConfigService(store);
@@ -33,7 +35,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const folders = vscode.workspace.workspaceFolders ?? [];
   await store.attach(folders);
 
-  const tree = new RunConfigTreeProvider(store, svc, exec, dbg);
+  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry);
   const view = vscode.window.createTreeView('runConfigurations', {
     treeDataProvider: tree,
     showCollapseAll: true,
@@ -63,12 +65,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     vscode.commands.registerCommand('runConfig.edit', (arg: ConfigNodeArg) => {
       if (!arg) return;
-      const adapter = registry.get('npm'); // v1: only npm
-      if (!adapter) return;
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
 
       if (arg.kind === 'config') {
+        const adapter = registry.get(arg.config.type);
+        if (!adapter) return;
         EditorPanel.open({
           mode: 'edit',
           folderKey: arg.folderKey,
@@ -78,6 +80,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }, context, svc);
       } else {
         const recovered = buildRecoveredConfig(arg.entry);
+        const type: RunConfigType = (recovered.type as RunConfigType) ?? 'npm';
+        const adapter = registry.get(type);
+        if (!adapter) return;
         EditorPanel.open({
           mode: 'edit',
           folderKey: arg.folderKey,
@@ -130,10 +135,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!arg || arg.kind !== 'invalid') return;
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
-      const adapter = registry.get('npm');
-      if (!adapter) return;
 
       const recovered = buildRecoveredConfig(arg.entry);
+      const type: RunConfigType = (recovered.type as RunConfigType) ?? 'npm';
+      const adapter = registry.get(type);
+      if (!adapter) return;
+
       const projectUri = recovered.projectPath
         ? vscode.Uri.joinPath(folder.uri, recovered.projectPath)
         : folder.uri;
@@ -143,14 +150,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         detection = await adapter.detect(projectUri);
       } catch { /* ignore — best-effort */ }
 
-      const defaults = detection?.defaults ?? {};
-      const merged: Partial<RunConfig> = {
+      // Merge adapter defaults under recovered data. Adapters produce a
+      // correctly-shaped typeOptions for their type, and recovered may carry
+      // a subset — merging at this level is shape-correct regardless of type.
+      const defaults = (detection?.defaults ?? {}) as Record<string, unknown>;
+      const recoveredAny = recovered as Record<string, unknown>;
+      const merged: Record<string, unknown> = {
         ...defaults,
-        ...recovered,
+        ...recoveredAny,
         typeOptions: {
-          scriptName: recovered.typeOptions?.scriptName ?? defaults.typeOptions?.scriptName ?? '',
-          packageManager:
-            (recovered.typeOptions?.packageManager ?? defaults.typeOptions?.packageManager ?? 'npm') as 'npm' | 'yarn' | 'pnpm',
+          ...((defaults.typeOptions as object) ?? {}),
+          ...((recoveredAny.typeOptions as object) ?? {}),
         },
       };
 
@@ -158,7 +168,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         mode: 'edit',
         folderKey: arg.folderKey,
         folder,
-        existing: merged as RunConfig,
+        existing: merged as unknown as RunConfig,
         schema: adapter.getFormSchema(detection?.context ?? {}),
       }, context, svc);
     }),

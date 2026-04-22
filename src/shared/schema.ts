@@ -2,24 +2,41 @@ import { z } from 'zod';
 import type { RunFile, Result } from './types';
 
 export const PackageManagerSchema = z.enum(['npm', 'yarn', 'pnpm']);
+export const JavaBuildToolSchema = z.enum(['maven', 'gradle']);
 
 export const NpmTypeOptionsSchema = z.object({
   scriptName: z.string().min(1),
   packageManager: PackageManagerSchema,
 });
 
-export const RunConfigSchema = z.object({
+export const SpringBootTypeOptionsSchema = z.object({
+  buildTool: JavaBuildToolSchema,
+  profiles: z.string(),
+});
+
+const commonFields = {
   id: z.string().uuid(),
   name: z.string().min(1),
-  type: z.literal('npm'),
   projectPath: z.string(),
   workspaceFolder: z.string(),
   env: z.record(z.string(), z.string()),
   programArgs: z.string(),
   vmArgs: z.string(),
   port: z.number().int().positive().optional(),
-  typeOptions: NpmTypeOptionsSchema,
-});
+};
+
+export const RunConfigSchema = z.discriminatedUnion('type', [
+  z.object({
+    ...commonFields,
+    type: z.literal('npm'),
+    typeOptions: NpmTypeOptionsSchema,
+  }),
+  z.object({
+    ...commonFields,
+    type: z.literal('spring-boot'),
+    typeOptions: SpringBootTypeOptionsSchema,
+  }),
+]);
 
 export const RunFileSchema = z.object({
   version: z.literal(1),
