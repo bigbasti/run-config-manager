@@ -39,9 +39,13 @@ export function App() {
   if (!schema) return <div>Loading…</div>;
 
   const save = () => {
-    // Minimal validation: name required.
     if (!values.name || !values.name.trim()) {
       setError('Name is required');
+      return;
+    }
+    const script = values.typeOptions?.scriptName?.trim();
+    if (!script) {
+      setError('Script is required. If your package.json has no scripts, type the command name (e.g. "start").');
       return;
     }
     post({ cmd: 'save', config: values as RunConfig });

@@ -64,6 +64,16 @@ describe('NpmAdapter.getFormSchema', () => {
     }
   });
 
+  test('script field renders as text input when no scripts detected', () => {
+    const schema = adapter.getFormSchema({ scripts: [] });
+    const scriptField = schema.typeSpecific.find(f => f.key === 'typeOptions.scriptName');
+    expect(scriptField?.kind).toBe('text');
+    if (scriptField?.kind === 'text') {
+      expect(scriptField.required).toBe(true);
+      expect(scriptField.placeholder).toBe('start');
+    }
+  });
+
   test('common fields always include name and projectPath', () => {
     const schema = adapter.getFormSchema({ scripts: [] });
     expect(schema.common.map(f => f.key)).toEqual(['name', 'projectPath']);

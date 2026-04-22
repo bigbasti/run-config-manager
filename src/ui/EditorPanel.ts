@@ -67,10 +67,18 @@ export class EditorPanel {
       programArgs: '',
       vmArgs: '',
       type: 'npm',
+      typeOptions: { scriptName: '', packageManager: 'npm' },
     };
+    const seed = this.args.seedDefaults ?? {};
     const config: Partial<RunConfig> = this.args.existing
       ? { ...this.args.existing }
-      : { ...baseDefaults, ...this.args.seedDefaults };
+      : {
+          ...baseDefaults,
+          ...seed,
+          // Merge typeOptions rather than overwrite, so detection can contribute
+          // scriptName/packageManager without losing other future fields.
+          typeOptions: { ...baseDefaults.typeOptions!, ...(seed.typeOptions ?? {}) },
+        };
 
     const init: Inbound = {
       cmd: 'init',
@@ -104,11 +112,12 @@ export class EditorPanel {
       }
       case 'save':
         try {
+          const sanitized = this.sanitize(msg.config);
           if (this.args.mode === 'create') {
-            const { id, ...rest } = msg.config;
+            const { id, ...rest } = sanitized;
             await this.svc.create(this.args.folderKey, rest);
           } else {
-            await this.svc.update(this.args.folderKey, msg.config);
+            await this.svc.update(this.args.folderKey, sanitized);
           }
           this.panel.dispose();
         } catch (e) {
@@ -118,6 +127,21 @@ export class EditorPanel {
         }
         return;
     }
+  }
+
+  // Fill missing keys so the config passes schema validation even if the webview
+  // posted a partial object (e.g., the user never touched the script select).
+  private sanitize(cfg: RunConfig): RunConfig {
+    return {
+      ...cfg,
+      env: cfg.env ?? {},
+      programArgs: cfg.programArgs ?? '',
+      vmArgs: cfg.vmArgs ?? '',
+      typeOptions: {
+        scriptName: cfg.typeOptions?.scriptName ?? '',
+        packageManager: cfg.typeOptions?.packageManager ?? 'npm',
+      },
+    };
   }
 
   private getHtml(): string {

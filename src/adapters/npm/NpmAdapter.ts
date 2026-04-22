@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { RuntimeAdapter, DetectionResult } from '../RuntimeAdapter';
 import type { RunConfig } from '../../shared/types';
-import type { FormSchema } from '../../shared/formSchema';
+import type { FormField, FormSchema } from '../../shared/formSchema';
 import { readPackageJsonInfo } from './detectPackageJson';
 import { splitArgs } from './splitArgs';
 
@@ -26,9 +26,20 @@ export class NpmAdapter implements RuntimeAdapter {
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
     const scripts = (context.scripts as string[] | undefined) ?? [];
-    const scriptOptions = scripts.length
-      ? scripts.map(s => ({ value: s, label: s }))
-      : [{ value: '', label: '(no scripts detected — type one)' }];
+    const scriptField: FormField = scripts.length
+      ? {
+          kind: 'select',
+          key: 'typeOptions.scriptName',
+          label: 'Script',
+          options: scripts.map(s => ({ value: s, label: s })),
+        }
+      : {
+          kind: 'text',
+          key: 'typeOptions.scriptName',
+          label: 'Script',
+          required: true,
+          placeholder: 'start',
+        };
 
     return {
       common: [
@@ -36,7 +47,7 @@ export class NpmAdapter implements RuntimeAdapter {
         { kind: 'folderPath', key: 'projectPath', label: 'Project path', relativeTo: 'workspaceFolder' },
       ],
       typeSpecific: [
-        { kind: 'select', key: 'typeOptions.scriptName', label: 'Script', options: scriptOptions },
+        scriptField,
         {
           kind: 'select',
           key: 'typeOptions.packageManager',
