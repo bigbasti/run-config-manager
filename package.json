@@ -36,7 +36,9 @@
       { "command": "runConfig.delete", "title": "Delete", "icon": "$(trash)" },
       { "command": "runConfig.run", "title": "Run", "icon": "$(play)" },
       { "command": "runConfig.stop", "title": "Stop", "icon": "$(debug-stop)" },
-      { "command": "runConfig.debug", "title": "Debug", "icon": "$(debug-alt)" }
+      { "command": "runConfig.debug", "title": "Debug", "icon": "$(debug-alt)" },
+      { "command": "runConfig.fix", "title": "Fix Invalid Configuration", "icon": "$(wrench)" },
+      { "command": "runConfig.openFile", "title": "Open run.json", "icon": "$(go-to-file)" }
     ],
     "menus": {
       "view/title": [
@@ -47,8 +49,10 @@
         { "command": "runConfig.run", "when": "view == runConfigurations && viewItem == configIdle", "group": "inline@1" },
         { "command": "runConfig.stop", "when": "view == runConfigurations && viewItem == configRunning", "group": "inline@1" },
         { "command": "runConfig.debug", "when": "view == runConfigurations && viewItem == configIdle", "group": "inline@2" },
-        { "command": "runConfig.edit", "when": "view == runConfigurations && viewItem =~ /^config/", "group": "inline@3" },
-        { "command": "runConfig.delete", "when": "view == runConfigurations && viewItem =~ /^config/", "group": "inline@4" }
+        { "command": "runConfig.fix", "when": "view == runConfigurations && viewItem == configInvalid", "group": "inline@1" },
+        { "command": "runConfig.openFile", "when": "view == runConfigurations && viewItem == configInvalid", "group": "inline@2" },
+        { "command": "runConfig.edit", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)$/", "group": "inline@3" },
+        { "command": "runConfig.delete", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)$/", "group": "inline@4" }
       ]
     }
   },
