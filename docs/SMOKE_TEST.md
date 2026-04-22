@@ -66,3 +66,20 @@ Run through this list before tagging a release. Mark items PASS / FAIL with note
 ## 12. Packaging
 - [ ] `npm run package` produces a `.vsix`.
 - [ ] Installing the `.vsix` in a clean VS Code and running a config works.
+
+## 13. Help panel
+- [ ] Open the editor webview. Panel on the right shows "Click a field to see help and examples here."
+- [ ] Click the **Name** field. Panel shows title "Name" with description + examples.
+- [ ] Tab through every field. Each one updates the help panel.
+- [ ] Blur out of all fields — panel returns to the empty state.
+
+## 14. Invalid configurations
+- [ ] Edit `.vscode/run.json` manually to remove `typeOptions` from an entry. Save.
+- [ ] Sidebar shows the entry with a warning icon and "(invalid — typeOptions: Required)" description.
+- [ ] A toast warns about the invalid entry count.
+- [ ] ▶️ Run and 🐞 Debug buttons are hidden on the invalid entry.
+- [ ] Click 🔧 Fix. Webview opens with values pre-filled; `typeOptions` has default values.
+- [ ] Click Save. Entry moves from invalid → valid. Warning icon disappears.
+- [ ] Repeat: corrupt an entry; click ✏️ Edit instead of Fix. Webview opens with recovered data. Save → entry becomes valid.
+- [ ] Repeat: corrupt an entry; click 📄 Open run.json. The file opens in the editor.
+- [ ] Repeat: corrupt an entry; click 🗑 Delete. Entry is removed from sidebar AND run.json.
