@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import type { FormField } from '../../../src/shared/formSchema';
 import { getPath, setPath } from '../state';
 import { KvEditor } from './KvEditor';
 import { FolderPathInput } from './FolderPathInput';
 import { SelectOrCustom } from './SelectOrCustom';
 import { CsvChecklist } from './CsvChecklist';
+import { InspectDialog } from './InspectDialog';
 
 interface Props {
   field: FormField;
@@ -33,6 +35,9 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
   const action = field.action;
   const actionBusy = action ? busyActionId === action.id : false;
   const isPending = pending?.has(field.key) ?? false;
+  const [inspectOpen, setInspectOpen] = useState(false);
+
+  const inspectable = field.inspectable && typeof v === 'string';
 
   return (
     <div>
@@ -40,7 +45,22 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
         <span>{field.label}{'required' in field && field.required ? ' *' : ''}</span>
         {isPending && <span className="field-spinner" title="Detecting…">⟳</span>}
       </label>
-      {renderInput(field, v, set, { onPickFolder, focus, blur })}
+      <div className="field-row">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {renderInput(field, v, set, { onPickFolder, focus, blur })}
+        </div>
+        {inspectable && (
+          <button
+            type="button"
+            className="secondary icon-button"
+            title="Split view — see each token on its own line"
+            aria-label="Inspect tokens"
+            onClick={() => setInspectOpen(true)}
+          >
+            👁
+          </button>
+        )}
+      </div>
       {action && (
         <div style={{ marginTop: 4 }}>
           <button
@@ -52,6 +72,13 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
             {actionBusy ? (action.busyLabel ?? 'Working…') : action.label}
           </button>
         </div>
+      )}
+      {inspectOpen && inspectable && (
+        <InspectDialog
+          title={field.label}
+          value={String(v ?? '')}
+          onClose={() => setInspectOpen(false)}
+        />
       )}
     </div>
   );

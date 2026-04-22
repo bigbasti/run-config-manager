@@ -288,6 +288,7 @@ export class EditorPanel {
           vmOptions: to?.vmOptions ?? '',
           reloadable: to?.reloadable ?? true,
           rebuildOnSave: to?.rebuildOnSave ?? false,
+          colorOutput: to?.colorOutput,
         },
       };
     }

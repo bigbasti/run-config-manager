@@ -39,6 +39,10 @@ export interface SpringBootTypeOptions {
   // in the background so edits recompile automatically. Relies on
   // spring-boot-devtools on the classpath to pick up the recompiled classes.
   rebuildOnSave?: boolean;
+  // When true, forces colored output in the integrated terminal:
+  //   - spring.output.ansi.enabled=ALWAYS
+  //   - FORCE_COLOR=1, CLICOLOR_FORCE=1
+  colorOutput?: boolean;
 }
 
 export type TypeOptions =
@@ -90,6 +94,8 @@ export interface TomcatTypeOptions {
   reloadable: boolean;
   // Same as Spring Boot: spawn a `gradle -t :module:classes` side task.
   rebuildOnSave: boolean;
+  // Force-enable ANSI colors in terminal output (FORCE_COLOR + ANSI props).
+  colorOutput?: boolean;
 }
 
 export type RunConfig =

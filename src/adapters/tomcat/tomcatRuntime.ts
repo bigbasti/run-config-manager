@@ -6,6 +6,7 @@ import type { RunConfig } from '../../shared/types';
 import type { PrepareContext, PrepareResult } from '../RuntimeAdapter';
 import { resolveProjectUri } from '../../utils/paths';
 import { gradleModulePrefix, findGradleRoot } from '../spring-boot/findBuildRoot';
+import { findTomcatArtifacts } from './detectTomcat';
 import { log } from '../../utils/logger';
 
 // CATALINA_BASE scaffold location: <workspace>/.vscode/rcm-tomcat/<configId>/.
@@ -23,17 +24,23 @@ export async function prepareTomcatLaunch(
   ctx: PrepareContext,
 ): Promise<PrepareResult> {
   if (cfg.type !== 'tomcat') throw new Error('not a tomcat config');
-  const to = cfg.typeOptions;
+  let to = cfg.typeOptions;
 
   // 1. Run the build step if the user asked for one.
   await runBuildIfNeeded(cfg, folder);
 
+  // 1b. Verify the artifact still exists after the build. If it doesn't (the
+  // version bumped and a new file replaced it, or the user renamed it), rescan
+  // and pick the freshest. We don't mutate the on-disk config — the user can
+  // update it themselves. We just log and toast.
+  to = await maybeReselectArtifact(cfg, folder, to);
+
   // 2. Set up CATALINA_BASE under .vscode/rcm-tomcat/<configId>/.
   const base = vscode.Uri.joinPath(folder.uri, '.vscode', 'rcm-tomcat', cfg.id);
-  await ensureCatalinaBase(base, cfg);
+  await ensureCatalinaBase(base, { ...cfg, typeOptions: to });
 
   // 3. Deploy the artifact into CATALINA_BASE/webapps/<context>.war or /<ctx>/.
-  await deployArtifact(base, cfg);
+  await deployArtifact(base, { ...cfg, typeOptions: to });
 
   // 4. Compose env vars flow:
   //    - CATALINA_BASE: our scaffold
@@ -63,9 +70,55 @@ export async function prepareTomcatLaunch(
       `-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}`,
     );
   }
+  if (to.colorOutput) {
+    // Covers Spring Boot apps running inside Tomcat; generic ANSI tooling
+    // reads FORCE_COLOR / CLICOLOR_FORCE to skip TTY detection.
+    catalinaOpts.push('-Dspring.output.ansi.enabled=ALWAYS');
+    env.FORCE_COLOR = '1';
+    env.CLICOLOR_FORCE = '1';
+  }
   if (catalinaOpts.length > 0) env.CATALINA_OPTS = catalinaOpts.join(' ');
 
   return { env, cwd: base.fsPath };
+}
+
+// If the stored artifactPath no longer exists on disk, look for the newest
+// .war / exploded webapp under the build project and swap it in. Returns
+// typeOptions with the new artifactPath. User gets a toast so they know we
+// auto-corrected. The stored config is left alone — re-running the config
+// still looks at its original path first, which is usually what you want.
+async function maybeReselectArtifact(
+  cfg: TomcatCfg,
+  folder: vscode.WorkspaceFolder,
+  to: TomcatCfg['typeOptions'],
+): Promise<TomcatCfg['typeOptions']> {
+  if (!to.artifactPath) return to;
+  try {
+    await vscode.workspace.fs.stat(vscode.Uri.file(to.artifactPath));
+    return to; // still there
+  } catch { /* gone — rescan */ }
+
+  const projectUri = resolveProjectUri(folder, to.buildProjectPath || cfg.projectPath);
+  const candidates = await findTomcatArtifacts(projectUri);
+  // Prefer candidates matching the original artifactKind, fall back to any.
+  const chosen = candidates.find(c => c.kind === to.artifactKind) ?? candidates[0];
+  if (!chosen) {
+    // Nothing to swap in — let the later deploy step fail with a cleaner error.
+    log.warn(`Configured artifact ${to.artifactPath} does not exist and no alternatives were found.`);
+    return to;
+  }
+  const oldName = basename(to.artifactPath);
+  const newName = basename(chosen.path);
+  log.info(`Configured artifact ${to.artifactPath} missing; using newest found: ${chosen.path}`);
+  vscode.window.showInformationMessage(
+    `Configured artifact "${oldName}" no longer exists. Deploying newest build: "${newName}".`,
+  );
+  return { ...to, artifactPath: chosen.path, artifactKind: chosen.kind };
+}
+
+function basename(p: string): string {
+  const i = p.lastIndexOf('/');
+  return i >= 0 ? p.slice(i + 1) : p;
 }
 
 async function runBuildIfNeeded(cfg: TomcatCfg, folder: vscode.WorkspaceFolder): Promise<void> {

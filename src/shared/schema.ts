@@ -27,6 +27,7 @@ export const SpringBootTypeOptionsSchema = z
     buildRoot: z.string(),
     debugPort: z.number().int().min(1).max(65535).optional(),
     rebuildOnSave: z.boolean().optional(),
+    colorOutput: z.boolean().optional(),
   })
   .superRefine((opts, ctx) => {
     if (opts.launchMode === 'java-main') {
@@ -82,6 +83,7 @@ export const TomcatTypeOptionsSchema = z
     vmOptions: z.string(),
     reloadable: z.boolean(),
     rebuildOnSave: z.boolean(),
+    colorOutput: z.boolean().optional(),
   })
   .superRefine((opts, ctx) => {
     if (!opts.tomcatHome.trim()) {

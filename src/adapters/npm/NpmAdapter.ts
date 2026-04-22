@@ -112,6 +112,7 @@ export class NpmAdapter implements RuntimeAdapter {
             'Supports ${VAR} / ${env:VAR} / ${workspaceFolder} / ${cwd} / ${userHome}. ' +
             'Unresolved variables expand to empty strings at launch.',
           examples: ['--port 5000', '--open --host 0.0.0.0', '--config=${workspaceFolder}/cfg'],
+          inspectable: true,
         },
         {
           kind: 'text',

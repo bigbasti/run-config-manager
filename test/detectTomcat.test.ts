@@ -69,4 +69,10 @@ describe('findTomcatArtifacts', () => {
     // so we just verify both are discovered.
     expect(out.map(o => o.kind).sort()).toEqual(['exploded', 'war']);
   });
+
+  test('each candidate carries an mtime', async () => {
+    __writeFs('/proj/build/libs/app-1.0.war', '');
+    const out = await findTomcatArtifacts(Uri.file('/proj'));
+    expect(typeof out[0].mtime).toBe('number');
+  });
 });

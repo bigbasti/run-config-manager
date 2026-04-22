@@ -81,6 +81,7 @@ export interface ArtifactCandidate {
   path: string;                            // absolute path
   kind: 'war' | 'exploded';
   label: string;                           // short, for the dropdown
+  mtime: number;                           // milliseconds since epoch for sort
 }
 
 // Scan the project for built WARs and exploded web apps. Looks under:
@@ -109,7 +110,11 @@ export async function findTomcatArtifacts(projectRoot: vscode.Uri): Promise<Arti
       seen.set(c.path, c);
     }
   }
-  return Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label));
+  // Newest first — so the first item in the dropdown is the freshest build.
+  // Users typically want "what I just rebuilt". Ties broken by label.
+  return Array.from(seen.values()).sort(
+    (a, b) => (b.mtime - a.mtime) || a.label.localeCompare(b.label),
+  );
 }
 
 async function scanDir(dir: vscode.Uri, out: ArtifactCandidate[]): Promise<void> {
@@ -122,13 +127,25 @@ async function scanDir(dir: vscode.Uri, out: ArtifactCandidate[]): Promise<void>
   for (const [name, kind] of entries) {
     const full = `${dir.fsPath}/${name}`;
     if (kind === vscode.FileType.File && name.endsWith('.war')) {
-      out.push({ path: full, kind: 'war', label: `${name} (war)` });
+      const mtime = await statMtime(vscode.Uri.file(full));
+      out.push({ path: full, kind: 'war', label: `${name} (war)`, mtime });
     } else if (kind === vscode.FileType.Directory) {
       // Exploded web app: directory containing WEB-INF/.
       try {
-        await vscode.workspace.fs.stat(vscode.Uri.file(`${full}/WEB-INF`));
-        out.push({ path: full, kind: 'exploded', label: `${name} (exploded)` });
+        const webInf = vscode.Uri.file(`${full}/WEB-INF`);
+        await vscode.workspace.fs.stat(webInf);
+        const mtime = await statMtime(webInf); // use WEB-INF mtime — it reflects rebuilds
+        out.push({ path: full, kind: 'exploded', label: `${name} (exploded)`, mtime });
       } catch { /* not a webapp dir */ }
     }
+  }
+}
+
+async function statMtime(uri: vscode.Uri): Promise<number> {
+  try {
+    const s = await vscode.workspace.fs.stat(uri);
+    return s.mtime;
+  } catch {
+    return 0;
   }
 }

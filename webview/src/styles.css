@@ -87,6 +87,95 @@ button:hover { filter: brightness(1.1); }
   to   { transform: rotate(360deg); }
 }
 
+/* Field row: input + optional inspect/action buttons on the right. */
+.field-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.field-row .icon-button {
+  flex: 0 0 auto;
+  padding: 0 10px;
+  min-width: 32px;
+}
+
+/* Section separators inside the form. */
+.form section {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-input-border, transparent));
+}
+.form section:last-of-type { border-bottom: none; }
+.form section > div + div { margin-top: 10px; }
+
+/* Hover/focus polish for primary controls. */
+button {
+  transition: filter 120ms ease, background-color 120ms ease;
+}
+button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+input[type="text"], input[type="number"], textarea, select {
+  transition: border-color 120ms ease;
+}
+input:hover:not(:focus):not(:disabled),
+textarea:hover:not(:focus):not(:disabled),
+select:hover:not(:focus):not(:disabled) {
+  border-color: var(--vscode-inputOption-hoverBackground, var(--vscode-focusBorder));
+}
+
+/* Inspect dialog. */
+.inspect-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.inspect-dialog {
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-widget-border, var(--vscode-input-border, transparent));
+  border-radius: 4px;
+  width: min(640px, 90vw);
+  max-height: 80vh;
+  overflow: auto;
+  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.inspect-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.inspect-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.inspect-table th,
+.inspect-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-input-border, transparent));
+  vertical-align: top;
+}
+.inspect-index {
+  color: var(--vscode-descriptionForeground);
+  width: 32px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.inspect-token code {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 12px;
+  word-break: break-all;
+}
+
 .preview {
   margin-top: 16px;
   padding: 10px 12px;

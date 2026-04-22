@@ -367,6 +367,15 @@ export class TomcatAdapter implements RuntimeAdapter {
             'Requires Gradle (Maven has no built-in watch task).',
           dependsOn: { key: 'typeOptions.buildTool', equals: 'gradle' },
         },
+        {
+          kind: 'boolean',
+          key: 'typeOptions.colorOutput',
+          label: 'Colored log output',
+          help:
+            'Forces ANSI colors in the terminal by setting FORCE_COLOR=1 / CLICOLOR_FORCE=1 ' +
+            'and, for Spring Boot apps, spring.output.ansi.enabled=ALWAYS. Useful when your ' +
+            'app auto-detects TTY and otherwise strips color codes.',
+        },
       ],
       advanced: [
         {
@@ -384,6 +393,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           help:
             'JVM flags appended to CATALINA_OPTS. ' + VAR_SYNTAX_HINT,
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC -Dapp.home=${workspaceFolder}'],
+          inspectable: true,
         },
       ],
     };

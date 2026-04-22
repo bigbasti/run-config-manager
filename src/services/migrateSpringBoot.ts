@@ -38,6 +38,7 @@ export function migrateSpringBootConfig(raw: unknown): unknown {
       // 1c.2: debug port. Omit when absent so the schema's .optional() holds.
       ...(typeof to.debugPort === 'number' ? { debugPort: to.debugPort } : {}),
       ...(typeof to.rebuildOnSave === 'boolean' ? { rebuildOnSave: to.rebuildOnSave } : {}),
+      ...(typeof to.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
     },
   };
 }

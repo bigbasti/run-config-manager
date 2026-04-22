@@ -358,6 +358,15 @@ export class SpringBootAdapter implements RuntimeAdapter {
             'Requires Gradle (Maven mode has no built-in watch task). Uses the Gradle command / installation you selected above.',
           dependsOn: { key: 'typeOptions.launchMode', equals: ['gradle', 'java-main'] },
         },
+        {
+          kind: 'boolean',
+          key: 'typeOptions.colorOutput',
+          label: 'Colored log output',
+          help:
+            'Forces ANSI colors in the terminal by setting spring.output.ansi.enabled=ALWAYS plus ' +
+            'FORCE_COLOR=1 / CLICOLOR_FORCE=1 env vars. Libraries that auto-detect TTY will stop ' +
+            'stripping color codes.',
+        },
       ],
       advanced: [
         {
@@ -374,6 +383,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
           placeholder: '--server.port=8081',
           help: 'Passed to the Spring Boot app. ' + VAR_SYNTAX_HINT,
           examples: ['--server.port=8081', '--debug', '--config=${workspaceFolder}/conf'],
+          inspectable: true,
         },
         {
           kind: 'text',
@@ -385,6 +395,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
             '-Dspring-boot.run.jvmArguments for Maven; ignored by Gradle. ' +
             VAR_SYNTAX_HINT,
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC', '-Dapp.home=${workspaceFolder}'],
+          inspectable: true,
         },
       ],
     };
@@ -399,6 +410,24 @@ export class SpringBootAdapter implements RuntimeAdapter {
       case 'gradle':    return buildGradle(cfg, folder);
       case 'java-main': return buildJavaMain(cfg);
     }
+  }
+
+  async prepareLaunch(
+    cfg: RunConfig,
+    _folder: vscode.WorkspaceFolder,
+    _ctx: { debug: boolean; debugPort?: number },
+  ): Promise<{ env?: Record<string, string> }> {
+    if (cfg.type !== 'spring-boot') return {};
+    const env: Record<string, string> = {};
+    if (cfg.typeOptions.colorOutput) {
+      env.FORCE_COLOR = '1';
+      env.CLICOLOR_FORCE = '1';
+      // Spring Boot reads this at app startup; setting it in env works for all
+      // three launch modes (maven forwards env to the forked JVM; gradle
+      // likewise; java-main reads it directly).
+      env.SPRING_OUTPUT_ANSI_ENABLED = 'ALWAYS';
+    }
+    return { env };
   }
 
   getDebugConfig(cfg: RunConfig, _folder: vscode.WorkspaceFolder): vscode.DebugConfiguration {

@@ -9,6 +9,11 @@ type BaseFieldMeta = {
   // Renders an inline action button beside the input. The id is passed back
   // to the App via the `onFieldAction` prop so App can map it to a postMessage.
   action?: { id: string; label: string; busyLabel?: string };
+  // Adds a small "Inspect" eye-icon button next to the field. When clicked,
+  // the webview opens a dialog that splits the current value by whitespace
+  // (honouring simple quoting) and displays each token on its own row.
+  // Useful for long VM options / program args.
+  inspectable?: boolean;
 };
 
 export type FormField =
