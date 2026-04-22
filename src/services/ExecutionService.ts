@@ -29,6 +29,11 @@ export class ExecutionService {
   // Gradle builds the WAR. Tree provider reads this to show a distinct
   // busy-but-not-yet-running state.
   private preparing = new Set<string>();
+  // "Started" is the window after the configured listen port accepts a TCP
+  // connection. Tree provider upgrades the spinner to a green check once the
+  // config transitions into this state. Configs with no discoverable port
+  // stay in the spinner state — correctness trumps a false "ready" signal.
+  private started = new Set<string>();
   private emitter = new vscode.EventEmitter<string>();
   readonly onRunningChanged = this.emitter.event;
   private taskEndSub: vscode.Disposable;
@@ -43,6 +48,10 @@ export class ExecutionService {
 
   isPreparing(configId: string): boolean {
     return this.preparing.has(configId);
+  }
+
+  isStarted(configId: string): boolean {
+    return this.started.has(configId);
   }
 
   async run(
@@ -124,11 +133,35 @@ export class ExecutionService {
       this.running.set(cfg.id, entry);
       this.emitter.fire(cfg.id);
       log.info(`Started: ${cfg.name} (${command} ${args.join(' ')})`);
+
+      // Poll the configured port to detect when the app has actually bound.
+      // When the socket accepts a TCP connection, flip to the 'started' state
+      // so the tree can show a green icon instead of a spinner. Runs as a
+      // fire-and-forget side effect; doesn't block the executeTask return.
+      const readyPort = detectReadyPort(resolvedCfg);
+      if (readyPort) {
+        void this.watchReadyPort(cfg.id, readyPort);
+      }
       return execution;
     } catch (e) {
       log.error(`Failed to start ${cfg.name}`, e);
       vscode.window.showErrorMessage(`Failed to start "${cfg.name}": ${(e as Error).message}`);
       return undefined;
+    }
+  }
+
+  private async watchReadyPort(configId: string, port: number): Promise<void> {
+    // Cap at 10 minutes — longer than any reasonable app start; if the port
+    // never opens we just stay in the spinner state and the user still sees
+    // the process running.
+    const open = await waitForTcp('localhost', port, 10 * 60_000, () =>
+      // Bail early if the task ended before the port ever opened.
+      !this.running.has(configId),
+    );
+    if (open && this.running.has(configId)) {
+      this.started.add(configId);
+      this.emitter.fire(configId);
+      log.info(`Ready: ${configId} listening on ${port}`);
     }
   }
 
@@ -138,6 +171,7 @@ export class ExecutionService {
     entry.execution.terminate();
     entry.watcher?.terminate();
     this.running.delete(configId);
+    this.started.delete(configId);
     this.emitter.fire(configId);
   }
 
@@ -147,6 +181,7 @@ export class ExecutionService {
         // Main task ended — also kill the watcher.
         entry.watcher?.terminate();
         this.running.delete(id);
+        this.started.delete(id);
         this.emitter.fire(id);
         return;
       }
@@ -166,6 +201,7 @@ export class ExecutionService {
       try { entry.watcher?.terminate(); } catch { /* ignore */ }
     }
     this.running.clear();
+    this.started.clear();
     this.taskEndSub.dispose();
     this.emitter.dispose();
   }
@@ -223,4 +259,44 @@ async function startRebuildWatcher(
   );
   log.info(`Started rebuild watcher: ${gradleBinary} -t ${task} (cwd ${buildRoot})`);
   return vscode.tasks.executeTask(vsTask);
+}
+
+// Pick the port the tree should poll to learn when this config has "started".
+// Per type:
+//   - tomcat:       typeOptions.httpPort (always present)
+//   - spring-boot:  cfg.port (common field, user-configured for display)
+//   - npm:          cfg.port (same)
+// Falsy/invalid returns skip the poll entirely — tree stays in the spinner
+// state for the lifetime of the task.
+function detectReadyPort(cfg: RunConfig): number | null {
+  if (cfg.type === 'tomcat') {
+    return cfg.typeOptions.httpPort || null;
+  }
+  return (typeof cfg.port === 'number' && cfg.port > 0) ? cfg.port : null;
+}
+
+// Poll a TCP port until it accepts a connection, the budget expires, or the
+// abort callback returns true (e.g., the underlying task ended). Returns
+// true only on a successful connect.
+async function waitForTcp(
+  host: string,
+  port: number,
+  timeoutMs: number,
+  abort: () => boolean,
+): Promise<boolean> {
+  const net = await import('net');
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (abort()) return false;
+    const alive = await new Promise<boolean>(resolve => {
+      const sock = net.createConnection({ host, port });
+      const onDone = (ok: boolean) => { sock.destroy(); resolve(ok); };
+      sock.once('connect', () => onDone(true));
+      sock.once('error', () => onDone(false));
+      sock.setTimeout(400, () => onDone(false));
+    });
+    if (alive) return true;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  return false;
 }

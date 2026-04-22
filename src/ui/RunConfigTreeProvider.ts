@@ -60,6 +60,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
 
     const preparing = this.exec.isPreparing(n.config.id);
     const running = this.exec.isRunning(n.config.id) || this.dbg.isRunning(n.config.id);
+    const started = this.exec.isStarted(n.config.id);
     const adapter = this.registry.get(n.config.type);
     const debuggable = adapter?.supportsDebug === true;
     const item = new vscode.TreeItem(n.config.name, vscode.TreeItemCollapsibleState.None);
@@ -67,23 +68,32 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       `**${n.config.name}** _(${n.config.type})_\n\n` +
       (n.config.projectPath ? `Path: \`${n.config.projectPath}\`\n\n` : '') +
       `Command: \`${buildCommandPreview(n.config)}\`` +
-      (preparing ? '\n\n_Preparing (running build / writing scaffold)…_' : ''),
+      (preparing
+        ? '\n\n_Preparing (running build / writing scaffold)…_'
+        : running && !started
+        ? '\n\n_Starting…_'
+        : started
+        ? '\n\n_Running — listening on the configured port._'
+        : ''),
     );
-    // Three visual states: preparing (sync~spin + "Preparing…" description),
-    // running (loading~spin), idle (type icon). Preparing gets a distinct
-    // codicon so it reads differently at a glance, and a description so the
-    // user knows it's not just slow to start.
+    // Four visual states, in order:
+    //   preparing (blue sync-spin + "Preparing…")
+    //   starting  (loading-spin — running but port not yet open)
+    //   started   (green pass-filled — port is accepting connections)
+    //   idle      (type icon)
     if (preparing) {
       item.iconPath = new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.blue'));
       item.description = 'Preparing…';
-    } else if (running) {
+    } else if (running && !started) {
       item.iconPath = new vscode.ThemeIcon('loading~spin');
+      item.description = 'Starting…';
+    } else if (started) {
+      item.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
+      item.description = undefined;
     } else {
       item.iconPath = new vscode.ThemeIcon(iconForType(n.config.type));
+      item.description = undefined;
     }
-    // Context value: preparing behaves like running for the inline actions
-    // (Stop button visible, Debug hidden), so it gets the Running context.
-    // This avoids the user clicking Run twice while build is still in flight.
     item.contextValue = (preparing || running)
       ? debuggable ? 'configRunning' : 'configRunningNoDebug'
       : debuggable ? 'configIdle' : 'configIdleNoDebug';
