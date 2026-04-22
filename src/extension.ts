@@ -63,7 +63,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await addConfig(context, store, svc, scanner, registry);
     }),
 
-    vscode.commands.registerCommand('runConfig.edit', (arg: ConfigNodeArg) => {
+    vscode.commands.registerCommand('runConfig.edit', async (arg: ConfigNodeArg) => {
       if (!arg) return;
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
@@ -71,24 +71,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (arg.kind === 'config') {
         const adapter = registry.get(arg.config.type);
         if (!adapter) return;
+        const detectionContext = await buildEditContext(adapter, folder, arg.config.projectPath);
         EditorPanel.open({
           mode: 'edit',
           folderKey: arg.folderKey,
           folder,
           existing: arg.config,
-          schema: adapter.getFormSchema({}),
+          schema: adapter.getFormSchema(detectionContext),
         }, context, svc);
       } else {
         const recovered = buildRecoveredConfig(arg.entry);
         const type: RunConfigType = (recovered.type as RunConfigType) ?? 'npm';
         const adapter = registry.get(type);
         if (!adapter) return;
+        const detectionContext = await buildEditContext(adapter, folder, recovered.projectPath ?? '');
         EditorPanel.open({
           mode: 'edit',
           folderKey: arg.folderKey,
           folder,
           existing: recovered as RunConfig,
-          schema: adapter.getFormSchema({}),
+          schema: adapter.getFormSchema(detectionContext),
         }, context, svc);
       }
     }),
@@ -250,6 +252,22 @@ async function addConfig(
     seedDefaults,
     schema,
   }, context, svc);
+}
+
+async function buildEditContext(
+  adapter: { detect: (uri: vscode.Uri) => Promise<{ context: Record<string, unknown> } | null> },
+  folder: vscode.WorkspaceFolder,
+  projectPath: string,
+): Promise<Record<string, unknown>> {
+  const projectUri = projectPath
+    ? vscode.Uri.joinPath(folder.uri, projectPath)
+    : folder.uri;
+  try {
+    const detection = await adapter.detect(projectUri);
+    return detection?.context ?? {};
+  } catch {
+    return {};
+  }
 }
 
 export function deactivate(): void {
