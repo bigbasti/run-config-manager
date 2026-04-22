@@ -2,6 +2,7 @@ import type { FormField } from '../../../src/shared/formSchema';
 import { getPath, setPath } from '../state';
 import { KvEditor } from './KvEditor';
 import { FolderPathInput } from './FolderPathInput';
+import { SelectOrCustom } from './SelectOrCustom';
 
 interface Props {
   field: FormField;
@@ -12,6 +13,14 @@ interface Props {
 }
 
 export function Field({ field, values, onChange, onPickFolder, onFocusField }: Props) {
+  // Honor dependsOn: hide the field if its dependency's current value doesn't match.
+  if (field.dependsOn) {
+    const dep = getPath(values, field.dependsOn.key);
+    const equals = field.dependsOn.equals;
+    const matches = Array.isArray(equals) ? equals.includes(dep as string) : dep === equals;
+    if (!matches) return null;
+  }
+
   const v = getPath(values, field.key);
   const set = (next: unknown) => onChange(setPath(values, field.key, next));
   const focus = () => onFocusField?.(field.key);
@@ -43,6 +52,17 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
           onBlur={h.blur}
         />
       );
+    case 'textarea':
+      return (
+        <textarea
+          value={v ?? ''}
+          placeholder={field.placeholder ?? ''}
+          rows={field.rows ?? 3}
+          onChange={e => set(e.target.value)}
+          onFocus={h.focus}
+          onBlur={h.blur}
+        />
+      );
     case 'number':
       return (
         <input
@@ -60,6 +80,17 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
         <select value={v ?? ''} onChange={e => set(e.target.value)} onFocus={h.focus} onBlur={h.blur}>
           {field.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
+      );
+    case 'selectOrCustom':
+      return (
+        <SelectOrCustom
+          value={(v as string) ?? ''}
+          options={field.options}
+          placeholder={field.placeholder}
+          onChange={set}
+          onFocus={h.focus}
+          onBlur={h.blur}
+        />
       );
     case 'kv':
       return (
