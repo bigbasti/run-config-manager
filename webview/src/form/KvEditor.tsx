@@ -3,9 +3,11 @@ import { useCallback } from 'react';
 interface Props {
   value: Record<string, string>;
   onChange: (next: Record<string, string>) => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
 }
 
-export function KvEditor({ value, onChange }: Props) {
+export function KvEditor({ value, onChange, onFocus, onBlur }: Props) {
   const rows = Object.entries(value);
 
   const update = useCallback((idx: number, k: string, v: string) => {
@@ -26,8 +28,8 @@ export function KvEditor({ value, onChange }: Props) {
     <div>
       {rows.map(([k, v], idx) => (
         <div key={idx} className="kv-row">
-          <input value={k} onChange={e => update(idx, e.target.value, v)} placeholder="KEY" />
-          <input value={v} onChange={e => update(idx, k, e.target.value)} placeholder="value" />
+          <input value={k} onChange={e => update(idx, e.target.value, v)} placeholder="KEY" onFocus={onFocus} onBlur={onBlur} />
+          <input value={v} onChange={e => update(idx, k, e.target.value)} placeholder="value" onFocus={onFocus} onBlur={onBlur} />
           <button type="button" className="secondary" onClick={() => remove(idx)}>−</button>
         </div>
       ))}
