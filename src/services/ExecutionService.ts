@@ -3,8 +3,16 @@ import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import type { RunConfig } from '../shared/types';
 import { log } from '../utils/logger';
 import { resolveProjectUri } from '../utils/paths';
+import { gradleModulePrefix } from '../adapters/spring-boot/findBuildRoot';
 
-type Entry = { execution: vscode.TaskExecution; configId: string };
+interface Entry {
+  execution: vscode.TaskExecution;
+  configId: string;
+  // Side task (e.g., `gradle -t classes` watcher). Terminated whenever the
+  // main task stops; its own lifecycle doesn't affect the config's running
+  // state.
+  watcher?: vscode.TaskExecution;
+}
 
 export class ExecutionService {
   private running = new Map<string, Entry>();
@@ -30,9 +38,6 @@ export class ExecutionService {
     }
 
     const { command, args } = adapter.buildCommand(cfg);
-    // Spring Boot's Gradle/Maven modes run best from the build-tool root
-    // (where settings.gradle / reactor pom.xml lives). The adapter stores that
-    // in typeOptions.buildRoot when multi-module; fall back to projectPath.
     const cwd = buildCwd(cfg, folder);
 
     const shell = new vscode.ShellExecution(command, args, {
@@ -51,7 +56,20 @@ export class ExecutionService {
 
     try {
       const execution = await vscode.tasks.executeTask(task);
-      this.running.set(cfg.id, { execution, configId: cfg.id });
+      const entry: Entry = { execution, configId: cfg.id };
+
+      // Opt-in continuous rebuild: spawns a parallel `./gradlew -t :mod:classes`
+      // task alongside the main run. DevTools (if present on the classpath)
+      // triggers a warm restart each time classes change.
+      if (cfg.type === 'spring-boot' && shouldStartWatcher(cfg)) {
+        try {
+          entry.watcher = await startRebuildWatcher(cfg, folder);
+        } catch (e) {
+          log.warn(`Rebuild watcher failed to start for ${cfg.name}: ${(e as Error).message}`);
+        }
+      }
+
+      this.running.set(cfg.id, entry);
       this.emitter.fire(cfg.id);
       log.info(`Started: ${cfg.name} (${command} ${args.join(' ')})`);
       return execution;
@@ -66,7 +84,7 @@ export class ExecutionService {
     const entry = this.running.get(configId);
     if (!entry) return;
     entry.execution.terminate();
-    // handleEnd will clear state when onDidEndTask fires. For robustness:
+    entry.watcher?.terminate();
     this.running.delete(configId);
     this.emitter.fire(configId);
   }
@@ -74,8 +92,17 @@ export class ExecutionService {
   private handleEnd(execution: vscode.TaskExecution): void {
     for (const [id, entry] of this.running.entries()) {
       if (entry.execution === execution) {
+        // Main task ended — also kill the watcher.
+        entry.watcher?.terminate();
         this.running.delete(id);
         this.emitter.fire(id);
+        return;
+      }
+      // If only the watcher ended (e.g., user killed it manually), leave the
+      // main task alone. The map entry's `watcher` reference goes stale;
+      // dispose() will no-op when terminate is called on a dead execution.
+      if (entry.watcher === execution) {
+        entry.watcher = undefined;
         return;
       }
     }
@@ -84,6 +111,7 @@ export class ExecutionService {
   dispose(): void {
     for (const entry of this.running.values()) {
       try { entry.execution.terminate(); } catch { /* ignore */ }
+      try { entry.watcher?.terminate(); } catch { /* ignore */ }
     }
     this.running.clear();
     this.taskEndSub.dispose();
@@ -91,9 +119,6 @@ export class ExecutionService {
   }
 }
 
-// For Spring Boot maven/gradle modes, prefer the absolute `buildRoot` so
-// multi-module projects pick up the correct settings.gradle / reactor pom.xml.
-// java-main mode still runs from the project path (classpath is absolute-ish).
 function buildCwd(cfg: RunConfig, folder: vscode.WorkspaceFolder): string {
   if (cfg.type === 'spring-boot') {
     const to = cfg.typeOptions;
@@ -102,4 +127,48 @@ function buildCwd(cfg: RunConfig, folder: vscode.WorkspaceFolder): string {
     }
   }
   return resolveProjectUri(folder, cfg.projectPath).fsPath;
+}
+
+function shouldStartWatcher(cfg: RunConfig): boolean {
+  if (cfg.type !== 'spring-boot') return false;
+  const to = cfg.typeOptions;
+  if (!to.rebuildOnSave) return false;
+  // Gradle is required for the watcher (no equivalent in Maven without extra
+  // plugins). gradle launchMode runs bootRun's own reload; we still start the
+  // watcher for devtools coverage of resources.
+  return to.launchMode === 'gradle' || to.launchMode === 'java-main';
+}
+
+async function startRebuildWatcher(
+  cfg: Extract<RunConfig, { type: 'spring-boot' }>,
+  folder: vscode.WorkspaceFolder,
+): Promise<vscode.TaskExecution> {
+  const to = cfg.typeOptions;
+  const buildRoot = to.buildRoot || resolveProjectUri(folder, cfg.projectPath).fsPath;
+  const projectPath = resolveProjectUri(folder, cfg.projectPath).fsPath;
+  const modulePrefix = gradleModulePrefix(buildRoot, projectPath);
+  const task = modulePrefix ? `${modulePrefix}:classes` : 'classes';
+
+  const gradleBinary =
+    to.gradleCommand === './gradlew'
+      ? './gradlew'
+      : to.gradlePath
+      ? `${to.gradlePath.replace(/[/\\]$/, '')}/bin/gradle`
+      : 'gradle';
+
+  const shell = new vscode.ShellExecution(gradleBinary, ['-t', '--console=plain', task], {
+    cwd: buildRoot,
+    env: to.jdkPath ? { JAVA_HOME: to.jdkPath } : undefined,
+  });
+
+  const vsTask = new vscode.Task(
+    { type: 'run-config-watcher', configId: cfg.id } as any,
+    folder,
+    `${cfg.name} (watch)`,
+    'Run Configurations',
+    shell,
+    [],
+  );
+  log.info(`Started rebuild watcher: ${gradleBinary} -t ${task} (cwd ${buildRoot})`);
+  return vscode.tasks.executeTask(vsTask);
 }

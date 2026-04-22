@@ -35,6 +35,10 @@ export interface SpringBootTypeOptions {
   // default (5005). Only relevant to maven/gradle launch modes; java-main
   // mode lets the Java debugger pick the port itself.
   debugPort?: number;
+  // When true, starting this config also spawns `./gradlew -t :<module>:classes`
+  // in the background so edits recompile automatically. Relies on
+  // spring-boot-devtools on the classpath to pick up the recompiled classes.
+  rebuildOnSave?: boolean;
 }
 
 export type TypeOptions =

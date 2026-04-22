@@ -37,6 +37,7 @@ export function migrateSpringBootConfig(raw: unknown): unknown {
       buildRoot: typeof to.buildRoot === 'string' ? to.buildRoot : '',
       // 1c.2: debug port. Omit when absent so the schema's .optional() holds.
       ...(typeof to.debugPort === 'number' ? { debugPort: to.debugPort } : {}),
+      ...(typeof to.rebuildOnSave === 'boolean' ? { rebuildOnSave: to.rebuildOnSave } : {}),
     },
   };
 }

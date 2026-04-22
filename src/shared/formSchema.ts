@@ -35,6 +35,7 @@ export type FormField =
       options: Array<{ value: string; label: string }>;
       placeholder?: string;
     } & BaseFieldMeta)
+  | ({ kind: 'boolean'; key: string; label: string } & BaseFieldMeta)
   | ({ kind: 'kv'; key: string; label: string } & BaseFieldMeta)
   | ({ kind: 'folderPath'; key: string; label: string; relativeTo?: 'workspaceFolder' } & BaseFieldMeta);
 

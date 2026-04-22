@@ -325,6 +325,17 @@ export class SpringBootAdapter implements RuntimeAdapter {
           examples: ['5005', '5006'],
           dependsOn: { key: 'typeOptions.launchMode', equals: ['maven', 'gradle'] },
         },
+        {
+          kind: 'boolean',
+          key: 'typeOptions.rebuildOnSave',
+          label: 'Rebuild on save (hot reload)',
+          help:
+            'When enabled, starting this config also runs `./gradlew -t :<module>:classes` in the background so edits recompile automatically. ' +
+            'For hot reload to take effect the app must have `spring-boot-devtools` on its classpath — DevTools watches build/classes/java/main ' +
+            'and triggers a fast warm-restart of the Spring context. ' +
+            'Requires Gradle (Maven mode has no built-in watch task). Uses the Gradle command / installation you selected above.',
+          dependsOn: { key: 'typeOptions.launchMode', equals: ['gradle', 'java-main'] },
+        },
       ],
       advanced: [
         {

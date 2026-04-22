@@ -126,6 +126,20 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
           onBlur={h.blur}
         />
       );
+    case 'boolean':
+      return (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+          <input
+            type="checkbox"
+            checked={Boolean(v)}
+            onChange={e => set(e.target.checked)}
+            onFocus={h.focus}
+            onBlur={h.blur}
+            style={{ width: 'auto' }}
+          />
+          <span style={{ fontSize: 12 }}>Enabled</span>
+        </label>
+      );
     case 'kv':
       return (
         <KvEditor
