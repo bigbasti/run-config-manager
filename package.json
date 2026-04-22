@@ -5,6 +5,11 @@
   "version": "0.1.0",
   "publisher": "local",
   "license": "MIT",
+  "author": {
+    "name": "Sebastian Gross",
+    "email": "sebastian.gross@telekom.de"
+  },
+  "icon": "media/runconf.png",
   "engines": {
     "vscode": "^1.85.0"
   },

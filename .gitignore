@@ -4,3 +4,5 @@ media/webview
 *.vsix
 .DS_Store
 coverage
+# WSL / Windows NTFS ADS sidecar files for files downloaded from the internet.
+*:Zone.Identifier
