@@ -30,7 +30,13 @@ export interface RuntimeAdapter {
 
   getFormSchema(context: Record<string, unknown>): FormSchema;
 
-  buildCommand(cfg: RunConfig): { command: string; args: string[] };
+  buildCommand(
+    cfg: RunConfig,
+    // Optional: the resolved workspace folder, used by adapters that need to
+    // turn relative projectPath into an absolute filesystem path (e.g.,
+    // Gradle's :<module>:task scoping).
+    folder?: vscode.WorkspaceFolder,
+  ): { command: string; args: string[] };
 
   // Only required when supportsDebug === true. Adapters that don't support
   // debug can omit this method.

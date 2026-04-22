@@ -7,8 +7,9 @@ import { findMainClasses, type MainClassCandidate } from './findMainClasses';
 import { detectJdks } from './detectJdks';
 import { suggestClasspath } from './suggestClasspath';
 import { detectBuildTools } from './detectBuildTools';
-import { findGradleRoot, findMavenRoot } from './findBuildRoot';
+import { findGradleRoot, findMavenRoot, gradleModulePrefix } from './findBuildRoot';
 import { findSpringProfiles } from './findProfiles';
+import { resolveProjectUri } from '../../utils/paths';
 import { splitArgs } from '../npm/splitArgs';
 
 export class SpringBootAdapter implements RuntimeAdapter {
@@ -376,13 +377,13 @@ export class SpringBootAdapter implements RuntimeAdapter {
     };
   }
 
-  buildCommand(cfg: RunConfig): { command: string; args: string[] } {
+  buildCommand(cfg: RunConfig, folder?: vscode.WorkspaceFolder): { command: string; args: string[] } {
     if (cfg.type !== 'spring-boot') {
       throw new Error('SpringBootAdapter received non-spring-boot config');
     }
     switch (cfg.typeOptions.launchMode) {
       case 'maven':     return buildMaven(cfg);
-      case 'gradle':    return buildGradle(cfg);
+      case 'gradle':    return buildGradle(cfg, folder);
       case 'java-main': return buildJavaMain(cfg);
     }
   }
@@ -489,12 +490,25 @@ function buildMaven(cfg: Extract<RunConfig, { type: 'spring-boot' }>) {
   return { command: mavenBinary(to), args };
 }
 
-function buildGradle(cfg: Extract<RunConfig, { type: 'spring-boot' }>) {
+function buildGradle(
+  cfg: Extract<RunConfig, { type: 'spring-boot' }>,
+  folder?: vscode.WorkspaceFolder,
+) {
   const to = cfg.typeOptions;
   const programArgs = splitArgs(cfg.programArgs ?? '');
   const profiles = to.profiles.trim();
 
-  const args: string[] = ['bootRun'];
+  // In multi-module projects, scope bootRun to the chosen submodule so we
+  // don't accidentally launch the first module Gradle happens to find.
+  // Example: buildRoot /git/dds2, projectPath tardis-api → task :tardis-api:bootRun.
+  let task = 'bootRun';
+  if (to.buildRoot && folder) {
+    const projectAbs = resolveProjectUri(folder, cfg.projectPath).fsPath;
+    const modulePrefix = gradleModulePrefix(to.buildRoot, projectAbs);
+    if (modulePrefix) task = `${modulePrefix}:bootRun`;
+  }
+
+  const args: string[] = [task];
   const runArgs: string[] = [];
   if (profiles) runArgs.push(`--spring.profiles.active=${profiles}`);
   runArgs.push(...programArgs);

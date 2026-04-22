@@ -37,7 +37,7 @@ export class ExecutionService {
       return undefined;
     }
 
-    const { command, args } = adapter.buildCommand(cfg);
+    const { command, args } = adapter.buildCommand(cfg, folder);
     const cwd = buildCwd(cfg, folder);
 
     const shell = new vscode.ShellExecution(command, args, {
