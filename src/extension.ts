@@ -47,6 +47,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   updateMessage();
   store.onChange(updateMessage);
 
+  // Badge on the Activity Bar icon showing how many configs are currently running.
+  const updateBadge = () => {
+    const running = svc.list().filter(r => r.valid && (exec.isRunning(r.config.id) || dbg.isRunning(r.config.id)));
+    if (running.length > 0) {
+      view.badge = { value: running.length, tooltip: `${running.length} running configuration${running.length === 1 ? '' : 's'}` };
+    } else {
+      view.badge = undefined;
+    }
+  };
+  updateBadge();
+  exec.onRunningChanged(updateBadge);
+  dbg.onRunningChanged(updateBadge);
+  store.onChange(updateBadge);
+
   // Keep store in sync when workspace folders change.
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(async e => {
@@ -227,24 +241,58 @@ async function addConfig(
   );
   if (!typePick) return;
 
-  const detection = await scanner.scan(projectUri, typePick.value);
-  if (!detection) {
-    vscode.window.showWarningMessage(`No ${typePick.label} project detected — proceeding with blank form.`);
-  }
-
   const adapter = registry.get(typePick.value)!;
-  const schema = adapter.getFormSchema(detection?.context ?? {});
 
   const relProject = projectUri.fsPath.startsWith(folder.uri.fsPath)
     ? projectUri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
     : projectUri.fsPath;
 
+  // When the adapter supports streaming detection, open the editor immediately
+  // with an empty schema and let it fill in as each probe completes.
+  if (adapter.detectStreaming) {
+    const seedDefaults = {
+      type: typePick.value,
+      projectPath: relProject,
+      workspaceFolder: folder.name,
+    };
+    const schema = adapter.getFormSchema({});
+    EditorPanel.open({
+      mode: 'create',
+      folderKey: folder.uri.fsPath,
+      folder,
+      seedDefaults: seedDefaults as Partial<RunConfig>,
+      schema,
+      streaming: {
+        adapter,
+        initialContext: {},
+        // Fields that have their options populated by detection — the webview
+        // shows spinners in these fields until schemaUpdate messages arrive.
+        pending: [
+          'typeOptions.mainClass',
+          'typeOptions.jdkPath',
+          'typeOptions.classpath',
+          'typeOptions.profiles',
+          'typeOptions.gradleCommand',
+          'typeOptions.gradlePath',
+          'typeOptions.mavenPath',
+          'typeOptions.buildRoot',
+        ],
+      },
+    }, context, svc);
+    return;
+  }
+
+  // Non-streaming adapters: keep the legacy block-on-detect path.
+  const detection = await scanner.scan(projectUri, typePick.value);
+  if (!detection) {
+    vscode.window.showWarningMessage(`No ${typePick.label} project detected — proceeding with blank form.`);
+  }
+  const schema = adapter.getFormSchema(detection?.context ?? {});
   const seedDefaults = {
     ...(detection?.defaults ?? {}),
     projectPath: relProject,
     workspaceFolder: folder.name,
   };
-
   EditorPanel.open({
     mode: 'create',
     folderKey: folder.uri.fsPath,

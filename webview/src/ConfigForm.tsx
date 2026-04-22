@@ -12,15 +12,16 @@ interface Props {
   onFocusField: (key: string | null) => void;
   onFieldAction: (actionId: string) => void;
   busyActionId: string | null;
+  pending?: Set<string>;
 }
 
-export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId }: Props) {
+export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending }: Props) {
   const preview = useMemo(() => {
     try { return buildCommandPreview(values as RunConfig); } catch { return ''; }
   }, [values]);
 
   const change = (next: Record<string, unknown>) => onChange(next as Partial<RunConfig>);
-  const shared = { values: values as any, onChange: change, onFocusField, onFieldAction, busyActionId };
+  const shared = { values: values as any, onChange: change, onFocusField, onFieldAction, busyActionId, pending };
 
   return (
     <div className="form">

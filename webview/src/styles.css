@@ -70,6 +70,18 @@ button:hover { filter: brightness(1.1); }
 }
 .side-actions button { flex: 1; }
 
+.field-spinner {
+  display: inline-block;
+  animation: rcm-spin 1.2s linear infinite;
+  color: var(--vscode-descriptionForeground);
+  font-size: 13px;
+  line-height: 1;
+}
+@keyframes rcm-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 .preview {
   margin-top: 16px;
   padding: 10px 12px;

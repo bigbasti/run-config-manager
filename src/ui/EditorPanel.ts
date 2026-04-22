@@ -3,6 +3,7 @@ import type { RunConfig } from '../shared/types';
 import type { Inbound, Outbound } from '../shared/protocol';
 import type { FormSchema } from '../shared/formSchema';
 import type { RunConfigService } from '../services/RunConfigService';
+import type { RuntimeAdapter, StreamingPatch } from '../adapters/RuntimeAdapter';
 import { log } from '../utils/logger';
 import { relativeFromWorkspace, resolveProjectUri } from '../utils/paths';
 import { recomputeClasspath } from '../adapters/spring-boot/recomputeClasspath';
@@ -14,6 +15,14 @@ interface OpenArgs {
   existing?: RunConfig;
   seedDefaults?: Partial<RunConfig>;
   schema: FormSchema;
+  // When set, the webview is opened immediately and detection runs async;
+  // each StreamingPatch posts a schemaUpdate message + (in create mode) fills
+  // in any blank default fields.
+  streaming?: {
+    adapter: RuntimeAdapter;
+    initialContext: Record<string, unknown>;
+    pending: string[];          // field keys showing spinners on first paint
+  };
 }
 
 export class EditorPanel {
@@ -96,8 +105,46 @@ export class EditorPanel {
       mode: this.args.mode,
       config: config as Partial<RunConfig>,
       schema: this.args.schema,
+      pending: this.args.streaming?.pending,
     };
     this.panel.webview.postMessage(init);
+
+    // If streaming detection is enabled, kick it off now (non-blocking).
+    if (this.args.streaming && this.args.mode === 'create') {
+      this.runStreamingDetection().catch(e => log.error('streaming detection', e));
+    }
+  }
+
+  private async runStreamingDetection(): Promise<void> {
+    const s = this.args.streaming;
+    if (!s || !s.adapter.detectStreaming) return;
+    const context: Record<string, unknown> = { ...s.initialContext };
+    const pending = new Set<string>(s.pending);
+
+    const emit = (patch: StreamingPatch) => {
+      Object.assign(context, patch.contextPatch);
+      for (const k of patch.resolved ?? []) pending.delete(k);
+
+      const schema = s.adapter.getFormSchema(context);
+      const msg: Inbound = {
+        cmd: 'schemaUpdate',
+        schema,
+        pending: Array.from(pending),
+      };
+      this.panel.webview.postMessage(msg);
+
+      // In create mode, also seed any blank default fields — users see the
+      // detected main class / JDK / etc. populate as soon as we find them.
+      if (patch.defaultsPatch) {
+        const configPatch: Inbound = { cmd: 'configPatch', patch: patch.defaultsPatch };
+        this.panel.webview.postMessage(configPatch);
+      }
+    };
+
+    const projectUri = this.args.seedDefaults?.projectPath
+      ? vscode.Uri.joinPath(this.args.folder.uri, this.args.seedDefaults.projectPath)
+      : this.args.folder.uri;
+    await s.adapter.detectStreaming(projectUri, emit);
   }
 
   private async handleMessage(msg: Outbound): Promise<void> {

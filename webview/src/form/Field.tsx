@@ -13,9 +13,10 @@ interface Props {
   onFocusField?: (key: string | null) => void;
   onFieldAction?: (actionId: string) => void;
   busyActionId?: string | null;
+  pending?: Set<string>;
 }
 
-export function Field({ field, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId }: Props) {
+export function Field({ field, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending }: Props) {
   // Honor dependsOn: hide the field if its dependency's current value doesn't match.
   if (field.dependsOn) {
     const dep = getPath(values, field.dependsOn.key);
@@ -31,10 +32,14 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
 
   const action = field.action;
   const actionBusy = action ? busyActionId === action.id : false;
+  const isPending = pending?.has(field.key) ?? false;
 
   return (
     <div>
-      <label>{field.label}{'required' in field && field.required ? ' *' : ''}</label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span>{field.label}{'required' in field && field.required ? ' *' : ''}</span>
+        {isPending && <span className="field-spinner" title="Detecting…">⟳</span>}
+      </label>
       {renderInput(field, v, set, { onPickFolder, focus, blur })}
       {action && (
         <div style={{ marginTop: 4 }}>

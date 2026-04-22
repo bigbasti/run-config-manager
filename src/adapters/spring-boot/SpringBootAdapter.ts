@@ -72,6 +72,96 @@ export class SpringBootAdapter implements RuntimeAdapter {
     };
   }
 
+  // Streaming variant: emits partial contexts as each probe finishes so the
+  // webview can render the editor immediately and fill fields in place.
+  async detectStreaming(
+    folder: vscode.Uri,
+    emit: (patch: import('../RuntimeAdapter').StreamingPatch) => void,
+  ): Promise<void> {
+    // Fast: is this a Spring Boot project? If not, early-exit silently — the
+    // editor was already opened with whatever the user is editing.
+    const info = await readSpringBootInfo(folder);
+    if (!info || !info.hasSpringBootApplication) return;
+
+    const initialCtx: Record<string, unknown> = { buildTool: info.buildTool };
+    emit({ contextPatch: initialCtx, resolved: [] });
+
+    // gradleCommand + buildRoot: file-system stats, sub-second.
+    (async () => {
+      const gradleCommand = await detectGradleCommand(folder);
+      const gradleRoot = info.buildTool === 'gradle' ? await findGradleRoot(folder) : folder;
+      const mavenRoot = info.buildTool === 'maven' ? await findMavenRoot(folder) : folder;
+      const buildRoot = info.buildTool === 'gradle' ? gradleRoot.fsPath : mavenRoot.fsPath;
+      const effective: 'gradle' | './gradlew' =
+        info.buildTool === 'gradle' && (await fileExists(vscode.Uri.joinPath(gradleRoot, 'gradlew')))
+          ? './gradlew'
+          : gradleCommand;
+      emit({
+        contextPatch: { gradleCommand: effective, buildRoot },
+        defaultsPatch: {
+          typeOptions: {
+            gradleCommand: effective,
+            buildRoot: buildRoot === folder.fsPath ? '' : buildRoot,
+          } as any,
+        },
+        resolved: ['typeOptions.gradleCommand', 'typeOptions.buildRoot'],
+      });
+    })().catch(() => {});
+
+    // Profiles: directory walk, usually <1s.
+    (async () => {
+      const profiles = await findSpringProfiles(folder);
+      emit({ contextPatch: { profiles }, resolved: ['typeOptions.profiles'] });
+    })().catch(() => {});
+
+    // Main classes: file-system walk with regex, can take several seconds.
+    (async () => {
+      const mainClasses = await findMainClasses(folder);
+      emit({
+        contextPatch: { mainClasses },
+        defaultsPatch: mainClasses[0]
+          ? { typeOptions: { mainClass: mainClasses[0].fqn } as any }
+          : undefined,
+        resolved: ['typeOptions.mainClass'],
+      });
+    })().catch(() => {});
+
+    // JDK probe: filesystem + (possibly) Java extension API.
+    (async () => {
+      const jdks = await detectJdks();
+      emit({
+        contextPatch: { jdks },
+        defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
+        resolved: ['typeOptions.jdkPath'],
+      });
+    })().catch(() => {});
+
+    // Build-tool installs.
+    (async () => {
+      const bt = await detectBuildTools();
+      emit({
+        contextPatch: { gradleInstalls: bt.gradleInstalls, mavenInstalls: bt.mavenInstalls },
+        defaultsPatch: {
+          typeOptions: {
+            gradlePath: bt.gradleInstalls[0] ?? '',
+            mavenPath: bt.mavenInstalls[0] ?? '',
+          } as any,
+        },
+        resolved: ['typeOptions.gradlePath', 'typeOptions.mavenPath'],
+      });
+    })().catch(() => {});
+
+    // Classpath hint: fast path (Java extension) + fallback to static string.
+    (async () => {
+      const classpath = await suggestClasspath(folder, info.buildTool);
+      emit({
+        contextPatch: { classpath },
+        defaultsPatch: { typeOptions: { classpath } as any },
+        resolved: ['typeOptions.classpath'],
+      });
+    })().catch(() => {});
+  }
+
   getFormSchema(context: Record<string, unknown>): FormSchema {
     const mainClasses = (context.mainClasses as MainClassCandidate[] | undefined) ?? [];
     const jdks = (context.jdks as string[] | undefined) ?? [];

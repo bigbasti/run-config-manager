@@ -19,6 +19,15 @@ export interface RuntimeAdapter {
 
   detect(folder: vscode.Uri): Promise<DetectionResult | null>;
 
+  // Optional streaming detection: adapters that can stream partial results
+  // (e.g., fast "is this a Spring Boot project?" check, then slow main-class
+  // scan / JDK probe in parallel) implement this. Each call to `emit` posts
+  // a patch to the already-open editor webview.
+  detectStreaming?(
+    folder: vscode.Uri,
+    emit: (patch: StreamingPatch) => void,
+  ): Promise<void>;
+
   getFormSchema(context: Record<string, unknown>): FormSchema;
 
   buildCommand(cfg: RunConfig): { command: string; args: string[] };
@@ -26,4 +35,17 @@ export interface RuntimeAdapter {
   // Only required when supportsDebug === true. Adapters that don't support
   // debug can omit this method.
   getDebugConfig?(cfg: RunConfig, folder: vscode.WorkspaceFolder): DebugConfiguration;
+}
+
+// A streaming patch: adapters emit one of these whenever a piece of detection
+// completes. `contextPatch` is merged into the detection context (used to
+// rebuild the form schema); `defaultsPatch` seeds fields that are blank in the
+// current config (useful for create mode — pre-filling the first main class or
+// JDK once found).
+export interface StreamingPatch {
+  contextPatch: Record<string, unknown>;
+  defaultsPatch?: Partial<RunConfig>;
+  // Field keys whose detection just completed (used by the webview to hide
+  // the spinner for those fields).
+  resolved?: string[];
 }
