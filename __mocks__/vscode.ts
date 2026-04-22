@@ -140,11 +140,19 @@ export const tasks = {
   __startEmitter: startEmitter,
 };
 
+const debugStart = new EventEmitter<any>();
+const debugTerm = new EventEmitter<any>();
+
 export const debug = {
-  startDebugging: jest.fn(),
+  startDebugging: jest.fn(async (_folder: any, config: any) => {
+    debugStart.fire({ configuration: config, name: config.name });
+    return true;
+  }),
   stopDebugging: jest.fn(),
-  onDidStartDebugSession: jest.fn().mockReturnValue({ dispose: () => {} }),
-  onDidTerminateDebugSession: jest.fn().mockReturnValue({ dispose: () => {} }),
+  onDidStartDebugSession: debugStart.event,
+  onDidTerminateDebugSession: debugTerm.event,
+  __startEmitter: debugStart,
+  __termEmitter: debugTerm,
 };
 
 export class Task {
