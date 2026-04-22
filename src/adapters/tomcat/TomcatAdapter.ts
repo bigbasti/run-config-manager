@@ -7,6 +7,7 @@ import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { detectTomcatInstalls, findTomcatArtifacts } from './detectTomcat';
 import { prepareTomcatLaunch, catalinaExecutable } from './tomcatRuntime';
 import { resolveProjectUri } from '../../utils/paths';
+import { findGradleRoot } from '../spring-boot/findBuildRoot';
 import type { PrepareContext, PrepareResult } from '../RuntimeAdapter';
 
 // Shared help-text footer — mirrors the Spring Boot adapter's pattern.
@@ -26,14 +27,19 @@ export class TomcatAdapter implements RuntimeAdapter {
     // Tomcat has no auto-detect from project files alone — any web project
     // could be deployed. We consider any folder a valid Tomcat target and
     // defer the "is this project buildable?" decision to the user.
-    const [tomcatInstalls, jdks, buildTools, artifacts] = await Promise.all([
+    const [tomcatInstalls, jdks, buildTools, artifacts, gradleRoot] = await Promise.all([
       detectTomcatInstalls(),
       detectJdks(),
       detectBuildTools(),
       findTomcatArtifacts(folder),
+      findGradleRoot(folder),
     ]);
 
     const firstArtifact = artifacts[0];
+    // Only fill buildRoot when walking up actually moved — for single-module
+    // projects we leave it empty to keep run.json tidy.
+    const buildRoot = gradleRoot.fsPath === folder.fsPath ? '' : gradleRoot.fsPath;
+
     return {
       defaults: {
         type: 'tomcat',
@@ -42,7 +48,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           jdkPath: jdks[0] ?? '',
           httpPort: 8080,
           buildProjectPath: '',
-          buildRoot: '',
+          buildRoot,
           buildTool: 'gradle',
           gradleCommand: './gradlew',
           gradlePath: buildTools.gradleInstalls[0] ?? '',
@@ -61,6 +67,7 @@ export class TomcatAdapter implements RuntimeAdapter {
         gradleInstalls: buildTools.gradleInstalls,
         mavenInstalls: buildTools.mavenInstalls,
         artifacts,
+        buildRoot: gradleRoot.fsPath,
       },
     };
   }
@@ -137,6 +144,21 @@ export class TomcatAdapter implements RuntimeAdapter {
           : undefined,
         resolved: ['typeOptions.artifactPath', 'typeOptions.artifactKind'],
       });
+    })().catch(() => {});
+
+    // Gradle root walk-up: for multi-module projects where the chosen project
+    // is a submodule (e.g. /git/zebra/api) and the wrapper lives at the root
+    // (/git/zebra/gradlew), populate buildRoot so prepareLaunch runs `./gradlew`
+    // from the right cwd. Fires only when the user is using Gradle.
+    (async () => {
+      const root = await findGradleRoot(folder);
+      if (root.fsPath !== folder.fsPath) {
+        emit({
+          contextPatch: { buildRoot: root.fsPath },
+          defaultsPatch: { typeOptions: { buildRoot: root.fsPath } as any },
+          resolved: ['typeOptions.buildRoot'],
+        });
+      }
     })().catch(() => {});
   }
 

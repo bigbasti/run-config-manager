@@ -5,7 +5,7 @@ import * as path from 'path';
 import type { RunConfig } from '../../shared/types';
 import type { PrepareContext, PrepareResult } from '../RuntimeAdapter';
 import { resolveProjectUri } from '../../utils/paths';
-import { gradleModulePrefix } from '../spring-boot/findBuildRoot';
+import { gradleModulePrefix, findGradleRoot } from '../spring-boot/findBuildRoot';
 import { log } from '../../utils/logger';
 
 // CATALINA_BASE scaffold location: <workspace>/.vscode/rcm-tomcat/<configId>/.
@@ -75,9 +75,17 @@ async function runBuildIfNeeded(cfg: TomcatCfg, folder: vscode.WorkspaceFolder):
   // to block the launch until build finishes. child_process.spawn is simpler.
 
   const projectUri = resolveProjectUri(folder, to.buildProjectPath || cfg.projectPath);
-  const buildRoot = to.buildRoot || projectUri.fsPath;
 
   if (to.buildTool === 'gradle') {
+    // When buildRoot isn't explicitly set, walk up from the project to find
+    // the Gradle root (settings.gradle / gradlew). Using the submodule as the
+    // cwd would miss the wrapper and hand us an "exited 127" from the shell.
+    const buildRoot =
+      to.buildRoot ||
+      (to.gradleCommand === './gradlew'
+        ? (await findGradleRoot(projectUri)).fsPath
+        : projectUri.fsPath);
+
     const prefix = buildRoot !== projectUri.fsPath
       ? gradleModulePrefix(buildRoot, projectUri.fsPath)
       : '';
@@ -90,7 +98,9 @@ async function runBuildIfNeeded(cfg: TomcatCfg, folder: vscode.WorkspaceFolder):
         : 'gradle';
     await runSync(gradleBinary, ['--console=plain', task], buildRoot, to.jdkPath);
   } else {
-    // Maven
+    // Maven — same walking-up logic would apply, but Maven submodules
+    // correctly find the reactor parent on their own via <parent>. Stay cwd
+    // at the submodule.
     const mvn = to.mavenPath ? `${to.mavenPath.replace(/[/\\]$/, '')}/bin/mvn` : 'mvn';
     await runSync(mvn, ['-pl', '.', 'package', '-DskipTests'], projectUri.fsPath, to.jdkPath);
   }
