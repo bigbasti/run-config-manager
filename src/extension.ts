@@ -49,8 +49,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   updateMessage();
   store.onChange(updateMessage);
 
-  // Badge on the Activity Bar icon showing how many configs are currently running.
-  const updateBadge = () => {
+  // Badge on the Activity Bar icon + context key for the "Stop All" title-bar
+  // button's when-clause. Both derive from the same running-configs count, so
+  // we compute once and fan out.
+  const updateRunningState = () => {
     const running = svc.list().filter(r =>
       r.valid && (exec.isRunning(r.config.id) || exec.isPreparing(r.config.id) || dbg.isRunning(r.config.id)),
     );
@@ -59,11 +61,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     } else {
       view.badge = undefined;
     }
+    void vscode.commands.executeCommand('setContext', 'rcm.anyRunning', running.length > 0);
   };
-  updateBadge();
-  exec.onRunningChanged(updateBadge);
-  dbg.onRunningChanged(updateBadge);
-  store.onChange(updateBadge);
+  updateRunningState();
+  exec.onRunningChanged(updateRunningState);
+  dbg.onRunningChanged(updateRunningState);
+  store.onChange(updateRunningState);
 
   // Keep store in sync when workspace folders change.
   context.subscriptions.push(
@@ -76,6 +79,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('runConfig.refresh', () => tree.refresh()),
+
+    vscode.commands.registerCommand('runConfig.stopAll', async () => {
+      const running = svc.list().filter(r =>
+        r.valid && (exec.isRunning(r.config.id) || dbg.isRunning(r.config.id)),
+      );
+      if (running.length === 0) return;
+      const confirm = await vscode.window.showWarningMessage(
+        `Stop ${running.length} running configuration${running.length === 1 ? '' : 's'}?`,
+        { modal: true },
+        'Stop All',
+      );
+      if (confirm !== 'Stop All') return;
+      // Fire every stop in parallel — they're independent and each may have
+      // to wait for a SIGTERM→SIGKILL grace period.
+      await Promise.all(running.map(async r => {
+        if (dbg.isRunning(r.config.id)) await dbg.stop(r.config.id);
+        if (exec.isRunning(r.config.id)) await exec.stop(r.config.id);
+      }));
+    }),
+
+    vscode.commands.registerCommand('runConfig.autoCreate', async () => {
+      await autoCreateConfigs(store, svc, registry);
+    }),
 
     vscode.commands.registerCommand('runConfig.add', async () => {
       await addConfig(context, store, svc, scanner, registry);
@@ -326,6 +352,230 @@ async function buildEditContext(
   } catch {
     return {};
   }
+}
+
+// Scan every direct child of the chosen folder and ask each adapter if it
+// recognises the module. For each match, create a config with the adapter's
+// detected defaults. Higher-priority types (spring-boot, tomcat) win over
+// npm, which matches any folder with a package.json — including pure-tooling
+// folders in Java projects. We skip modules that already have a config of
+// the same type in the same folder-key so the user can run this repeatedly
+// without duplicates.
+async function autoCreateConfigs(
+  store: ConfigStore,
+  svc: RunConfigService,
+  registry: AdapterRegistry,
+): Promise<void> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    vscode.window.showErrorMessage('Open a workspace folder first.');
+    return;
+  }
+
+  let folder: vscode.WorkspaceFolder | undefined;
+  if (folders.length === 1) folder = folders[0];
+  else folder = await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Workspace folder' });
+  if (!folder) return;
+
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+    defaultUri: folder.uri,
+    openLabel: 'Scan this directory for modules',
+  });
+  if (!picked || picked.length === 0) return;
+  const root = picked[0];
+
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'Auto-creating run configurations…', cancellable: false },
+    async (progress) => {
+      // Priority: spring-boot beats tomcat beats npm. Any project with both
+      // Spring Boot and a WAR output could match tomcat too; we pick the
+      // more specific one. npm is the catch-all — lots of Java projects have
+      // package.json for lint/docs tooling.
+      const priority: RunConfigType[] = ['spring-boot', 'tomcat', 'npm'];
+
+      const children = await listDirectChildren(root);
+      // Also scan the root itself as a candidate module (single-module repos).
+      const candidates: vscode.Uri[] = [root, ...children];
+
+      const existing = new Set<string>();
+      for (const c of svc.list()) {
+        if (c.valid) {
+          existing.add(`${c.folderKey}|${c.config.type}|${c.config.projectPath}`);
+        }
+      }
+
+      const created: string[] = [];
+      const skipped: string[] = [];
+      let done = 0;
+
+      for (const child of candidates) {
+        done++;
+        const rel = relativePath(folder.uri.fsPath, child.fsPath);
+        progress.report({ message: rel || '(workspace root)', increment: (100 / candidates.length) });
+
+        let match: { type: RunConfigType; defaults: Partial<RunConfig> } | null = null;
+        for (const type of priority) {
+          const adapter = registry.get(type);
+          if (!adapter) continue;
+          try {
+            const detection = await adapter.detect(child);
+            if (detection) {
+              match = { type, defaults: detection.defaults };
+              break;
+            }
+          } catch { /* skip — adapter failed to probe */ }
+        }
+        if (!match) continue;
+
+        // Skip duplicates by type+path.
+        const key = `${folder!.uri.fsPath}|${match.type}|${rel}`;
+        if (existing.has(key)) {
+          skipped.push(`${rel || '(root)'} (${match.type}, already exists)`);
+          continue;
+        }
+
+        const name = deriveConfigName(child, match.type);
+        const merged = mergeAutoCreateDefaults(match.type, match.defaults, {
+          name,
+          projectPath: rel,
+          workspaceFolder: folder!.name,
+        });
+        if (!merged) continue;
+
+        try {
+          await svc.create(folder!.uri.fsPath, merged);
+          created.push(`${name} (${match.type})`);
+          existing.add(key);
+        } catch (e) {
+          log.warn(`Auto-create failed for ${rel}: ${(e as Error).message}`);
+        }
+      }
+
+      const lines: string[] = [];
+      if (created.length) {
+        lines.push(`Created ${created.length} configuration${created.length === 1 ? '' : 's'}:`);
+        for (const c of created) lines.push(`  • ${c}`);
+      }
+      if (skipped.length) {
+        lines.push(`Skipped ${skipped.length} already-existing:`);
+        for (const s of skipped.slice(0, 5)) lines.push(`  • ${s}`);
+        if (skipped.length > 5) lines.push(`  • …and ${skipped.length - 5} more`);
+      }
+      if (!created.length && !skipped.length) {
+        vscode.window.showInformationMessage('Auto-create found no recognised modules under the chosen folder.');
+      } else {
+        vscode.window.showInformationMessage(lines.join('\n'), { modal: false });
+      }
+    },
+  );
+}
+
+async function listDirectChildren(dir: vscode.Uri): Promise<vscode.Uri[]> {
+  try {
+    const entries = await vscode.workspace.fs.readDirectory(dir);
+    const skip = new Set([
+      'node_modules', 'target', 'build', 'out', '.gradle', '.idea', '.vscode', '.git', 'dist', 'bin',
+    ]);
+    return entries
+      .filter(([name, kind]) => kind === vscode.FileType.Directory && !name.startsWith('.') && !skip.has(name))
+      .map(([name]) => vscode.Uri.joinPath(dir, name));
+  } catch {
+    return [];
+  }
+}
+
+function relativePath(root: string, child: string): string {
+  if (child === root) return '';
+  if (child.startsWith(root + '/') || child.startsWith(root + '\\')) {
+    return child.slice(root.length + 1).replace(/\\/g, '/');
+  }
+  return child;
+}
+
+function deriveConfigName(child: vscode.Uri, type: RunConfigType): string {
+  const base = child.fsPath.split(/[/\\]/).filter(Boolean).pop() ?? 'app';
+  const suffix = type === 'spring-boot' ? 'API' : type === 'tomcat' ? 'Tomcat' : 'Web';
+  // Capitalise first letter, keep the rest as-is ("api" → "Api").
+  const pretty = base.charAt(0).toUpperCase() + base.slice(1);
+  return `${pretty} ${suffix}`;
+}
+
+// Produce an Omit<RunConfig,'id'> suitable for RunConfigService.create.
+// Takes the adapter's detected defaults and fills in any missing required
+// fields with safe literals. Returning null skips the config — only happens
+// when the adapter returned null which shouldn't reach here.
+function mergeAutoCreateDefaults(
+  type: RunConfigType,
+  defaults: Partial<RunConfig>,
+  common: { name: string; projectPath: string; workspaceFolder: string },
+): Omit<RunConfig, 'id'> | null {
+  const typeOptions = (defaults.typeOptions ?? {}) as any;
+  const base = {
+    name: common.name,
+    projectPath: common.projectPath,
+    workspaceFolder: common.workspaceFolder,
+    env: {} as Record<string, string>,
+    programArgs: '',
+    vmArgs: '',
+  };
+
+  if (type === 'npm') {
+    return {
+      ...base,
+      type: 'npm',
+      typeOptions: {
+        scriptName: typeOptions.scriptName ?? 'start',
+        packageManager: typeOptions.packageManager ?? 'npm',
+      },
+    };
+  }
+  if (type === 'spring-boot') {
+    const buildTool = typeOptions.buildTool ?? 'maven';
+    return {
+      ...base,
+      type: 'spring-boot',
+      typeOptions: {
+        launchMode: typeOptions.launchMode ?? buildTool,
+        buildTool,
+        gradleCommand: typeOptions.gradleCommand ?? './gradlew',
+        profiles: '',
+        mainClass: typeOptions.mainClass ?? '',
+        classpath: typeOptions.classpath ?? '',
+        jdkPath: typeOptions.jdkPath ?? '',
+        module: '',
+        gradlePath: typeOptions.gradlePath ?? '',
+        mavenPath: typeOptions.mavenPath ?? '',
+        buildRoot: typeOptions.buildRoot ?? '',
+      },
+    };
+  }
+  if (type === 'tomcat') {
+    return {
+      ...base,
+      type: 'tomcat',
+      typeOptions: {
+        tomcatHome: typeOptions.tomcatHome ?? '',
+        jdkPath: typeOptions.jdkPath ?? '',
+        httpPort: typeOptions.httpPort ?? 8080,
+        buildProjectPath: '',
+        buildRoot: typeOptions.buildRoot ?? '',
+        buildTool: typeOptions.buildTool ?? 'gradle',
+        gradleCommand: typeOptions.gradleCommand ?? './gradlew',
+        gradlePath: typeOptions.gradlePath ?? '',
+        mavenPath: typeOptions.mavenPath ?? '',
+        artifactPath: typeOptions.artifactPath ?? '',
+        artifactKind: typeOptions.artifactKind ?? 'war',
+        applicationContext: '/',
+        vmOptions: '',
+        reloadable: true,
+        rebuildOnSave: false,
+      },
+    };
+  }
+  return null;
 }
 
 export function deactivate(): void {

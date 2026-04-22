@@ -31,6 +31,8 @@
     },
     "commands": [
       { "command": "runConfig.add", "title": "Add Run Configuration", "icon": "$(add)" },
+      { "command": "runConfig.autoCreate", "title": "Auto-create Configurations", "icon": "$(sparkle)" },
+      { "command": "runConfig.stopAll", "title": "Stop All Running", "icon": "$(stop-circle)" },
       { "command": "runConfig.refresh", "title": "Refresh", "icon": "$(refresh)" },
       { "command": "runConfig.edit", "title": "Edit", "icon": "$(edit)" },
       { "command": "runConfig.delete", "title": "Delete", "icon": "$(trash)" },
@@ -43,7 +45,9 @@
     "menus": {
       "view/title": [
         { "command": "runConfig.add", "when": "view == runConfigurations", "group": "navigation@1" },
-        { "command": "runConfig.refresh", "when": "view == runConfigurations", "group": "navigation@2" }
+        { "command": "runConfig.autoCreate", "when": "view == runConfigurations", "group": "navigation@2" },
+        { "command": "runConfig.stopAll", "when": "view == runConfigurations && rcm.anyRunning", "group": "navigation@3" },
+        { "command": "runConfig.refresh", "when": "view == runConfigurations", "group": "navigation@4" }
       ],
       "view/item/context": [
         { "command": "runConfig.run", "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?$/", "group": "inline@1" },
