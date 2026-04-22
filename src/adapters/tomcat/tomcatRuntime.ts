@@ -81,14 +81,7 @@ export async function prepareTomcatLaunch(
     // commonly set without %clr() tokens → plain output even with ansi=always).
     // JVM tokenises JAVA_TOOL_OPTIONS on ASCII whitespace, so we use the NBSP
     // trick for the pattern's separators.
-    const nbsp = ' ';
-    const pattern = [
-      `%clr(%d{yyyy-MM-dd'T'HH:mm:ss.SSS}){faint}`,
-      `%clr(%5p)`,
-      `%clr([%t]){faint}`,
-      `%clr(%-40.40logger{39}){cyan}`,
-      `%clr(:){faint}%m%n%wEx`,
-    ].join(nbsp);
+    const pattern = "%clr(%d{yyyy-MM-dd\\'T\\'HH:mm:ss.SSS}){faint} %clr(%5p) %clr([%t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %clr(%replace(%m){'(/[a-zA-Z0-9/._-]+)','\u001b[94m$1\u001b[0m'}) %n%wEx";
     env.JAVA_TOOL_OPTIONS =
       `-Dspring.output.ansi.enabled=ALWAYS -Dlogging.pattern.console=${pattern}`;
   }

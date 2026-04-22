@@ -30,14 +30,7 @@ const VAR_SYNTAX_HINT =
 // Logback allows concatenating conversion words directly; we substitute spaces
 // inside the pattern with   (non-breaking space) which Logback prints
 // and the JVM tokenises fine. The visual result looks like a regular space.
-const NBSP = ' ';
-const COLORED_LOG_PATTERN = [
-  `%clr(%d{yyyy-MM-dd'T'HH:mm:ss.SSS}){faint}`,
-  `%clr(%5p)`,
-  `%clr([%t]){faint}`,
-  `%clr(%-40.40logger{39}){cyan}`,
-  `%clr(:){faint}%m%n%wEx`,
-].join(NBSP);
+const COLORED_LOG_PATTERN = "%clr(%d{yyyy-MM-dd\\'T\\'HH:mm:ss.SSS}){faint} %clr(%5p) %clr([%t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %clr(%replace(%m){'(/[a-zA-Z0-9/._-]+)','\u001b[94m$1\u001b[0m'}) %n%wEx";
 import { splitArgs } from '../npm/splitArgs';
 
 export class SpringBootAdapter implements RuntimeAdapter {
