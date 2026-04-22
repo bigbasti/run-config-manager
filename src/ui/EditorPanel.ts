@@ -74,7 +74,8 @@ export class EditorPanel {
     const type = ((seed.type as string | undefined) ?? this.args.existing?.type ?? 'npm') as
       | 'npm'
       | 'spring-boot'
-      | 'tomcat';
+      | 'tomcat'
+      | 'quarkus';
 
     const baseCommon = {
       name: '',
@@ -85,10 +86,10 @@ export class EditorPanel {
       vmArgs: '',
     };
 
-    // For Spring Boot in streaming mode we deliberately leave build-tool
-    // fields unset so detection can populate them. Pre-filling 'maven' here
-    // would survive mergeBlanks (it's truthy) and poison the recompute path
-    // when the project is actually Gradle.
+    // For Spring Boot / Quarkus in streaming mode we deliberately leave
+    // build-tool fields unset so detection can populate them. Pre-filling
+    // 'maven' here would survive mergeBlanks (it's truthy) and poison the
+    // recompute path when the project is actually Gradle.
     const isStreaming = Boolean(this.args.streaming);
     let typeDefaults: Record<string, unknown>;
     if (type === 'npm') {
@@ -106,6 +107,12 @@ export class EditorPanel {
         reloadable: true,
         rebuildOnSave: false,
       };
+    } else if (type === 'quarkus') {
+      // Same detection-friendly defaults as spring-boot: leave buildTool
+      // unset in streaming mode so detection can supply it.
+      typeDefaults = isStreaming
+        ? { profile: '', debugPort: 5005, colorOutput: true }
+        : { buildTool: 'maven', profile: '', debugPort: 5005, colorOutput: true };
     } else {
       typeDefaults = isStreaming ? { profiles: '' } : { buildTool: 'maven', profiles: '' };
     }
@@ -216,11 +223,17 @@ export class EditorPanel {
       }
       case 'testVariables': {
         const cfg = msg.config;
-        const cwd = cfg.type === 'spring-boot'
+        const springRoot = cfg.type === 'spring-boot'
           && (cfg.typeOptions.launchMode === 'maven' || cfg.typeOptions.launchMode === 'gradle')
           && cfg.typeOptions.buildRoot
             ? cfg.typeOptions.buildRoot
-            : resolveProjectUri(this.args.folder, cfg.projectPath ?? '').fsPath;
+            : null;
+        const quarkusRoot = cfg.type === 'quarkus' && cfg.typeOptions.buildRoot
+          ? cfg.typeOptions.buildRoot
+          : null;
+        const cwd = springRoot
+          ?? quarkusRoot
+          ?? resolveProjectUri(this.args.folder, cfg.projectPath ?? '').fsPath;
         const ctx = makeRunContext({ workspaceFolder: this.args.folder.uri.fsPath, cwd });
         const { unresolved } = resolveConfig(cfg, ctx);
         const reply: Inbound = {
@@ -254,79 +267,8 @@ export class EditorPanel {
     }
   }
 
-  // Fill missing keys so the config passes schema validation even if the webview
-  // posted a partial object (e.g., the user never touched the script select).
   private sanitize(cfg: RunConfig): RunConfig {
-    const common = {
-      ...cfg,
-      env: cfg.env ?? {},
-      programArgs: cfg.programArgs ?? '',
-      vmArgs: cfg.vmArgs ?? '',
-    };
-    if (cfg.type === 'tomcat') {
-      const to = cfg.typeOptions as Partial<import('../shared/types').TomcatTypeOptions> | undefined;
-      return {
-        ...common,
-        type: 'tomcat',
-        typeOptions: {
-          tomcatHome: to?.tomcatHome ?? '',
-          jdkPath: to?.jdkPath ?? '',
-          httpPort: to?.httpPort ?? 8080,
-          httpsPort: to?.httpsPort,
-          ajpPort: to?.ajpPort,
-          jmxPort: to?.jmxPort,
-          debugPort: to?.debugPort,
-          buildProjectPath: to?.buildProjectPath ?? '',
-          buildRoot: to?.buildRoot ?? '',
-          buildTool: (to?.buildTool ?? 'gradle') as 'gradle' | 'maven' | 'none',
-          gradleCommand: (to?.gradleCommand ?? './gradlew') as './gradlew' | 'gradle',
-          gradlePath: to?.gradlePath ?? '',
-          mavenPath: to?.mavenPath ?? '',
-          artifactPath: to?.artifactPath ?? '',
-          artifactKind: (to?.artifactKind ?? 'war') as 'war' | 'exploded',
-          applicationContext: to?.applicationContext ?? '/',
-          vmOptions: to?.vmOptions ?? '',
-          reloadable: to?.reloadable ?? true,
-          rebuildOnSave: to?.rebuildOnSave ?? false,
-          colorOutput: to?.colorOutput,
-        },
-      };
-    }
-    if (cfg.type === 'spring-boot') {
-      const to = cfg.typeOptions as Partial<import('../shared/types').SpringBootTypeOptions> | undefined;
-      const buildTool = to?.buildTool ?? 'maven';
-      return {
-        ...common,
-        type: 'spring-boot',
-        typeOptions: {
-          launchMode: to?.launchMode ?? buildTool,
-          buildTool,
-          gradleCommand: to?.gradleCommand ?? './gradlew',
-          profiles: to?.profiles ?? '',
-          mainClass: to?.mainClass ?? '',
-          classpath: to?.classpath ?? '',
-          jdkPath: to?.jdkPath ?? '',
-          module: to?.module ?? '',
-          gradlePath: to?.gradlePath ?? '',
-          mavenPath: to?.mavenPath ?? '',
-          buildRoot: to?.buildRoot ?? '',
-          // Optional fields — forward verbatim so the user's toggles actually
-          // persist. Earlier omission silently dropped these on every save.
-          ...(typeof to?.debugPort === 'number' ? { debugPort: to.debugPort } : {}),
-          ...(typeof to?.rebuildOnSave === 'boolean' ? { rebuildOnSave: to.rebuildOnSave } : {}),
-          ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
-        },
-      };
-    }
-    const to = cfg.typeOptions as Partial<import('../shared/types').NpmTypeOptions> | undefined;
-    return {
-      ...common,
-      type: 'npm',
-      typeOptions: {
-        scriptName: to?.scriptName ?? '',
-        packageManager: to?.packageManager ?? 'npm',
-      },
-    };
+    return sanitizeConfig(cfg);
   }
 
   private getHtml(): string {
@@ -360,4 +302,111 @@ function makeNonce(): string {
   let out = '';
   for (let i = 0; i < 32; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
+}
+
+// Fill missing keys so the config passes schema validation even if the webview
+// posted a partial object (e.g., the user never touched the script select).
+// Each branch MUST mirror the schema's typeOptions shape exactly. When a new
+// RunConfigType is added, extend the switch — the exhaustiveness guard at the
+// end throws loudly if it's missed, which is how we catch the "saved as npm"
+// regression that the Quarkus bug exposed.
+export function sanitizeConfig(cfg: RunConfig): RunConfig {
+  const common = {
+    ...cfg,
+    env: cfg.env ?? {},
+    programArgs: cfg.programArgs ?? '',
+    vmArgs: cfg.vmArgs ?? '',
+  };
+  if (cfg.type === 'tomcat') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').TomcatTypeOptions> | undefined;
+    return {
+      ...common,
+      type: 'tomcat',
+      typeOptions: {
+        tomcatHome: to?.tomcatHome ?? '',
+        jdkPath: to?.jdkPath ?? '',
+        httpPort: to?.httpPort ?? 8080,
+        httpsPort: to?.httpsPort,
+        ajpPort: to?.ajpPort,
+        jmxPort: to?.jmxPort,
+        debugPort: to?.debugPort,
+        buildProjectPath: to?.buildProjectPath ?? '',
+        buildRoot: to?.buildRoot ?? '',
+        buildTool: (to?.buildTool ?? 'gradle') as 'gradle' | 'maven' | 'none',
+        gradleCommand: (to?.gradleCommand ?? './gradlew') as './gradlew' | 'gradle',
+        gradlePath: to?.gradlePath ?? '',
+        mavenPath: to?.mavenPath ?? '',
+        artifactPath: to?.artifactPath ?? '',
+        artifactKind: (to?.artifactKind ?? 'war') as 'war' | 'exploded',
+        applicationContext: to?.applicationContext ?? '/',
+        vmOptions: to?.vmOptions ?? '',
+        reloadable: to?.reloadable ?? true,
+        rebuildOnSave: to?.rebuildOnSave ?? false,
+        colorOutput: to?.colorOutput,
+      },
+    };
+  }
+  if (cfg.type === 'spring-boot') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').SpringBootTypeOptions> | undefined;
+    const buildTool = to?.buildTool ?? 'maven';
+    return {
+      ...common,
+      type: 'spring-boot',
+      typeOptions: {
+        launchMode: to?.launchMode ?? buildTool,
+        buildTool,
+        gradleCommand: to?.gradleCommand ?? './gradlew',
+        profiles: to?.profiles ?? '',
+        mainClass: to?.mainClass ?? '',
+        classpath: to?.classpath ?? '',
+        jdkPath: to?.jdkPath ?? '',
+        module: to?.module ?? '',
+        gradlePath: to?.gradlePath ?? '',
+        mavenPath: to?.mavenPath ?? '',
+        buildRoot: to?.buildRoot ?? '',
+        // Optional fields — forward verbatim so the user's toggles actually
+        // persist. Earlier omission silently dropped these on every save.
+        ...(typeof to?.debugPort === 'number' ? { debugPort: to.debugPort } : {}),
+        ...(typeof to?.rebuildOnSave === 'boolean' ? { rebuildOnSave: to.rebuildOnSave } : {}),
+        ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
+      },
+    };
+  }
+  if (cfg.type === 'quarkus') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').QuarkusTypeOptions> | undefined;
+    const buildTool = to?.buildTool ?? 'maven';
+    return {
+      ...common,
+      type: 'quarkus',
+      typeOptions: {
+        launchMode: to?.launchMode ?? buildTool,
+        buildTool,
+        gradleCommand: to?.gradleCommand ?? './gradlew',
+        profile: to?.profile ?? '',
+        jdkPath: to?.jdkPath ?? '',
+        module: to?.module ?? '',
+        gradlePath: to?.gradlePath ?? '',
+        mavenPath: to?.mavenPath ?? '',
+        buildRoot: to?.buildRoot ?? '',
+        ...(typeof to?.debugPort === 'number' ? { debugPort: to.debugPort } : {}),
+        ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
+      },
+    };
+  }
+  if (cfg.type === 'npm') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').NpmTypeOptions> | undefined;
+    return {
+      ...common,
+      type: 'npm',
+      typeOptions: {
+        scriptName: to?.scriptName ?? '',
+        packageManager: to?.packageManager ?? 'npm',
+      },
+    };
+  }
+  // Exhaustiveness guard — if a new RunConfigType is added and sanitize
+  // isn't updated, fail loudly at save time rather than silently coercing
+  // to npm (which is how the Quarkus-save-as-npm bug happened in v1).
+  const never: never = cfg;
+  throw new Error(`sanitize: unsupported config type: ${(never as any).type}`);
 }
