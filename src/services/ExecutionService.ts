@@ -257,6 +257,12 @@ function buildCwd(cfg: RunConfig, folder: vscode.WorkspaceFolder): string {
   if (cfg.type === 'quarkus' && cfg.typeOptions.buildRoot) {
     return cfg.typeOptions.buildRoot;
   }
+  if (cfg.type === 'java') {
+    const to = cfg.typeOptions;
+    if ((to.launchMode === 'maven' || to.launchMode === 'gradle') && to.buildRoot) {
+      return to.buildRoot;
+    }
+  }
   return resolveProjectUri(folder, cfg.projectPath).fsPath;
 }
 

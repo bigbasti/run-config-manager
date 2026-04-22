@@ -9,6 +9,7 @@ import { NpmAdapter } from './adapters/npm/NpmAdapter';
 import { SpringBootAdapter } from './adapters/spring-boot/SpringBootAdapter';
 import { TomcatAdapter } from './adapters/tomcat/TomcatAdapter';
 import { QuarkusAdapter } from './adapters/quarkus/QuarkusAdapter';
+import { JavaAdapter } from './adapters/java/JavaAdapter';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
 import { log, initLogger } from './utils/logger';
@@ -29,6 +30,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.register(new SpringBootAdapter());
   registry.register(new TomcatAdapter());
   registry.register(new QuarkusAdapter());
+  registry.register(new JavaAdapter());
 
   const store = new ConfigStore();
   const svc = new RunConfigService(store);
@@ -394,12 +396,15 @@ async function autoCreateConfigs(
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: 'Auto-creating run configurations…', cancellable: false },
     async (progress) => {
-      // Priority: spring-boot > quarkus > tomcat > npm. Spring Boot first
-      // because a hybrid project with both plugins should pick Spring Boot;
-      // Quarkus second because it's more specific than Tomcat (which matches
-      // any project that produces a WAR). npm is last — lots of Java projects
-      // have package.json for lint/docs tooling.
-      const priority: RunConfigType[] = ['spring-boot', 'quarkus', 'tomcat', 'npm'];
+      // Priority: spring-boot > quarkus > tomcat > java > npm. Spring Boot
+      // first because a hybrid project with both plugins should pick Spring
+      // Boot; Quarkus second because it's more specific than Tomcat (which
+      // matches any project that produces a WAR). Java is the Maven/Gradle
+      // catch-all — its detector bails when Spring Boot / Quarkus / Tomcat
+      // markers are present, so it only wins for plain Java projects. npm
+      // is last — lots of Java projects have package.json for lint/docs
+      // tooling.
+      const priority: RunConfigType[] = ['spring-boot', 'quarkus', 'tomcat', 'java', 'npm'];
 
       const children = await listDirectChildren(root);
       // Also scan the root itself as a candidate module (single-module repos).
@@ -506,6 +511,7 @@ function deriveConfigName(child: vscode.Uri, type: RunConfigType): string {
     type === 'spring-boot' ? 'API' :
     type === 'quarkus'     ? 'Quarkus' :
     type === 'tomcat'      ? 'Tomcat' :
+    type === 'java'        ? 'Java' :
                              'Web';
   // Capitalise first letter, keep the rest as-is ("api" → "Api").
   const pretty = base.charAt(0).toUpperCase() + base.slice(1);
@@ -594,6 +600,30 @@ function mergeAutoCreateDefaults(
         buildTool,
         gradleCommand: typeOptions.gradleCommand ?? './gradlew',
         profile: '',
+        jdkPath: typeOptions.jdkPath ?? '',
+        module: '',
+        gradlePath: typeOptions.gradlePath ?? '',
+        mavenPath: typeOptions.mavenPath ?? '',
+        buildRoot: typeOptions.buildRoot ?? '',
+        debugPort: 5005,
+        colorOutput: true,
+      },
+    };
+  }
+  if (type === 'java') {
+    // Match detect()'s logic: fall back to java-main when no build tool was
+    // detected (typeOptions.buildTool would be null/undefined in that case).
+    const buildTool = typeOptions.buildTool ?? 'maven';
+    const launchMode = typeOptions.launchMode ?? (typeOptions.buildTool ?? 'java-main');
+    return {
+      ...base,
+      type: 'java',
+      typeOptions: {
+        launchMode,
+        buildTool,
+        gradleCommand: typeOptions.gradleCommand ?? './gradlew',
+        mainClass: typeOptions.mainClass ?? '',
+        classpath: typeOptions.classpath ?? '',
         jdkPath: typeOptions.jdkPath ?? '',
         module: '',
         gradlePath: typeOptions.gradlePath ?? '',

@@ -174,6 +174,7 @@ function labelForType(type: RunConfig['type']): string {
     case 'spring-boot': return 'Spring Boot';
     case 'tomcat': return 'Tomcat';
     case 'quarkus': return 'Quarkus';
+    case 'java': return 'Java Application';
     default: return type;
   }
 }
@@ -185,6 +186,7 @@ function iconForType(type: string): string {
     case 'spring-boot': return 'rocket';
     case 'tomcat': return 'server-environment';
     case 'quarkus': return 'zap';
+    case 'java': return 'symbol-class';
     default: return 'circle-outline';
   }
 }

@@ -111,4 +111,96 @@ describe('RunFileSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  test('accepts a Java config (java-main mode with classpath + main class)', () => {
+    const result = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        id: '33333333-4444-5555-6666-777777777777',
+        name: 'Java CLI',
+        type: 'java',
+        projectPath: '',
+        workspaceFolder: '',
+        env: {},
+        programArgs: '',
+        vmArgs: '',
+        typeOptions: {
+          launchMode: 'java-main',
+          buildTool: 'maven',
+          gradleCommand: './gradlew',
+          mainClass: 'com.example.Main',
+          classpath: 'target/classes',
+          jdkPath: '',
+          module: '',
+          gradlePath: '',
+          mavenPath: '',
+          buildRoot: '',
+        },
+      }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test('rejects Java java-main config without mainClass', () => {
+    const result = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        ...minimalConfig,
+        type: 'java',
+        typeOptions: {
+          launchMode: 'java-main',
+          buildTool: 'maven',
+          gradleCommand: './gradlew',
+          mainClass: '',
+          classpath: 'target/classes',
+          jdkPath: '', module: '', gradlePath: '', mavenPath: '', buildRoot: '',
+        },
+      }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('rejects Java java-main config without classpath', () => {
+    const result = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        ...minimalConfig,
+        type: 'java',
+        typeOptions: {
+          launchMode: 'java-main',
+          buildTool: 'maven',
+          gradleCommand: './gradlew',
+          mainClass: 'com.example.Main',
+          classpath: '',
+          jdkPath: '', module: '', gradlePath: '', mavenPath: '', buildRoot: '',
+        },
+      }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('Java gradle mode does NOT require mainClass (read from build.gradle)', () => {
+    const result = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        id: '44444444-5555-6666-7777-888888888888',
+        name: 'Gradle run',
+        type: 'java',
+        projectPath: '',
+        workspaceFolder: '',
+        env: {},
+        programArgs: '',
+        vmArgs: '',
+        typeOptions: {
+          launchMode: 'gradle',
+          buildTool: 'gradle',
+          gradleCommand: './gradlew',
+          mainClass: '',
+          classpath: '',
+          jdkPath: '', module: '', gradlePath: '', mavenPath: '', buildRoot: '',
+        },
+      }],
+    });
+    expect(result.success).toBe(true);
+  });
 });

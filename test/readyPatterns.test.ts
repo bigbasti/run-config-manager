@@ -80,6 +80,12 @@ describe('readyPatternsFor', () => {
     expect(chunkSignalsReady('> Task :compileJava', patterns)).toBe(false);
     expect(chunkSignalsReady('[INFO] BUILD SUCCESS', patterns)).toBe(false);
   });
+
+  test('Java: empty ready patterns (no universal startup marker)', () => {
+    const patterns = readyPatternsFor(cfg({ type: 'java' } as any));
+    expect(patterns).toEqual([]);
+    expect(chunkSignalsReady('Hello, world!', patterns)).toBe(false);
+  });
 });
 
 describe('failurePatternsFor', () => {
@@ -158,5 +164,33 @@ describe('failurePatternsFor', () => {
   test('Quarkus: Gradle BUILD FAILED', () => {
     const patterns = failurePatternsFor(cfg({ type: 'quarkus' } as any));
     expect(chunkSignalsFailure('BUILD FAILED in 4s', patterns)).toBe(true);
+  });
+
+  test('Java: Exception in thread "main"', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'java' } as any));
+    expect(chunkSignalsFailure(
+      'Exception in thread "main" java.lang.NullPointerException',
+      patterns,
+    )).toBe(true);
+    // Thread name varies — any quoted name should match.
+    expect(chunkSignalsFailure('Exception in thread "pool-1-thread-2" java.lang.IllegalArgumentException', patterns))
+      .toBe(true);
+  });
+
+  test('Java: Could not find or load main class', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'java' } as any));
+    expect(chunkSignalsFailure('Error: Could not find or load main class com.example.App', patterns))
+      .toBe(true);
+  });
+
+  test('Java: NoClassDefFoundError', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'java' } as any));
+    expect(chunkSignalsFailure('Caused by: java.lang.NoClassDefFoundError: com/foo/Bar', patterns))
+      .toBe(true);
+  });
+
+  test('Java: BUILD FAILED shared pattern', () => {
+    const patterns = failurePatternsFor(cfg({ type: 'java' } as any));
+    expect(chunkSignalsFailure('BUILD FAILED in 3s', patterns)).toBe(true);
   });
 });

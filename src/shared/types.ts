@@ -1,4 +1,4 @@
-export type RunConfigType = 'npm' | 'spring-boot' | 'tomcat' | 'quarkus';
+export type RunConfigType = 'npm' | 'spring-boot' | 'tomcat' | 'quarkus' | 'java';
 
 export type PackageManager = 'npm' | 'yarn' | 'pnpm';
 
@@ -126,11 +126,35 @@ export interface QuarkusTypeOptions {
   colorOutput?: boolean;
 }
 
+// Plain Java application. Three launch modes mirror Spring Boot's, minus the
+// Spring-specific fields (profiles, rebuildOnSave) and Spring-specific flags.
+export type JavaLaunchMode = 'maven' | 'gradle' | 'java-main';
+
+export interface JavaTypeOptions {
+  launchMode: JavaLaunchMode;
+  // Echoes launchMode in maven/gradle modes; informational in java-main.
+  buildTool: JavaBuildTool;
+  gradleCommand: GradleCommand;
+  // Required when launchMode !== 'gradle'. Gradle's `run` task reads the main
+  // class from the `application` plugin block in build.gradle instead.
+  mainClass: string;
+  // Required when launchMode === 'java-main'. Blank in maven/gradle modes.
+  classpath: string;
+  jdkPath: string;
+  module: string;
+  gradlePath: string;
+  mavenPath: string;
+  buildRoot: string;
+  debugPort?: number;
+  colorOutput?: boolean;
+}
+
 export type RunConfig =
   | (RunConfigBase & { type: 'npm'; typeOptions: NpmTypeOptions })
   | (RunConfigBase & { type: 'spring-boot'; typeOptions: SpringBootTypeOptions })
   | (RunConfigBase & { type: 'tomcat'; typeOptions: TomcatTypeOptions })
-  | (RunConfigBase & { type: 'quarkus'; typeOptions: QuarkusTypeOptions });
+  | (RunConfigBase & { type: 'quarkus'; typeOptions: QuarkusTypeOptions })
+  | (RunConfigBase & { type: 'java'; typeOptions: JavaTypeOptions });
 
 export interface RunFile {
   version: 1;

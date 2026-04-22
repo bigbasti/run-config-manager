@@ -133,4 +133,49 @@ describe('sanitizeConfig', () => {
       } as unknown as RunConfig),
     ).toThrow(/unsupported config type/i);
   });
+
+  test('java: keeps type + preserves launchMode', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'java',
+      typeOptions: {
+        launchMode: 'java-main',
+        buildTool: 'maven',
+        gradleCommand: './gradlew',
+        mainClass: 'com.example.Main',
+        classpath: 'target/classes',
+        jdkPath: '',
+        module: '',
+        gradlePath: '',
+        mavenPath: '',
+        buildRoot: '',
+        debugPort: 5005,
+        colorOutput: true,
+      },
+    } as RunConfig);
+    expect(out.type).toBe('java');
+    const to = out.typeOptions as any;
+    expect(to.launchMode).toBe('java-main');
+    expect(to.mainClass).toBe('com.example.Main');
+    expect(to.debugPort).toBe(5005);
+    expect(to.colorOutput).toBe(true);
+    // Must not be coerced to npm.
+    expect(to.scriptName).toBeUndefined();
+    expect(RunConfigSchema.safeParse(out).success).toBe(true);
+  });
+
+  test('java: fills safe defaults when typeOptions is minimal', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'java',
+      typeOptions: { launchMode: 'gradle' } as any,
+    } as RunConfig);
+    expect(out.type).toBe('java');
+    const to = out.typeOptions as any;
+    expect(to.launchMode).toBe('gradle');
+    expect(to.buildTool).toBe('maven');
+    expect(to.gradleCommand).toBe('./gradlew');
+    // Gradle mode does not require mainClass — schema validates.
+    expect(RunConfigSchema.safeParse(out).success).toBe(true);
+  });
 });

@@ -75,7 +75,8 @@ export class EditorPanel {
       | 'npm'
       | 'spring-boot'
       | 'tomcat'
-      | 'quarkus';
+      | 'quarkus'
+      | 'java';
 
     const baseCommon = {
       name: '',
@@ -113,6 +114,12 @@ export class EditorPanel {
       typeDefaults = isStreaming
         ? { profile: '', debugPort: 5005, colorOutput: true }
         : { buildTool: 'maven', profile: '', debugPort: 5005, colorOutput: true };
+    } else if (type === 'java') {
+      // Same mergeBlanks rationale as spring-boot/quarkus: omit buildTool in
+      // streaming mode so detection picks it up cleanly.
+      typeDefaults = isStreaming
+        ? { debugPort: 5005, colorOutput: true }
+        : { buildTool: 'maven', debugPort: 5005, colorOutput: true };
     } else {
       typeDefaults = isStreaming ? { profiles: '' } : { buildTool: 'maven', profiles: '' };
     }
@@ -231,8 +238,14 @@ export class EditorPanel {
         const quarkusRoot = cfg.type === 'quarkus' && cfg.typeOptions.buildRoot
           ? cfg.typeOptions.buildRoot
           : null;
+        const javaRoot = cfg.type === 'java'
+          && (cfg.typeOptions.launchMode === 'maven' || cfg.typeOptions.launchMode === 'gradle')
+          && cfg.typeOptions.buildRoot
+            ? cfg.typeOptions.buildRoot
+            : null;
         const cwd = springRoot
           ?? quarkusRoot
+          ?? javaRoot
           ?? resolveProjectUri(this.args.folder, cfg.projectPath ?? '').fsPath;
         const ctx = makeRunContext({ workspaceFolder: this.args.folder.uri.fsPath, cwd });
         const { unresolved } = resolveConfig(cfg, ctx);
@@ -383,6 +396,28 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
         buildTool,
         gradleCommand: to?.gradleCommand ?? './gradlew',
         profile: to?.profile ?? '',
+        jdkPath: to?.jdkPath ?? '',
+        module: to?.module ?? '',
+        gradlePath: to?.gradlePath ?? '',
+        mavenPath: to?.mavenPath ?? '',
+        buildRoot: to?.buildRoot ?? '',
+        ...(typeof to?.debugPort === 'number' ? { debugPort: to.debugPort } : {}),
+        ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
+      },
+    };
+  }
+  if (cfg.type === 'java') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').JavaTypeOptions> | undefined;
+    const buildTool = to?.buildTool ?? 'maven';
+    return {
+      ...common,
+      type: 'java',
+      typeOptions: {
+        launchMode: to?.launchMode ?? buildTool,
+        buildTool,
+        gradleCommand: to?.gradleCommand ?? './gradlew',
+        mainClass: to?.mainClass ?? '',
+        classpath: to?.classpath ?? '',
         jdkPath: to?.jdkPath ?? '',
         module: to?.module ?? '',
         gradlePath: to?.gradlePath ?? '',

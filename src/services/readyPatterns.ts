@@ -50,6 +50,14 @@ export function readyPatternsFor(cfg: RunConfig): RegExp[] {
       /Profile \w+ activated\. Live Coding activated/,
     ];
   }
+  if (cfg.type === 'java') {
+    // Plain Java apps have no universal startup marker. We intentionally
+    // leave this empty — the tree stays in the spinner for the life of the
+    // process, which is the most honest signal we can give. If a user's app
+    // DOES print a recognisable phrase, they can switch to tagging via
+    // programArgs or (v2) add a per-config regex.
+    return [];
+  }
   if (cfg.type === 'npm') {
     return [
       // Angular CLI 14+: 'Application bundle generation complete.' / 'Compiled successfully'
@@ -121,6 +129,18 @@ export function failurePatternsFor(cfg: RunConfig): RegExp[] {
       /Failed to start (?:application|quarkus)/i,
       // Port bind failure — Quarkus prints this verbatim.
       /Port \d+ is already in use/,
+      ...SHARED_BUILD_TOOL_FAILURES,
+    ];
+  }
+  if (cfg.type === 'java') {
+    return [
+      // Classic uncaught-main-thread exception. The thread name varies (main,
+      // async-whatever, pool-N-thread-M) so we match any quoted name.
+      /Exception in thread "[^"]+" /,
+      // The JDK's own "no main" errors — not user stack traces, always fatal.
+      /Error: Could not find or load main class/,
+      /Error: Main method not found/,
+      /java\.lang\.NoClassDefFoundError/,
       ...SHARED_BUILD_TOOL_FAILURES,
     ];
   }

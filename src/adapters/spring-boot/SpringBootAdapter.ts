@@ -3,7 +3,7 @@ import type { RuntimeAdapter, DetectionResult } from '../RuntimeAdapter';
 import type { RunConfig } from '../../shared/types';
 import type { FormField, FormSchema } from '../../shared/formSchema';
 import { readSpringBootInfo } from './detectSpringBoot';
-import { findMainClasses, type MainClassCandidate } from './findMainClasses';
+import { findMainClasses, type MainClassCandidate } from '../java-shared/findMainClasses';
 import { detectJdks } from './detectJdks';
 import { suggestClasspath } from './suggestClasspath';
 import { detectBuildTools } from './detectBuildTools';

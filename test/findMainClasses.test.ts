@@ -1,5 +1,5 @@
 import { Uri, __resetFs, __writeFs } from 'vscode';
-import { findMainClasses } from '../src/adapters/spring-boot/findMainClasses';
+import { findMainClasses } from '../src/adapters/java-shared/findMainClasses';
 
 describe('findMainClasses', () => {
   beforeEach(() => __resetFs());
