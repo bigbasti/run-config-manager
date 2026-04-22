@@ -310,6 +310,11 @@ export class EditorPanel {
           gradlePath: to?.gradlePath ?? '',
           mavenPath: to?.mavenPath ?? '',
           buildRoot: to?.buildRoot ?? '',
+          // Optional fields — forward verbatim so the user's toggles actually
+          // persist. Earlier omission silently dropped these on every save.
+          ...(typeof to?.debugPort === 'number' ? { debugPort: to.debugPort } : {}),
+          ...(typeof to?.rebuildOnSave === 'boolean' ? { rebuildOnSave: to.rebuildOnSave } : {}),
+          ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
         },
       };
     }

@@ -51,7 +51,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Badge on the Activity Bar icon showing how many configs are currently running.
   const updateBadge = () => {
-    const running = svc.list().filter(r => r.valid && (exec.isRunning(r.config.id) || dbg.isRunning(r.config.id)));
+    const running = svc.list().filter(r =>
+      r.valid && (exec.isRunning(r.config.id) || exec.isPreparing(r.config.id) || dbg.isRunning(r.config.id)),
+    );
     if (running.length > 0) {
       view.badge = { value: running.length, tooltip: `${running.length} running configuration${running.length === 1 ? '' : 's'}` };
     } else {

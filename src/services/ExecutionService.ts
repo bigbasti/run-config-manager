@@ -24,6 +24,11 @@ export interface RunOpts {
 
 export class ExecutionService {
   private running = new Map<string, Entry>();
+  // "Preparing" is the window between the user clicking Run and the shell
+  // execution actually spawning. For Tomcat this can be 30+ seconds while
+  // Gradle builds the WAR. Tree provider reads this to show a distinct
+  // busy-but-not-yet-running state.
+  private preparing = new Set<string>();
   private emitter = new vscode.EventEmitter<string>();
   readonly onRunningChanged = this.emitter.event;
   private taskEndSub: vscode.Disposable;
@@ -34,6 +39,10 @@ export class ExecutionService {
 
   isRunning(configId: string): boolean {
     return this.running.has(configId);
+  }
+
+  isPreparing(configId: string): boolean {
+    return this.preparing.has(configId);
   }
 
   async run(
@@ -62,16 +71,22 @@ export class ExecutionService {
     // CATALINA_BASE scaffold here). prepareLaunch may override cwd.
     let prepared: { env?: Record<string, string>; cwd?: string } = {};
     if (adapter.prepareLaunch) {
+      this.preparing.add(cfg.id);
+      this.emitter.fire(cfg.id);
       try {
         prepared = await adapter.prepareLaunch(resolvedCfg, folder, {
           debug: opts?.debug ?? false,
           debugPort: opts?.debugPort,
         });
       } catch (e) {
+        this.preparing.delete(cfg.id);
+        this.emitter.fire(cfg.id);
         log.error(`prepareLaunch failed for ${cfg.name}`, e);
         vscode.window.showErrorMessage(`Failed to prepare "${cfg.name}": ${(e as Error).message}`);
         return undefined;
       }
+      this.preparing.delete(cfg.id);
+      this.emitter.fire(cfg.id);
     }
 
     const cwd = prepared.cwd ?? initialCwd;

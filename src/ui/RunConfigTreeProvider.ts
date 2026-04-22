@@ -58,21 +58,33 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       return item;
     }
 
+    const preparing = this.exec.isPreparing(n.config.id);
     const running = this.exec.isRunning(n.config.id) || this.dbg.isRunning(n.config.id);
     const adapter = this.registry.get(n.config.type);
     const debuggable = adapter?.supportsDebug === true;
     const item = new vscode.TreeItem(n.config.name, vscode.TreeItemCollapsibleState.None);
-    // Row description is kept empty so the grid stays uncluttered; the full
-    // command preview lives in the tooltip (hover).
     item.tooltip = new vscode.MarkdownString(
       `**${n.config.name}** _(${n.config.type})_\n\n` +
       (n.config.projectPath ? `Path: \`${n.config.projectPath}\`\n\n` : '') +
-      `Command: \`${buildCommandPreview(n.config)}\``,
+      `Command: \`${buildCommandPreview(n.config)}\`` +
+      (preparing ? '\n\n_Preparing (running build / writing scaffold)…_' : ''),
     );
-    item.iconPath = running
-      ? new vscode.ThemeIcon('loading~spin')
-      : new vscode.ThemeIcon(iconForType(n.config.type));
-    item.contextValue = running
+    // Three visual states: preparing (sync~spin + "Preparing…" description),
+    // running (loading~spin), idle (type icon). Preparing gets a distinct
+    // codicon so it reads differently at a glance, and a description so the
+    // user knows it's not just slow to start.
+    if (preparing) {
+      item.iconPath = new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.blue'));
+      item.description = 'Preparing…';
+    } else if (running) {
+      item.iconPath = new vscode.ThemeIcon('loading~spin');
+    } else {
+      item.iconPath = new vscode.ThemeIcon(iconForType(n.config.type));
+    }
+    // Context value: preparing behaves like running for the inline actions
+    // (Stop button visible, Debug hidden), so it gets the Running context.
+    // This avoids the user clicking Run twice while build is still in flight.
+    item.contextValue = (preparing || running)
       ? debuggable ? 'configRunning' : 'configRunningNoDebug'
       : debuggable ? 'configIdle' : 'configIdleNoDebug';
     item.command = { command: 'runConfig.edit', title: 'Edit', arguments: [n] };
