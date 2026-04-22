@@ -30,7 +30,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const svc = new RunConfigService(store);
   const scanner = new ProjectScanner(registry);
   const exec = new ExecutionService(registry);
-  const dbg = new DebugService(registry);
+  const dbg = new DebugService(registry, exec);
 
   const folders = vscode.workspace.workspaceFolders ?? [];
   await store.attach(folders);

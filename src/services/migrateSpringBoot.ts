@@ -35,6 +35,8 @@ export function migrateSpringBootConfig(raw: unknown): unknown {
       gradlePath: typeof to.gradlePath === 'string' ? to.gradlePath : '',
       mavenPath: typeof to.mavenPath === 'string' ? to.mavenPath : '',
       buildRoot: typeof to.buildRoot === 'string' ? to.buildRoot : '',
+      // 1c.2: debug port. Omit when absent so the schema's .optional() holds.
+      ...(typeof to.debugPort === 'number' ? { debugPort: to.debugPort } : {}),
     },
   };
 }

@@ -14,7 +14,7 @@ import { splitArgs } from '../npm/splitArgs';
 export class SpringBootAdapter implements RuntimeAdapter {
   readonly type = 'spring-boot' as const;
   readonly label = 'Spring Boot';
-  readonly supportsDebug = false;
+  readonly supportsDebug = true;
 
   async detect(folder: vscode.Uri): Promise<DetectionResult | null> {
     const info = await readSpringBootInfo(folder);
@@ -225,6 +225,16 @@ export class SpringBootAdapter implements RuntimeAdapter {
           help: 'Informational — the app itself is responsible for binding.',
           examples: ['8080', '8081'],
         },
+        {
+          kind: 'number',
+          key: 'typeOptions.debugPort',
+          label: 'Debug port',
+          min: 1,
+          max: 65535,
+          help: 'JDWP port used when running in debug mode. Default 5005. Only relevant for Maven / Gradle launch modes (java-main lets the debugger pick the port).',
+          examples: ['5005', '5006'],
+          dependsOn: { key: 'typeOptions.launchMode', equals: ['maven', 'gradle'] },
+        },
       ],
       advanced: [
         {
@@ -263,6 +273,54 @@ export class SpringBootAdapter implements RuntimeAdapter {
       case 'gradle':    return buildGradle(cfg);
       case 'java-main': return buildJavaMain(cfg);
     }
+  }
+
+  getDebugConfig(cfg: RunConfig, _folder: vscode.WorkspaceFolder): vscode.DebugConfiguration {
+    if (cfg.type !== 'spring-boot') {
+      throw new Error('SpringBootAdapter received non-spring-boot config');
+    }
+    const to = cfg.typeOptions;
+    const port = typeof to.debugPort === 'number' ? to.debugPort : 5005;
+
+    if (to.launchMode === 'java-main') {
+      // Direct launch under the Java debugger. Needs vscjava.vscode-java-debug
+      // (the DebugService guards on adapter.supportsDebug + extension presence).
+      const classPaths = to.classpath
+        .split(/[;:]/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      const vmArgs = (cfg.vmArgs ?? '').trim();
+      const args = splitArgs(cfg.programArgs ?? '').join(' ');
+      const profiles = to.profiles.trim();
+      const composedVmArgs = profiles
+        ? (vmArgs ? `${vmArgs} -Dspring.profiles.active=${profiles}` : `-Dspring.profiles.active=${profiles}`)
+        : vmArgs;
+      return {
+        type: 'java',
+        request: 'launch',
+        name: cfg.name,
+        mainClass: to.mainClass,
+        classPaths,
+        ...(to.jdkPath ? { javaExec: `${to.jdkPath.replace(/[/\\]$/, '')}/bin/java` } : {}),
+        ...(composedVmArgs ? { vmArgs: composedVmArgs } : {}),
+        ...(args ? { args } : {}),
+        env: cfg.env ?? {},
+        console: 'integratedTerminal',
+      };
+    }
+
+    // Maven/Gradle: attach to a JDWP port. The DebugService is responsible
+    // for starting the build tool with the matching -agentlib:jdwp flag
+    // before calling startDebugging with this attach config.
+    return {
+      type: 'java',
+      request: 'attach',
+      name: cfg.name,
+      hostName: 'localhost',
+      port,
+      // Attach retries on connection-refused until the JVM opens the socket.
+      timeout: 60_000,
+    };
   }
 }
 

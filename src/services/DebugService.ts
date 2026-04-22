@@ -1,7 +1,12 @@
 import * as vscode from 'vscode';
 import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import type { RunConfig } from '../shared/types';
+import type { ExecutionService } from './ExecutionService';
 import { log } from '../utils/logger';
+
+// Required for `type: 'java'` debug configurations. The Spring Boot adapter
+// needs this extension; npm uses the built-in `pwa-node` and doesn't.
+const JAVA_DEBUG_EXTENSION_ID = 'vscjava.vscode-java-debug';
 
 export class DebugService {
   private running = new Map<string, string>(); // configId → sessionName
@@ -9,7 +14,12 @@ export class DebugService {
   readonly onRunningChanged = this.emitter.event;
   private subs: vscode.Disposable[];
 
-  constructor(private readonly registry: AdapterRegistry) {
+  constructor(
+    private readonly registry: AdapterRegistry,
+    // Optional so existing tests that don't care about Spring Boot debug can
+    // still construct a DebugService without ExecutionService.
+    private readonly exec?: ExecutionService,
+  ) {
     this.subs = [
       vscode.debug.onDidTerminateDebugSession(s => this.handleEnd(s.name)),
     ];
@@ -33,6 +43,26 @@ export class DebugService {
     }
 
     const conf = adapter.getDebugConfig(cfg, folder);
+
+    // Java-type debug requires the Java Debugger extension.
+    if (conf.type === 'java' && !vscode.extensions.getExtension(JAVA_DEBUG_EXTENSION_ID)) {
+      vscode.window.showErrorMessage(
+        `Java debugging requires the "Debugger for Java" extension (${JAVA_DEBUG_EXTENSION_ID}). ` +
+        `Install the "Extension Pack for Java" to enable Spring Boot debugging.`,
+      );
+      return false;
+    }
+
+    // For attach-mode Java debug, we need to first start the build tool under
+    // JDWP. The adapter told us which port it expects; we wrap buildCommand's
+    // output with the right -agentlib:jdwp arg and run it through ExecutionService,
+    // then hand over to startDebugging after a short delay so the JVM has time
+    // to open the port.
+    if (conf.type === 'java' && conf.request === 'attach' && cfg.type === 'spring-boot') {
+      return await this.startAttachFlow(cfg, folder, conf);
+    }
+
+    // Launch-mode Java (java-main) or non-Java: startDebugging handles the JVM.
     try {
       const started = await vscode.debug.startDebugging(folder, conf);
       if (started) {
@@ -48,6 +78,70 @@ export class DebugService {
     }
   }
 
+  // For Spring Boot Maven/Gradle: launch the build tool with JDWP suspend=n,
+  // then attach. The build-tool task is tracked by ExecutionService so the
+  // Stop button terminates it correctly; the debug session is tracked here.
+  private async startAttachFlow(
+    cfg: Extract<RunConfig, { type: 'spring-boot' }>,
+    folder: vscode.WorkspaceFolder,
+    attachConf: vscode.DebugConfiguration,
+  ): Promise<boolean> {
+    if (!this.exec) {
+      vscode.window.showErrorMessage('Internal error: ExecutionService not wired into DebugService.');
+      return false;
+    }
+    const port = (attachConf.port as number | undefined) ?? 5005;
+
+    // Compose a copy of the config with the JDWP flag appended to vmArgs so the
+    // build tool passes it through to the forked JVM.
+    const jdwpFlag = `-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}`;
+    const mode = cfg.typeOptions.launchMode;
+    let vmArgs = (cfg.vmArgs ?? '').trim();
+    vmArgs = vmArgs ? `${vmArgs} ${jdwpFlag}` : jdwpFlag;
+
+    let debugCfg: RunConfig;
+    if (mode === 'gradle') {
+      // Gradle bootRun doesn't read -Dspring-boot.run.jvmArguments. It reads
+      // ORG_GRADLE_PROJECT_jvmArgs or you set systemProperties in the task.
+      // The user-facing convention is JAVA_TOOL_OPTIONS — Spring Boot's
+      // forked JVM inherits it, and it's non-invasive.
+      debugCfg = {
+        ...cfg,
+        env: { ...(cfg.env ?? {}), JAVA_TOOL_OPTIONS: jdwpFlag },
+      };
+    } else {
+      // Maven: wired through -Dspring-boot.run.jvmArguments (our buildCommand
+      // already quotes this).
+      debugCfg = { ...cfg, vmArgs };
+    }
+
+    const execution = await this.exec.run(debugCfg, folder);
+    if (!execution) return false;
+
+    // Wait for the JVM to open the JDWP port before attaching. attachConf's
+    // timeout is 60s; we start attaching after 1s and let VS Code retry.
+    await new Promise(r => setTimeout(r, 1000));
+
+    try {
+      const started = await vscode.debug.startDebugging(folder, attachConf);
+      if (started) {
+        this.running.set(cfg.id, cfg.name);
+        this.emitter.fire(cfg.id);
+        log.info(`Debug attached: ${cfg.name} (port ${port})`);
+      } else {
+        // Attach failed — tear down the task so the user isn't left with an
+        // orphan JVM.
+        await this.exec.stop(cfg.id);
+      }
+      return started;
+    } catch (e) {
+      log.error(`Debug attach failed for ${cfg.name}`, e);
+      vscode.window.showErrorMessage(`Debug attach failed: ${(e as Error).message}`);
+      await this.exec.stop(cfg.id);
+      return false;
+    }
+  }
+
   async stop(configId: string): Promise<void> {
     const sessionName = this.running.get(configId);
     if (!sessionName) return;
@@ -55,14 +149,15 @@ export class DebugService {
       ? vscode.debug.activeDebugSession
       : undefined;
     try {
-      // Prefer stopping the exact session when we can find it; otherwise fall
-      // back to stopping the active session (VS Code API forgives extra calls).
       await vscode.debug.stopDebugging(session);
     } catch (e) {
       log.error(`Debug stop failed for ${sessionName}`, e);
     }
-    // handleEnd via onDidTerminateDebugSession will clear state; as a
-    // safety net, clear eagerly too.
+    // Also stop the build-tool task if ExecutionService is still running it
+    // (attach-mode: debug session + task are two things to tear down).
+    if (this.exec?.isRunning(configId)) {
+      await this.exec.stop(configId);
+    }
     this.running.delete(configId);
     this.emitter.fire(configId);
   }
@@ -72,6 +167,9 @@ export class DebugService {
       if (name === sessionName) {
         this.running.delete(id);
         this.emitter.fire(id);
+        // If the debug session ended but the build-tool task is still running
+        // (attach-mode, user hit detach not stop), leave the task alone —
+        // they might want to reattach. Nothing to do.
         return;
       }
     }

@@ -31,6 +31,10 @@ export interface SpringBootTypeOptions {
   // with <modules> lives). Empty means "same as projectPath". The walker fills
   // this on detect; user can override.
   buildRoot: string;
+  // JDWP port used when launching in debug mode. 0 / undefined means the
+  // default (5005). Only relevant to maven/gradle launch modes; java-main
+  // mode lets the Java debugger pick the port itself.
+  debugPort?: number;
 }
 
 export type TypeOptions =

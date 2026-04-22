@@ -153,11 +153,52 @@ describe('SpringBootAdapter form schema', () => {
 });
 
 describe('SpringBootAdapter debug', () => {
-  test('supportsDebug is false in v1', () => {
-    expect(adapter.supportsDebug).toBe(false);
+  test('supportsDebug is true', () => {
+    expect(adapter.supportsDebug).toBe(true);
   });
 
-  test('does not expose getDebugConfig', () => {
-    expect((adapter as any).getDebugConfig).toBeUndefined();
+  test('getDebugConfig for java-main returns a launch config', () => {
+    const c = cfg({
+      typeOptions: {
+        launchMode: 'java-main',
+        mainClass: 'com.example.App',
+        classpath: '/a:/b:/c',
+        jdkPath: '/opt/jdk-21',
+      },
+    });
+    const r = adapter.getDebugConfig!(c, { uri: { fsPath: '/ws' } as any, name: 'ws', index: 0 } as any);
+    expect(r.type).toBe('java');
+    expect(r.request).toBe('launch');
+    expect(r.mainClass).toBe('com.example.App');
+    expect(r.classPaths).toEqual(['/a', '/b', '/c']);
+    expect(r.javaExec).toBe('/opt/jdk-21/bin/java');
+  });
+
+  test('getDebugConfig for maven returns an attach config on default port 5005', () => {
+    const c = cfg({ typeOptions: { launchMode: 'maven' } });
+    const r = adapter.getDebugConfig!(c, { uri: { fsPath: '/ws' } as any, name: 'ws', index: 0 } as any);
+    expect(r.type).toBe('java');
+    expect(r.request).toBe('attach');
+    expect(r.port).toBe(5005);
+    expect(r.hostName).toBe('localhost');
+  });
+
+  test('getDebugConfig honours custom debugPort for gradle', () => {
+    const c = cfg({ typeOptions: { launchMode: 'gradle', buildTool: 'gradle', debugPort: 5099 } });
+    const r = adapter.getDebugConfig!(c, { uri: { fsPath: '/ws' } as any, name: 'ws', index: 0 } as any);
+    expect(r.port).toBe(5099);
+  });
+
+  test('getDebugConfig for java-main adds profile flag to vmArgs', () => {
+    const c = cfg({
+      typeOptions: {
+        launchMode: 'java-main',
+        mainClass: 'com.example.App',
+        classpath: '/a',
+        profiles: 'dev,local',
+      },
+    });
+    const r = adapter.getDebugConfig!(c, { uri: { fsPath: '/ws' } as any, name: 'ws', index: 0 } as any);
+    expect(r.vmArgs).toBe('-Dspring.profiles.active=dev,local');
   });
 });
