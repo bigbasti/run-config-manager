@@ -102,6 +102,7 @@ export const workspace = {
 
 export const window = {
   showErrorMessage: jest.fn(),
+  showWarningMessage: jest.fn(),
   showInformationMessage: jest.fn(),
   showOpenDialog: jest.fn(),
   showQuickPick: jest.fn(),
