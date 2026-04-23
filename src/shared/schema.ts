@@ -111,6 +111,26 @@ export const JavaTypeOptionsSchema = z
     }
   });
 
+export const CustomShellSchema = z.enum(['default', 'bash', 'sh', 'zsh', 'pwsh', 'cmd']);
+
+export const CustomCommandTypeOptionsSchema = z
+  .object({
+    command: z.string(),
+    cwd: z.string(),
+    shell: CustomShellSchema,
+    interactive: z.boolean(),
+    colorOutput: z.boolean().optional(),
+  })
+  .superRefine((opts, ctx) => {
+    if (!opts.command.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'command is required',
+        path: ['command'],
+      });
+    }
+  });
+
 export const MavenGoalTypeOptionsSchema = z
   .object({
     goal: z.string(),
@@ -243,6 +263,11 @@ export const RunConfigSchema = z.discriminatedUnion('type', [
     ...commonFields,
     type: z.literal('gradle-task'),
     typeOptions: GradleTaskTypeOptionsSchema,
+  }),
+  z.object({
+    ...commonFields,
+    type: z.literal('custom-command'),
+    typeOptions: CustomCommandTypeOptionsSchema,
   }),
 ]);
 

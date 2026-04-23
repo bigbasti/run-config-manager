@@ -167,12 +167,15 @@ export class ExecutionService {
       ...(prepared.env ?? {}),
     };
 
-    // Quarkus dev mode is an interactive shell (press r to reload, s to run
-    // tests, etc.). We'd have to forward keystrokes to the child — instead,
-    // hand the PTY entirely to VS Code via ShellExecution and surrender log
-    // scanning. Mark started after a fixed delay; readyTimer is cleared if
-    // the task ends early.
-    const useShellExecution = resolvedCfg.type === 'quarkus';
+    // Some runtimes need the full PTY instead of our observe-but-can't-type
+    // pseudoterminal:
+    //  - Quarkus dev mode has an interactive menu (r to reload, s for tests).
+    //  - Custom commands with `interactive: true` may prompt / read stdin.
+    // ShellExecution hands the terminal to VS Code, at the cost of losing
+    // our output prettifier and log-pattern scanning.
+    const useShellExecution =
+      resolvedCfg.type === 'quarkus' ||
+      (resolvedCfg.type === 'custom-command' && resolvedCfg.typeOptions.interactive);
 
     const readyPatterns = useShellExecution ? [] : readyPatternsFor(resolvedCfg);
     const failPatterns = useShellExecution ? [] : failurePatternsFor(resolvedCfg);
@@ -277,8 +280,11 @@ export class ExecutionService {
       const execution = await vscode.tasks.executeTask(task);
       const entry: Entry = { execution, configId: cfg.id };
 
-      // Quarkus: optimistic "started" after a fixed delay (no log scanning).
-      if (useShellExecution) {
+      // Quarkus is a long-running dev server: mark it started optimistically
+      // after 15s since we can't observe stdout. Custom commands (even the
+      // interactive ones) tend to be scripts that exit on their own; no
+      // grace timer there — the tree returns to idle when the process ends.
+      if (resolvedCfg.type === 'quarkus') {
         entry.readyTimer = setTimeout(() => {
           markReady('elapsed grace period');
         }, 15_000);

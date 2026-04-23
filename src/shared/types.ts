@@ -5,7 +5,8 @@ export type RunConfigType =
   | 'quarkus'
   | 'java'
   | 'maven-goal'
-  | 'gradle-task';
+  | 'gradle-task'
+  | 'custom-command';
 
 export type PackageManager = 'npm' | 'yarn' | 'pnpm';
 
@@ -190,6 +191,23 @@ export interface GradleTaskTypeOptions {
   colorOutput?: boolean;
 }
 
+// Custom Command — paste any shell command and one-click it. Whole
+// command string is shell-interpreted so &&, pipes, globs, redirects
+// all work. supportsDebug=false. No framework detection.
+export type CustomShell = 'default' | 'bash' | 'sh' | 'zsh' | 'pwsh' | 'cmd';
+
+export interface CustomCommandTypeOptions {
+  command: string;
+  // Optional working-directory override. Empty = resolved projectPath.
+  cwd: string;
+  shell: CustomShell;
+  // When true, run via ShellExecution (VS Code owns the PTY — stdin works,
+  // Ctrl+C forwards, `read` prompts, etc.). When false, run through our
+  // pseudoterminal + prettifier (output logging, hyperlinks, no stdin).
+  interactive: boolean;
+  colorOutput?: boolean;
+}
+
 export type RunConfig =
   | (RunConfigBase & { type: 'npm'; typeOptions: NpmTypeOptions })
   | (RunConfigBase & { type: 'spring-boot'; typeOptions: SpringBootTypeOptions })
@@ -197,7 +215,8 @@ export type RunConfig =
   | (RunConfigBase & { type: 'quarkus'; typeOptions: QuarkusTypeOptions })
   | (RunConfigBase & { type: 'java'; typeOptions: JavaTypeOptions })
   | (RunConfigBase & { type: 'maven-goal'; typeOptions: MavenGoalTypeOptions })
-  | (RunConfigBase & { type: 'gradle-task'; typeOptions: GradleTaskTypeOptions });
+  | (RunConfigBase & { type: 'gradle-task'; typeOptions: GradleTaskTypeOptions })
+  | (RunConfigBase & { type: 'custom-command'; typeOptions: CustomCommandTypeOptions });
 
 export interface RunFile {
   version: 1;

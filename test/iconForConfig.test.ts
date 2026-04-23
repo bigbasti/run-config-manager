@@ -64,6 +64,7 @@ describe('iconForConfig: explicit type mappings', () => {
       ['java', 'java'],
       ['maven-goal', 'maven'],
       ['gradle-task', 'gradle'],
+      ['custom-command', 'bash'],
     ];
     for (const [type, brand] of checks) {
       const cfg = { id: type, name: 'x', type, projectPath: '', workspaceFolder: '',

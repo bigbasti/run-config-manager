@@ -40,6 +40,8 @@ const ICONS = [
   ['svelte',      'siSvelte'],
   ['vite',        'siVite'],
   ['nextjs',      'siNextdotjs'],
+  // Custom Command (shell-prompt glyph — recognizable across platforms).
+  ['bash',        'siGnubash'],
 ];
 
 // For brands whose canonical color doesn't read well on a dark VS Code

@@ -55,6 +55,7 @@ function computeBrand(cfg: RunConfig, folder: vscode.WorkspaceFolder | undefined
     case 'java':        return 'java';
     case 'maven-goal':  return 'maven';
     case 'gradle-task': return 'gradle';
+    case 'custom-command': return 'bash';
     case 'npm': {
       if (!folder) return 'npm';
       const sub = detectNpmSubtype(folder.uri, cfg.projectPath, cfg.typeOptions.scriptName);

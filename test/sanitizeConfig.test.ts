@@ -227,6 +227,27 @@ describe('sanitizeConfig', () => {
     expect(RunConfigSchema.safeParse(out).success).toBe(true);
   });
 
+  test('custom-command: preserves command + shell + interactive', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'custom-command',
+      typeOptions: {
+        command: 'docker compose up -d',
+        cwd: 'tools',
+        shell: 'bash',
+        interactive: true,
+        colorOutput: true,
+      } as any,
+    } as RunConfig);
+    expect(out.type).toBe('custom-command');
+    const to = out.typeOptions as any;
+    expect(to.command).toBe('docker compose up -d');
+    expect(to.shell).toBe('bash');
+    expect(to.interactive).toBe(true);
+    expect(to.colorOutput).toBe(true);
+    expect(RunConfigSchema.safeParse(out).success).toBe(true);
+  });
+
   test('java: fills safe defaults when typeOptions is minimal', () => {
     const out = sanitizeConfig({
       ...base,

@@ -210,6 +210,11 @@ describe('failurePatternsFor', () => {
     expect(ready).toEqual([]);
     expect(chunkSignalsFailure('BUILD FAILED in 2s', fail)).toBe(true);
   });
+
+  test('Custom Command: no ready, no failure patterns (user output is arbitrary)', () => {
+    expect(readyPatternsFor(cfg({ type: 'custom-command' } as any))).toEqual([]);
+    expect(failurePatternsFor(cfg({ type: 'custom-command' } as any))).toEqual([]);
+  });
 });
 
 describe('rebuildPatternsFor', () => {

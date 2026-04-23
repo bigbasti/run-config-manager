@@ -89,7 +89,8 @@ export class EditorPanel {
       | 'quarkus'
       | 'java'
       | 'maven-goal'
-      | 'gradle-task';
+      | 'gradle-task'
+      | 'custom-command';
 
     const baseCommon = {
       name: '',
@@ -139,6 +140,8 @@ export class EditorPanel {
       typeDefaults = isStreaming
         ? { task: '', colorOutput: true }
         : { task: '', gradleCommand: './gradlew', colorOutput: true };
+    } else if (type === 'custom-command') {
+      typeDefaults = { command: '', cwd: '', shell: 'default', interactive: false, colorOutput: true };
     } else {
       typeDefaults = isStreaming ? { profiles: '' } : { buildTool: 'maven', profiles: '' };
     }
@@ -582,6 +585,20 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
         jdkPath: to?.jdkPath ?? '',
         gradlePath: to?.gradlePath ?? '',
         buildRoot: to?.buildRoot ?? '',
+        ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
+      },
+    };
+  }
+  if (cfg.type === 'custom-command') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').CustomCommandTypeOptions> | undefined;
+    return {
+      ...common,
+      type: 'custom-command',
+      typeOptions: {
+        command: to?.command ?? '',
+        cwd: to?.cwd ?? '',
+        shell: (to?.shell ?? 'default') as import('../shared/types').CustomShell,
+        interactive: to?.interactive ?? false,
         ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
       },
     };

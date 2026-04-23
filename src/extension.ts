@@ -12,6 +12,7 @@ import { QuarkusAdapter } from './adapters/quarkus/QuarkusAdapter';
 import { JavaAdapter } from './adapters/java/JavaAdapter';
 import { MavenGoalAdapter } from './adapters/maven-goal/MavenGoalAdapter';
 import { GradleTaskAdapter } from './adapters/gradle-task/GradleTaskAdapter';
+import { CustomCommandAdapter } from './adapters/custom-command/CustomCommandAdapter';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
 import { log, initLogger } from './utils/logger';
@@ -35,6 +36,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.register(new JavaAdapter());
   registry.register(new MavenGoalAdapter());
   registry.register(new GradleTaskAdapter());
+  registry.register(new CustomCommandAdapter());
   log.debug(`Registered adapters: ${registry.all().map(a => a.type).join(', ')}`);
 
   const store = new ConfigStore();
@@ -606,11 +608,12 @@ function relativePath(root: string, child: string): string {
 function deriveConfigName(child: vscode.Uri, type: RunConfigType): string {
   const base = child.fsPath.split(/[/\\]/).filter(Boolean).pop() ?? 'app';
   const suffix =
-    type === 'spring-boot' ? 'API' :
-    type === 'quarkus'     ? 'Quarkus' :
-    type === 'tomcat'      ? 'Tomcat' :
-    type === 'java'        ? 'Java' :
-                             'Web';
+    type === 'spring-boot'    ? 'API' :
+    type === 'quarkus'        ? 'Quarkus' :
+    type === 'tomcat'         ? 'Tomcat' :
+    type === 'java'           ? 'Java' :
+    type === 'custom-command' ? 'Script' :
+                                'Web';
   // Capitalise first letter, keep the rest as-is ("api" → "Api").
   const pretty = base.charAt(0).toUpperCase() + base.slice(1);
   return `${pretty} ${suffix}`;
@@ -729,6 +732,23 @@ function mergeAutoCreateDefaults(
         mavenPath: typeOptions.mavenPath ?? '',
         buildRoot: typeOptions.buildRoot ?? '',
         debugPort: 5005,
+        colorOutput: true,
+      },
+    };
+  }
+  if (type === 'custom-command') {
+    // Custom commands are user-authored by definition; auto-create never
+    // reaches this branch today because 'custom-command' isn't in the
+    // priority list. The case exists so the exhaustiveness guard stays
+    // happy if the priority list ever expands.
+    return {
+      ...base,
+      type: 'custom-command',
+      typeOptions: {
+        command: typeOptions.command ?? '',
+        cwd: typeOptions.cwd ?? '',
+        shell: typeOptions.shell ?? 'default',
+        interactive: typeOptions.interactive ?? false,
         colorOutput: true,
       },
     };

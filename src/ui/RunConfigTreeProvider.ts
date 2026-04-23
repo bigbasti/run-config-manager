@@ -209,6 +209,7 @@ function labelForType(type: RunConfig['type']): string {
     case 'java': return 'Java Application';
     case 'maven-goal': return 'Maven Goal';
     case 'gradle-task': return 'Gradle Task';
+    case 'custom-command': return 'Custom Command';
     default: return type;
   }
 }
@@ -225,6 +226,7 @@ function iconForGroupType(type: string): string {
     case 'java': return 'java';
     case 'maven-goal': return 'maven';
     case 'gradle-task': return 'gradle';
+    case 'custom-command': return 'bash';
     default: return 'npm';
   }
 }

@@ -256,6 +256,63 @@ describe('RunFileSchema', () => {
     expect(r.success).toBe(true);
   });
 
+  test('accepts a Custom Command config', () => {
+    const r = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        id: '88888888-9999-aaaa-bbbb-cccccccccccc',
+        name: 'Seed DB',
+        type: 'custom-command',
+        projectPath: '',
+        workspaceFolder: '',
+        env: {},
+        programArgs: '',
+        vmArgs: '',
+        typeOptions: {
+          command: './scripts/seed.sh --dev',
+          cwd: '',
+          shell: 'bash',
+          interactive: false,
+        },
+      }],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  test('rejects Custom Command with empty command', () => {
+    const r = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        ...minimalConfig,
+        type: 'custom-command',
+        typeOptions: {
+          command: '   ',
+          cwd: '',
+          shell: 'default',
+          interactive: false,
+        },
+      }],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  test('rejects Custom Command with invalid shell value', () => {
+    const r = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        ...minimalConfig,
+        type: 'custom-command',
+        typeOptions: {
+          command: 'echo hi',
+          cwd: '',
+          shell: 'fish',   // not in the enum
+          interactive: false,
+        },
+      }],
+    });
+    expect(r.success).toBe(false);
+  });
+
   test('rejects Gradle Task config with empty task', () => {
     const r = RunFileSchema.safeParse({
       version: 1,

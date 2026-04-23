@@ -78,6 +78,16 @@ export function buildCommandPreview(cfg: RunConfig): string {
       ? './gradlew'
       : to.gradlePath ? `${to.gradlePath.replace(/[/\\]$/, '')}/bin/gradle` : 'gradle';
     base = `${gradle} --console=plain ${to.task?.trim() || '<task>'}`;
+  } else if (cfg.type === 'custom-command') {
+    // Show the command verbatim; the cwd prefix is added by the common
+    // suffix logic below (reads cfg.projectPath). When the user set an
+    // explicit typeOptions.cwd override, prefer it.
+    const to = cfg.typeOptions;
+    const cmd = to.command?.trim() || '<command>';
+    if (to.cwd?.trim()) {
+      return `cd ${to.cwd.trim()} && ${cmd}`;
+    }
+    base = cmd;
   } else {
     return `(unsupported type: ${(cfg as RunConfig).type})`;
   }
@@ -92,7 +102,8 @@ export function buildCommandPreview(cfg: RunConfig): string {
     cfg.type === 'quarkus' ||
     cfg.type === 'tomcat' ||
     cfg.type === 'maven-goal' ||
-    cfg.type === 'gradle-task';
+    cfg.type === 'gradle-task' ||
+    cfg.type === 'custom-command';
   const args = (cfg.programArgs ?? '').trim();
   const withArgs = !programArgsApplied && args ? `${base} -- ${args}` : base;
   return cfg.projectPath ? `cd ${cfg.projectPath} && ${withArgs}` : withArgs;

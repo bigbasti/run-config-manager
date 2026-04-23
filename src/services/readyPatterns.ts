@@ -64,6 +64,11 @@ export function readyPatternsFor(cfg: RunConfig): RegExp[] {
     // or flips to failed on a BUILD FAIL* banner.
     return [];
   }
+  if (cfg.type === 'custom-command') {
+    // Arbitrary shell commands have no universal "ready" or "failed"
+    // marker. Tree spins while running and returns to idle on exit.
+    return [];
+  }
   if (cfg.type === 'npm') {
     return [
       // Angular CLI 14+: 'Application bundle generation complete.' / 'Compiled successfully'
@@ -155,6 +160,13 @@ export function failurePatternsFor(cfg: RunConfig): RegExp[] {
     // Anything more specific (e.g. liquibase errors) belongs to a different
     // abstraction — these configs print arbitrary output.
     return [...SHARED_BUILD_TOOL_FAILURES];
+  }
+  if (cfg.type === 'custom-command') {
+    // Nothing to scan — the user's command prints whatever it prints.
+    // Non-zero exit code naturally ends the task; the user sees that in
+    // the terminal. Adding false-positive failure regexes would be worse
+    // than no coverage.
+    return [];
   }
   if (cfg.type === 'npm') {
     return [
