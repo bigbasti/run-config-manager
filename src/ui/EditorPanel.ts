@@ -231,40 +231,91 @@ export class EditorPanel {
         // tasks" / "Load phases & plugin prefixes" button. Runs discovery,
         // stores results in the persistent context, and re-emits the
         // schema so the selectOrCustom widget picks up the new options.
+        //
+        // We surface progress through three channels:
+        //   1. Status-bar withProgress (bottom-left, "Loading Gradle
+        //      tasks…") for ambient feedback.
+        //   2. Info-level log line in the Output channel at each step —
+        //      user opening "Output → Run Configurations" sees exactly
+        //      what the extension is doing.
+        //   3. showInformationMessage toast on success, showWarningMessage
+        //      on empty result, showErrorMessage on failure. User never has
+        //      to wonder whether the click did anything.
         const cfg = msg.config;
-        log.info(`Load tasks: ${cfg.type} (${cfg.name || '(unnamed)'})`);
-        try {
-          if (cfg.type === 'gradle-task') {
-            const to = cfg.typeOptions;
-            const cwd = to.buildRoot || resolveProjectUri(this.args.folder, cfg.projectPath).fsPath;
-            const binary = to.gradleCommand === './gradlew'
-              ? './gradlew'
-              : to.gradlePath ? `${to.gradlePath.replace(/[/\\]$/, '')}/bin/gradle` : 'gradle';
-            const env = to.jdkPath ? { JAVA_HOME: to.jdkPath } : undefined;
-            const tasks = await discoverGradleTasks({ cwd, gradleBinary: binary, env });
-            log.info(`Gradle tasks: discovered ${tasks.length} task(s)`);
-            this.context.loadedTasks = tasks;
-            const schema = this.args.adapter.getFormSchema(this.context);
-            this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
-            if (tasks.length === 0) {
+        const label = cfg.type === 'gradle-task' ? 'Gradle tasks' : 'Maven phases & plugin goals';
+        log.info(`Load ${label}: "${cfg.name || '(unnamed)'}" — starting`);
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Window,
+            title: `Loading ${label}…`,
+          },
+          async () => {
+            try {
+              if (cfg.type === 'gradle-task') {
+                const to = cfg.typeOptions;
+                const cwd = to.buildRoot || resolveProjectUri(this.args.folder, cfg.projectPath).fsPath;
+                const binary = to.gradleCommand === './gradlew'
+                  ? './gradlew'
+                  : to.gradlePath ? `${to.gradlePath.replace(/[/\\]$/, '')}/bin/gradle` : 'gradle';
+                const env = to.jdkPath ? { JAVA_HOME: to.jdkPath } : undefined;
+                log.info(`Load ${label}: running ${binary} tasks --all (cwd=${cwd}) — may take up to 60s on a cold daemon`);
+                const tasks = await discoverGradleTasks({ cwd, gradleBinary: binary, env });
+                log.info(`Load ${label}: discovered ${tasks.length} task(s)`);
+                this.context.loadedTasks = tasks;
+                const schema = this.args.adapter.getFormSchema(this.context);
+                this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+                if (tasks.length === 0) {
+                  vscode.window.showWarningMessage(
+                    `No Gradle tasks returned. Check "Output → Run Configurations" for details — common causes: wrong build root, Gradle daemon timeout, or the project has no runnable tasks.`,
+                  );
+                  this.panel.webview.postMessage({
+                    cmd: 'error',
+                    message: 'No tasks returned from Gradle. See the Output channel.',
+                  } satisfies Inbound);
+                } else {
+                  vscode.window.showInformationMessage(
+                    `Loaded ${tasks.length} Gradle task${tasks.length === 1 ? '' : 's'}.`,
+                  );
+                }
+              } else if (cfg.type === 'maven-goal') {
+                const projectRoot = resolveProjectUri(this.args.folder, cfg.projectPath);
+                log.info(`Load ${label}: parsing pom.xml at ${projectRoot.fsPath}`);
+                const goals = await discoverMavenGoals(projectRoot);
+                log.info(`Load ${label}: ${goals.length} entries (phases + plugin prefixes)`);
+                this.context.loadedGoals = goals;
+                const schema = this.args.adapter.getFormSchema(this.context);
+                this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+                vscode.window.showInformationMessage(
+                  `Loaded ${goals.length} Maven entr${goals.length === 1 ? 'y' : 'ies'} (lifecycle phases + plugin prefixes).`,
+                );
+              } else {
+                // Shouldn't happen — the action button is only defined on
+                // those two form schemas. Make sure the webview's busy state
+                // still clears by emitting a schemaUpdate with whatever we
+                // have.
+                log.warn(`Load ${label}: unexpected config type ${cfg.type}`);
+                this.panel.webview.postMessage({
+                  cmd: 'schemaUpdate',
+                  schema: this.args.adapter.getFormSchema(this.context),
+                } satisfies Inbound);
+              }
+            } catch (e) {
+              const msgText = (e as Error).message;
+              log.error(`Load ${label} failed`, e);
+              vscode.window.showErrorMessage(`Loading ${label} failed: ${msgText}`);
               this.panel.webview.postMessage({
                 cmd: 'error',
-                message: 'No tasks returned from Gradle. Check the Output → Run Configurations channel for details.',
+                message: `Load failed: ${msgText}`,
+              } satisfies Inbound);
+              // Ensure the webview's busy state clears even on the error
+              // path — schemaUpdate + error together cover both channels.
+              this.panel.webview.postMessage({
+                cmd: 'schemaUpdate',
+                schema: this.args.adapter.getFormSchema(this.context),
               } satisfies Inbound);
             }
-          } else if (cfg.type === 'maven-goal') {
-            const projectRoot = resolveProjectUri(this.args.folder, cfg.projectPath);
-            const goals = await discoverMavenGoals(projectRoot);
-            log.info(`Maven goals: ${goals.length} entries (phases + plugin prefixes)`);
-            this.context.loadedGoals = goals;
-            const schema = this.args.adapter.getFormSchema(this.context);
-            this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
-          }
-        } catch (e) {
-          const err: Inbound = { cmd: 'error', message: `Load failed: ${(e as Error).message}` };
-          this.panel.webview.postMessage(err);
-          log.error('loadTasks', e);
-        }
+          },
+        );
         return;
       }
       case 'recomputeClasspath': {

@@ -70,6 +70,12 @@ export function App() {
       } else if (msg.cmd === 'schemaUpdate') {
         setSchema(msg.schema);
         setPending(new Set(msg.pending ?? []));
+        // Action buttons other than recomputeClasspath (which has its own
+        // 'classpathComputed' reply path) reply via schemaUpdate carrying
+        // newly-populated options. Clear the busy flag using a functional
+        // updater so we always see fresh state even if the message listener
+        // captured stale props.
+        setBusyActionId(prev => (prev === 'recomputeClasspath' ? prev : null));
       } else if (msg.cmd === 'configPatch') {
         setValues(v => mergeBlanks(v, msg.patch));
       } else if (msg.cmd === 'folderPicked') {
@@ -114,6 +120,16 @@ export function App() {
       setBusyActionId(actionId);
       setError(null);
       post({ cmd: 'recomputeClasspath', config: values as RunConfig });
+      return;
+    }
+    // loadTasks (Gradle Task) and loadGoals (Maven Goal) both post the same
+    // outbound message — the extension dispatches based on cfg.type. Busy
+    // state is cleared when the extension replies with schemaUpdate.
+    if (actionId === 'loadTasks' || actionId === 'loadGoals') {
+      setBusyActionId(actionId);
+      setError(null);
+      post({ cmd: 'loadTasks', config: values as RunConfig });
+      return;
     }
   };
 

@@ -73,8 +73,9 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
             className="secondary"
             disabled={actionBusy}
             onClick={() => onFieldAction?.(action.id)}
+            title={actionBusy ? 'See Output → Run Configurations for progress' : undefined}
           >
-            {actionBusy ? (action.busyLabel ?? 'Working…') : action.label}
+            {actionBusy ? `⏳ ${action.busyLabel ?? 'Working…'}` : action.label}
           </button>
         </div>
       )}
