@@ -42,12 +42,28 @@ export function SelectOrCustom({ value, options, placeholder, onChange, onFocus,
   const [customMode, setCustomMode] = useState(!storedIsOption && value !== '');
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
-    // Default: all groups collapsed on first open.
-    const s = new Set<string>();
-    for (const o of options) if (o.group) s.add(o.group);
-    return s;
-  });
+  // Groups the user has NOT yet expanded. Starts as "all of them" and gets
+  // updated whenever new groups arrive (useState initialiser only runs at
+  // mount — if options are empty then and populated later via a schemaUpdate,
+  // we need to catch up). Track which groups we've already registered so we
+  // don't clobber the user's manual toggles on re-renders.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const seenGroupsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const newGroups: string[] = [];
+    for (const o of options) {
+      if (o.group && !seenGroupsRef.current.has(o.group)) {
+        seenGroupsRef.current.add(o.group);
+        newGroups.push(o.group);
+      }
+    }
+    if (newGroups.length === 0) return;
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      for (const g of newGroups) next.add(g);
+      return next;
+    });
+  }, [options]);
   const containerRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
 
