@@ -135,24 +135,50 @@ export class CustomCommandAdapter implements RuntimeAdapter {
     const to = cfg.typeOptions;
     const isWin = os.platform() === 'win32';
 
-    // Resolve the chosen shell to a binary + its "execute this string" flag.
-    // "default" follows the platform convention; explicit values pin.
+    // IMPORTANT: RunTerminal ALREADY wraps the command in the outer shell
+    // (/bin/bash -c <cmdLine> on Unix, cmd /c <cmdLine> on Windows). Its
+    // join-with-spaces strategy means any shell-operator in our args (|,
+    // &&, >) would be re-interpreted by the OUTER shell, breaking the
+    // intended pipeline (reported as "bash -c ls -la | grep java" was
+    // being pipe-split by the outer bash into two independent commands).
+    //
+    // Two paths:
+    //   - When the user's chosen shell matches the outer shell (default on
+    //     Unix → bash; default / cmd on Windows → cmd), we pass the command
+    //     verbatim with no wrapping. The outer shell handles the operators
+    //     exactly as the user would expect from their terminal.
+    //   - When the user picked a different shell (sh / zsh / pwsh, or
+    //     pwsh on Unix, or bash / sh / zsh / pwsh on Windows), we DO wrap,
+    //     but single-quote the command so the outer shell treats it as one
+    //     argv element before handing it to the inner shell.
+
+    const usesOuterShell =
+      (isWin && (to.shell === 'default' || to.shell === 'cmd')) ||
+      (!isWin && (to.shell === 'default' || to.shell === 'bash'));
+
+    if (usesOuterShell) {
+      // No inner wrap. cmdLine in RunTerminal becomes just the user's
+      // command; the outer shell parses pipes/operators naturally. The
+      // `command` slot holds the whole string — RunTerminal's join step is
+      // a no-op since args is empty.
+      return { command: to.command, args: [] };
+    }
+
+    // Inner wrap required. Single-quote for Unix targets (bash / sh / zsh /
+    // pwsh on Unix — pwsh accepts single-quoted strings as the -Command
+    // argument, and the outer bash strips them before handing to pwsh).
+    // Double-quote-with-doubling for Windows cmd outer (pwsh on Windows).
+    const quoted = isWin ? cmdQuote(to.command) : bashQuote(to.command);
+
     if (to.shell === 'pwsh') {
-      return { command: 'pwsh', args: ['-Command', to.command] };
+      return { command: 'pwsh', args: ['-Command', quoted] };
     }
     if (to.shell === 'cmd') {
-      return { command: 'cmd.exe', args: ['/c', to.command] };
+      return { command: 'cmd.exe', args: ['/c', quoted] };
     }
-    if (isWin && to.shell === 'default') {
-      return { command: process.env.COMSPEC ?? 'cmd.exe', args: ['/c', to.command] };
-    }
-    // Unix shells (bash / sh / zsh / default on Unix).
-    const unixShell =
-      to.shell === 'bash' ? 'bash' :
-      to.shell === 'sh' ? 'sh' :
-      to.shell === 'zsh' ? 'zsh' :
-      process.env.SHELL ?? 'bash';
-    return { command: unixShell, args: ['-c', to.command] };
+    // sh / zsh on Unix.
+    const unixShell = to.shell === 'sh' ? 'sh' : 'zsh';
+    return { command: unixShell, args: ['-c', quoted] };
   }
 
   async prepareLaunch(
@@ -177,4 +203,17 @@ export class CustomCommandAdapter implements RuntimeAdapter {
     }
     return { env, cwd };
   }
+}
+
+// Single-quote a string so an outer POSIX shell treats it as one literal
+// token. Inner single quotes are escaped with the `'\''` trick.
+function bashQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+// Windows cmd.exe treats " as the quote character; embedded " need to be
+// doubled. This is less robust than POSIX (cmd lacks real quote levels),
+// but covers typical command lines.
+function cmdQuote(s: string): string {
+  return `"${s.replace(/"/g, '""')}"`;
 }

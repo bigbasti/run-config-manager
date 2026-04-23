@@ -42,40 +42,73 @@ describe('CustomCommandAdapter.detect', () => {
 });
 
 describe('CustomCommandAdapter.buildCommand', () => {
-  test('bash: wraps the whole command string with -c', () => {
-    const r = adapter.buildCommand(cfg({ typeOptions: { shell: 'bash', command: 'echo hi && ls' } }));
-    expect(r.command).toBe('bash');
-    expect(r.args).toEqual(['-c', 'echo hi && ls']);
+  // Tests assume a Unix host (jest runs in node; our CI is Linux). When the
+  // chosen shell matches the outer shell (bash on Unix, cmd on Windows), we
+  // pass the command verbatim with no wrapping — RunTerminal's /bin/bash -c
+  // around the final cmdLine is already the one layer of shell we need.
+
+  test('bash (matches outer shell on Unix): no inner wrap', () => {
+    // The pipe-bug fix: wrapping a pipe command in `bash -c <cmd>` caused
+    // the OUTER shell to pipe-split before the inner bash saw anything.
+    // Passing the command verbatim lets the outer shell handle pipes right.
+    const r = adapter.buildCommand(cfg({ typeOptions: { shell: 'bash', command: 'ls -la | grep java' } }));
+    expect(r.command).toBe('ls -la | grep java');
+    expect(r.args).toEqual([]);
   });
 
-  test('sh / zsh produce -c too', () => {
-    expect(adapter.buildCommand(cfg({ typeOptions: { shell: 'sh' } })).command).toBe('sh');
-    expect(adapter.buildCommand(cfg({ typeOptions: { shell: 'zsh' } })).command).toBe('zsh');
+  test('default (= bash on Unix): no inner wrap', () => {
+    const r = adapter.buildCommand(cfg({ typeOptions: { shell: 'default', command: 'echo hi && ls' } }));
+    expect(r.command).toBe('echo hi && ls');
+    expect(r.args).toEqual([]);
   });
 
-  test('pwsh uses -Command (not -c) so PowerShell parses correctly', () => {
+  test('sh wraps with bashQuote so outer bash delivers command as one arg', () => {
+    const r = adapter.buildCommand(cfg({
+      typeOptions: { shell: 'sh', command: 'ls -la | grep foo' },
+    }));
+    expect(r.command).toBe('sh');
+    expect(r.args).toEqual(['-c', `'ls -la | grep foo'`]);
+  });
+
+  test('zsh wraps + quotes too', () => {
+    const r = adapter.buildCommand(cfg({ typeOptions: { shell: 'zsh', command: 'echo hi' } }));
+    expect(r.command).toBe('zsh');
+    expect(r.args).toEqual(['-c', `'echo hi'`]);
+  });
+
+  test('pwsh uses -Command + single-quoted string (outer bash unwraps)', () => {
     const r = adapter.buildCommand(cfg({
       typeOptions: { shell: 'pwsh', command: 'Get-ChildItem | Select-Object -First 5' },
     }));
     expect(r.command).toBe('pwsh');
-    expect(r.args).toEqual(['-Command', 'Get-ChildItem | Select-Object -First 5']);
+    expect(r.args).toEqual(['-Command', `'Get-ChildItem | Select-Object -First 5'`]);
   });
 
-  test('cmd uses /c', () => {
+  test('cmd shell on Unix: wrapped + quoted (outer bash passes through)', () => {
+    // Running 'cmd' shell from a Unix host is unusual but not forbidden —
+    // the assertion documents the quoting shape.
     const r = adapter.buildCommand(cfg({
       typeOptions: { shell: 'cmd', command: 'dir & echo done' },
     }));
     expect(r.command).toBe('cmd.exe');
-    expect(r.args).toEqual(['/c', 'dir & echo done']);
+    expect(r.args).toEqual(['/c', `'dir & echo done'`]);
   });
 
-  test('preserves the command string verbatim (no tokenisation)', () => {
-    // The whole point of a shell-interpreted config: the shell handles
-    // quoting/escaping/globbing, we just hand it the raw string.
+  test('bash preserves the command verbatim (shell handles quoting/escaping/globs)', () => {
     const r = adapter.buildCommand(cfg({
       typeOptions: { shell: 'bash', command: `echo "hello world" && find . -name '*.ts'` },
     }));
-    expect(r.args[1]).toBe(`echo "hello world" && find . -name '*.ts'`);
+    // No inner wrap for bash on Unix — command is the whole string.
+    expect(r.command).toBe(`echo "hello world" && find . -name '*.ts'`);
+    expect(r.args).toEqual([]);
+  });
+
+  test('sh-wrapped single-quote escaping: inner quotes don\'t break the wrapper', () => {
+    const r = adapter.buildCommand(cfg({
+      typeOptions: { shell: 'sh', command: `echo 'hi'` },
+    }));
+    // bashQuote escapes inner ' as '\''.
+    expect(r.args[1]).toBe(`'echo '\\''hi'\\'''`);
   });
 });
 
