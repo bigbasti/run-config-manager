@@ -6,7 +6,7 @@ import type { DebugService } from '../services/DebugService';
 import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
-import { iconForConfig } from './iconForConfig';
+import { iconForConfig, brandIconUri } from './iconForConfig';
 
 export type Node =
   | { kind: 'folder'; folderKey: string; label: string }
@@ -51,8 +51,9 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       // Brand icon from media/icons/ (the npm icon for plain npm groups;
       // the specific brand — Spring Boot, Tomcat, etc. — for every other
       // type). No sub-type detection here because a group spans multiple
-      // configs that may belong to different frameworks.
-      item.iconPath = vscode.Uri.joinPath(this.extensionUri, 'media', 'icons', `${iconForGroupType(n.type)}.svg`);
+      // configs that may belong to different frameworks. Use the shared
+      // helper so gradle / java pick up their light-theme variants.
+      item.iconPath = brandIconUri(iconForGroupType(n.type), this.extensionUri);
       return item;
     }
     if (n.kind === 'invalid') {

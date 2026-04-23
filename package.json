@@ -14,7 +14,9 @@
     "vscode": "^1.85.0"
   },
   "main": "./out/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -35,36 +37,136 @@
       ]
     },
     "commands": [
-      { "command": "runConfig.add", "title": "Add Run Configuration", "icon": "$(add)" },
-      { "command": "runConfig.autoCreate", "title": "Auto-create Configurations", "icon": "$(sparkle)" },
-      { "command": "runConfig.stopAll", "title": "Stop All Running", "icon": "$(stop-circle)" },
-      { "command": "runConfig.refresh", "title": "Refresh", "icon": "$(refresh)" },
-      { "command": "runConfig.edit", "title": "Edit", "icon": "$(edit)" },
-      { "command": "runConfig.clone", "title": "Clone", "icon": "$(copy)" },
-      { "command": "runConfig.delete", "title": "Delete", "icon": "$(trash)" },
-      { "command": "runConfig.reveal", "title": "Reveal Terminal", "icon": "$(terminal)" },
-      { "command": "runConfig.run", "title": "Run", "icon": "$(play)" },
-      { "command": "runConfig.stop", "title": "Stop", "icon": "$(debug-stop)" },
-      { "command": "runConfig.debug", "title": "Debug", "icon": "$(debug-alt)" },
-      { "command": "runConfig.fix", "title": "Fix Invalid Configuration", "icon": "$(wrench)" },
-      { "command": "runConfig.openFile", "title": "Open run.json", "icon": "$(go-to-file)" }
+      {
+        "command": "runConfig.add",
+        "title": "Add Run Configuration",
+        "icon": "$(add)"
+      },
+      {
+        "command": "runConfig.autoCreate",
+        "title": "Auto-create Configurations",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "runConfig.stopAll",
+        "title": "Stop All Running",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "runConfig.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "runConfig.edit",
+        "title": "Edit",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "runConfig.clone",
+        "title": "Clone",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "runConfig.delete",
+        "title": "Delete",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "runConfig.reveal",
+        "title": "Reveal Terminal",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "runConfig.run",
+        "title": "Run",
+        "icon": "$(play)"
+      },
+      {
+        "command": "runConfig.stop",
+        "title": "Stop",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "runConfig.debug",
+        "title": "Debug",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "runConfig.fix",
+        "title": "Fix Invalid Configuration",
+        "icon": "$(wrench)"
+      },
+      {
+        "command": "runConfig.openFile",
+        "title": "Open run.json",
+        "icon": "$(go-to-file)"
+      }
     ],
     "menus": {
       "view/title": [
-        { "command": "runConfig.add", "when": "view == runConfigurations", "group": "navigation@1" },
-        { "command": "runConfig.autoCreate", "when": "view == runConfigurations", "group": "navigation@2" },
-        { "command": "runConfig.stopAll", "when": "view == runConfigurations && rcm.anyRunning", "group": "navigation@3" },
-        { "command": "runConfig.refresh", "when": "view == runConfigurations", "group": "navigation@4" }
+        {
+          "command": "runConfig.add",
+          "when": "view == runConfigurations",
+          "group": "navigation@1"
+        },
+        {
+          "command": "runConfig.autoCreate",
+          "when": "view == runConfigurations",
+          "group": "navigation@2"
+        },
+        {
+          "command": "runConfig.stopAll",
+          "when": "view == runConfigurations && rcm.anyRunning",
+          "group": "navigation@3"
+        },
+        {
+          "command": "runConfig.refresh",
+          "when": "view == runConfigurations",
+          "group": "navigation@4"
+        }
       ],
       "view/item/context": [
-        { "command": "runConfig.run", "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?$/", "group": "inline@1" },
-        { "command": "runConfig.stop", "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?$/", "group": "inline@1" },
-        { "command": "runConfig.debug", "when": "view == runConfigurations && viewItem == configIdle", "group": "inline@2" },
-        { "command": "runConfig.fix", "when": "view == runConfigurations && viewItem == configInvalid", "group": "inline@1" },
-        { "command": "runConfig.openFile", "when": "view == runConfigurations && viewItem == configInvalid", "group": "inline@2" },
-        { "command": "runConfig.edit", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/", "group": "inline@3" },
-        { "command": "runConfig.clone", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?$/", "group": "inline@4" },
-        { "command": "runConfig.delete", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/", "group": "inline@5" }
+        {
+          "command": "runConfig.run",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "runConfig.stop",
+          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "runConfig.debug",
+          "when": "view == runConfigurations && viewItem == configIdle",
+          "group": "inline@2"
+        },
+        {
+          "command": "runConfig.fix",
+          "when": "view == runConfigurations && viewItem == configInvalid",
+          "group": "inline@1"
+        },
+        {
+          "command": "runConfig.openFile",
+          "when": "view == runConfigurations && viewItem == configInvalid",
+          "group": "inline@2"
+        },
+        {
+          "command": "runConfig.edit",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/",
+          "group": "inline@3"
+        },
+        {
+          "command": "runConfig.clone",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?$/",
+          "group": "inline@4"
+        },
+        {
+          "command": "runConfig.delete",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/",
+          "group": "inline@5"
+        }
       ]
     }
   },
@@ -78,6 +180,7 @@
     "watch": "npm-run-all --parallel watch:extension watch:webview",
     "test": "jest",
     "typecheck": "tsc -p tsconfig.extension.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
+    "gen:icons": "node scripts/generate-icons.mjs",
     "package": "npm run build && vsce package --no-dependencies"
   },
   "dependencies": {
@@ -99,6 +202,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "rimraf": "^5.0.5",
+    "simple-icons": "^16.17.0",
     "ts-jest": "^29.1.1",
     "typescript": "^5.3.3",
     "vite": "^5.0.10"

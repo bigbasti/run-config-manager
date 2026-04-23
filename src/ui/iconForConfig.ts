@@ -1,6 +1,27 @@
 import * as vscode from 'vscode';
 import type { RunConfig } from '../shared/types';
 
+// Brands whose canonical simple-icons color is too dark to read on a VS
+// Code dark theme (pure black Java/Angular/Next.js, dark teal Gradle).
+// For these, the generator emits a `-light.svg` sibling tinted with the
+// original color, and we return {light, dark} pairs so VS Code picks the
+// right one per active theme.
+const BRANDS_WITH_LIGHT_VARIANT = new Set(['java', 'angular', 'nextjs', 'gradle']);
+
+// Builds the Uri (or {light, dark} pair) for a brand name. Exported so
+// tree-group headers and individual config rows share the same theme logic.
+export function brandIconUri(
+  brand: string,
+  extensionUri: vscode.Uri,
+): vscode.Uri | { light: vscode.Uri; dark: vscode.Uri } {
+  const dark = vscode.Uri.joinPath(extensionUri, 'media', 'icons', `${brand}.svg`);
+  if (BRANDS_WITH_LIGHT_VARIANT.has(brand)) {
+    const light = vscode.Uri.joinPath(extensionUri, 'media', 'icons', `${brand}-light.svg`);
+    return { light, dark };
+  }
+  return dark;
+}
+
 // Maps a config to the brand SVG under media/icons/. For npm configs we
 // sniff package.json scripts + tell-tale files (angular.json, vite.config.*,
 // next.config.*, svelte.config.*) to pick a more specific framework icon.
@@ -12,9 +33,8 @@ export function iconForConfig(
   cfg: RunConfig,
   workspaceFolder: vscode.WorkspaceFolder | undefined,
   extensionUri: vscode.Uri,
-): vscode.Uri {
-  const name = brandFor(cfg, workspaceFolder);
-  return vscode.Uri.joinPath(extensionUri, 'media', 'icons', `${name}.svg`);
+): vscode.Uri | { light: vscode.Uri; dark: vscode.Uri } {
+  return brandIconUri(brandFor(cfg, workspaceFolder), extensionUri);
 }
 
 const PER_CONFIG_CACHE = new WeakMap<RunConfig, string>();
