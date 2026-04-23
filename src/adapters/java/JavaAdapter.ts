@@ -58,6 +58,7 @@ export class JavaAdapter implements RuntimeAdapter {
           gradleCommand: effectiveGradleCommand,
           mainClass: mainClasses[0]?.fqn ?? '',
           classpath,
+          customArgs: '',
           jdkPath: jdks[0] ?? '',
           module: '',
           gradlePath: buildTools.gradleInstalls[0] ?? '',
@@ -219,8 +220,26 @@ export class JavaAdapter implements RuntimeAdapter {
             { value: 'maven', label: 'Maven (mvn exec:java)' },
             { value: 'gradle', label: 'Gradle (application plugin: run)' },
             { value: 'java-main', label: 'java -cp … MainClass' },
+            { value: 'maven-custom', label: 'Maven — custom command' },
+            { value: 'gradle-custom', label: 'Gradle — custom command' },
           ],
           help: launchHelp,
+        },
+        {
+          kind: 'textarea',
+          key: 'typeOptions.customArgs',
+          label: 'Custom command',
+          rows: 2,
+          placeholder: ':systemtest:systemtestDev --tests "de.telit.pkg.*Test"',
+          help:
+            'Free-form command tail appended to the build-tool binary. Use this for ad-hoc invocations that don\'t fit the standard main-class/program-args split — e.g. running a specific Gradle test task with --tests filters. Quoted arguments are preserved. Program args, VM args, and Main class are all IGNORED in custom modes.',
+          examples: [
+            ':api:test --tests "com.example.*IT"',
+            'clean build -x test',
+            ':systemtest:systemtestDev --tests "de.telit.zebra.systemtest.exceptionbearbeitung.tests.*.intf.*"',
+          ],
+          inspectable: true,
+          dependsOn: { key: 'typeOptions.launchMode', equals: ['maven-custom', 'gradle-custom'] },
         },
       ],
       typeSpecific: [
@@ -233,7 +252,7 @@ export class JavaAdapter implements RuntimeAdapter {
             { value: 'gradle', label: 'gradle (system)' },
           ],
           help: `Which gradle binary to invoke. Detected: ${detectedGradle}. Override if the wrapper is missing or out-of-date.`,
-          dependsOn: { key: 'typeOptions.launchMode', equals: 'gradle' },
+          dependsOn: { key: 'typeOptions.launchMode', equals: ['gradle', 'gradle-custom'] },
         },
         {
           kind: 'selectOrCustom',
@@ -253,7 +272,7 @@ export class JavaAdapter implements RuntimeAdapter {
           placeholder: '/opt/maven/apache-maven-3.9.6',
           help: 'Maven install directory. Leave blank to use `mvn` from PATH.',
           examples: ['/opt/maven/apache-maven-3.9.6', '/usr/share/maven'],
-          dependsOn: { key: 'typeOptions.launchMode', equals: 'maven' },
+          dependsOn: { key: 'typeOptions.launchMode', equals: ['maven', 'maven-custom'] },
         },
         {
           kind: 'text',
@@ -261,7 +280,7 @@ export class JavaAdapter implements RuntimeAdapter {
           label: 'Build root',
           placeholder: '(auto-detected)',
           help: `Absolute path to the Gradle/Maven project root. Detected: ${detectedBuildRoot || '(same as project path)'}. Override only if auto-detection picked wrong.`,
-          dependsOn: { key: 'typeOptions.launchMode', equals: ['maven', 'gradle'] },
+          dependsOn: { key: 'typeOptions.launchMode', equals: ['maven', 'gradle', 'maven-custom', 'gradle-custom'] },
         },
         {
           kind: 'selectOrCustom',
@@ -368,9 +387,11 @@ export class JavaAdapter implements RuntimeAdapter {
       throw new Error('JavaAdapter received non-java config');
     }
     switch (cfg.typeOptions.launchMode) {
-      case 'maven':     return buildMaven(cfg);
-      case 'gradle':    return buildGradle(cfg, folder);
-      case 'java-main': return buildJavaMain(cfg);
+      case 'maven':         return buildMaven(cfg);
+      case 'gradle':        return buildGradle(cfg, folder);
+      case 'java-main':     return buildJavaMain(cfg);
+      case 'maven-custom':  return buildMavenCustom(cfg);
+      case 'gradle-custom': return buildGradleCustom(cfg);
     }
   }
 
@@ -392,13 +413,14 @@ export class JavaAdapter implements RuntimeAdapter {
       const port = ctx.debugPort ?? cfg.typeOptions.debugPort ?? 5005;
       const jdwp = `-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}`;
       const mode = cfg.typeOptions.launchMode;
-      // Maven: inject into MAVEN_OPTS. Using JAVA_TOOL_OPTIONS here would bind
-      // JDWP in both the Maven JVM AND the forked plugin JVM, producing
-      // "Address already in use" on the second bind.
-      if (mode === 'maven') {
+      // Maven (standard + custom): inject into MAVEN_OPTS. Using
+      // JAVA_TOOL_OPTIONS here would bind JDWP in both the Maven JVM AND the
+      // forked plugin JVM, producing "Address already in use" on the second
+      // bind.
+      if (mode === 'maven' || mode === 'maven-custom') {
         env.MAVEN_OPTS = jdwp;
-      } else if (mode === 'gradle') {
-        // Gradle's run task forks a JVM that inherits JAVA_TOOL_OPTIONS. Same
+      } else if (mode === 'gradle' || mode === 'gradle-custom') {
+        // Gradle's forked test/run tasks inherit JAVA_TOOL_OPTIONS. Same
         // pattern Spring Boot's Gradle bootRun flow uses.
         env.JAVA_TOOL_OPTIONS = jdwp;
       }
@@ -509,6 +531,20 @@ function buildGradle(
   // VM args are intentionally NOT passed: Gradle's run task reads them from
   // application { applicationDefaultJvmArgs } in build.gradle. See the help
   // text on the vmArgs field.
+  return { command: gradleBinary(to), args };
+}
+
+function buildMavenCustom(cfg: Extract<RunConfig, { type: 'java' }>) {
+  // Raw Maven command tail — whatever the user typed, shell-split to preserve
+  // quoted values. No mainClass, no exec.args wrapping.
+  const to = cfg.typeOptions;
+  const args = splitArgs(to.customArgs ?? '');
+  return { command: mavenBinary(to), args };
+}
+
+function buildGradleCustom(cfg: Extract<RunConfig, { type: 'java' }>) {
+  const to = cfg.typeOptions;
+  const args = splitArgs(to.customArgs ?? '');
   return { command: gradleBinary(to), args };
 }
 

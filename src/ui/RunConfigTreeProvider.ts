@@ -104,7 +104,12 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     item.contextValue = (preparing || running)
       ? debuggable ? 'configRunning' : 'configRunningNoDebug'
       : debuggable ? 'configIdle' : 'configIdleNoDebug';
-    item.command = { command: 'runConfig.edit', title: 'Edit', arguments: [n] };
+    // Click behavior: running/preparing configs reveal the task terminal;
+    // idle configs open the editor. The inline Edit button always opens the
+    // editor regardless of state.
+    item.command = (running || preparing)
+      ? { command: 'runConfig.reveal', title: 'Reveal terminal', arguments: [n] }
+      : { command: 'runConfig.edit', title: 'Edit', arguments: [n] };
     return item;
   }
 

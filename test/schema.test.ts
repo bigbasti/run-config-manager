@@ -130,6 +130,7 @@ describe('RunFileSchema', () => {
           gradleCommand: './gradlew',
           mainClass: 'com.example.Main',
           classpath: 'target/classes',
+          customArgs: '',
           jdkPath: '',
           module: '',
           gradlePath: '',
@@ -153,6 +154,7 @@ describe('RunFileSchema', () => {
           gradleCommand: './gradlew',
           mainClass: '',
           classpath: 'target/classes',
+          customArgs: '',
           jdkPath: '', module: '', gradlePath: '', mavenPath: '', buildRoot: '',
         },
       }],
@@ -172,6 +174,7 @@ describe('RunFileSchema', () => {
           gradleCommand: './gradlew',
           mainClass: 'com.example.Main',
           classpath: '',
+          customArgs: '',
           jdkPath: '', module: '', gradlePath: '', mavenPath: '', buildRoot: '',
         },
       }],
@@ -197,10 +200,42 @@ describe('RunFileSchema', () => {
           gradleCommand: './gradlew',
           mainClass: '',
           classpath: '',
+          customArgs: '',
           jdkPath: '', module: '', gradlePath: '', mavenPath: '', buildRoot: '',
         },
       }],
     });
     expect(result.success).toBe(true);
+  });
+
+  test('Java gradle-custom mode requires customArgs', () => {
+    const base = {
+      id: '55555555-6666-7777-8888-999999999999',
+      name: 'Systemtest',
+      type: 'java',
+      projectPath: '',
+      workspaceFolder: '',
+      env: {},
+      programArgs: '',
+      vmArgs: '',
+    };
+    const to = {
+      launchMode: 'gradle-custom',
+      buildTool: 'gradle',
+      gradleCommand: './gradlew',
+      mainClass: '',
+      classpath: '',
+      jdkPath: '', module: '', gradlePath: '', mavenPath: '', buildRoot: '',
+    };
+    const withArgs = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{ ...base, typeOptions: { ...to, customArgs: ':systemtest:systemtestDev --tests "x.*"' } }],
+    });
+    expect(withArgs.success).toBe(true);
+    const withoutArgs = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{ ...base, typeOptions: { ...to, customArgs: '' } }],
+    });
+    expect(withoutArgs.success).toBe(false);
   });
 });

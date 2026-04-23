@@ -52,11 +52,14 @@ describe('ExecutionService', () => {
     expect(svc.isRunning(cfg.id)).toBe(false);
   });
 
-  test('fires onRunningChanged on start and end', async () => {
+  test('fires onRunningChanged at least on start and end', async () => {
+    // Adapters with prepareLaunch also emit two extra events (preparing
+    // enter/exit) before start. We assert inclusive rather than exact to
+    // stay resilient to adapters adding or dropping preparing phases.
     const events: string[] = [];
     svc.onRunningChanged(id => events.push(id));
     const execution = await svc.run(cfg, folder as any);
     (tasks as any).__endEmitter.fire({ execution });
-    expect(events.filter(e => e === cfg.id)).toHaveLength(2);
+    expect(events.filter(e => e === cfg.id).length).toBeGreaterThanOrEqual(2);
   });
 });

@@ -20,6 +20,7 @@ function cfg(overrides: any = {}): RunConfig {
       gradleCommand: './gradlew' as const,
       mainClass: 'com.example.Main',
       classpath: '',
+      customArgs: '',
       jdkPath: '',
       module: '',
       gradlePath: '',
@@ -156,6 +157,46 @@ describe('JavaAdapter.buildCommand (java-main)', () => {
   });
 });
 
+describe('JavaAdapter.buildCommand (custom modes)', () => {
+  const customCfg = (mode: 'maven-custom' | 'gradle-custom', customArgs: string, extras: any = {}) =>
+    cfg({
+      ...extras,
+      typeOptions: {
+        launchMode: mode,
+        buildTool: mode === 'maven-custom' ? 'maven' : 'gradle',
+        customArgs,
+        ...(extras.typeOptions ?? {}),
+      },
+    });
+
+  test('maven-custom: raw tail passed as args', () => {
+    const r = adapter.buildCommand(customCfg('maven-custom', 'clean verify -DskipTests'));
+    expect(r.command).toBe('mvn');
+    expect(r.args).toEqual(['clean', 'verify', '-DskipTests']);
+  });
+
+  test('gradle-custom: raw tail + preserves quoted values', () => {
+    const r = adapter.buildCommand(
+      customCfg('gradle-custom', ':systemtest:systemtestDev --tests "de.telit.pkg.*Test"'),
+    );
+    expect(r.command).toBe('./gradlew');
+    expect(r.args).toEqual([
+      ':systemtest:systemtestDev',
+      '--tests',
+      'de.telit.pkg.*Test',
+    ]);
+  });
+
+  test('gradle-custom: ignores mainClass / programArgs / vmArgs', () => {
+    const r = adapter.buildCommand(customCfg(
+      'gradle-custom',
+      ':test',
+      { programArgs: '--dropped', vmArgs: '-Xmx2g -also-dropped', typeOptions: { mainClass: 'Ignored' } },
+    ));
+    expect(r.args).toEqual([':test']);
+  });
+});
+
 describe('JavaAdapter.getDebugConfig', () => {
   const folder = { uri: Uri.file('/ws'), name: 'ws', index: 0 };
 
@@ -212,6 +253,26 @@ describe('JavaAdapter.prepareLaunch', () => {
       { debug: true, debugPort: 5099 },
     );
     expect(p.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
+    expect(p.env?.MAVEN_OPTS).toBeUndefined();
+  });
+
+  test('debug=true + maven-custom → MAVEN_OPTS', async () => {
+    const p = await adapter.prepareLaunch(
+      cfg({ typeOptions: { launchMode: 'maven-custom', customArgs: 'verify' } }),
+      folder as any,
+      { debug: true, debugPort: 5099 },
+    );
+    expect(p.env?.MAVEN_OPTS).toContain('-agentlib:jdwp');
+    expect(p.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
+  });
+
+  test('debug=true + gradle-custom → JAVA_TOOL_OPTIONS', async () => {
+    const p = await adapter.prepareLaunch(
+      cfg({ typeOptions: { launchMode: 'gradle-custom', customArgs: ':test' } }),
+      folder as any,
+      { debug: true, debugPort: 5099 },
+    );
+    expect(p.env?.JAVA_TOOL_OPTIONS).toContain('-agentlib:jdwp');
     expect(p.env?.MAVEN_OPTS).toBeUndefined();
   });
 

@@ -144,6 +144,7 @@ describe('sanitizeConfig', () => {
         gradleCommand: './gradlew',
         mainClass: 'com.example.Main',
         classpath: 'target/classes',
+        customArgs: '',
         jdkPath: '',
         module: '',
         gradlePath: '',
@@ -161,6 +162,30 @@ describe('sanitizeConfig', () => {
     expect(to.colorOutput).toBe(true);
     // Must not be coerced to npm.
     expect(to.scriptName).toBeUndefined();
+    expect(RunConfigSchema.safeParse(out).success).toBe(true);
+  });
+
+  test('java: gradle-custom preserves customArgs + schema-valid', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'java',
+      typeOptions: {
+        launchMode: 'gradle-custom',
+        buildTool: 'gradle',
+        gradleCommand: './gradlew',
+        mainClass: '',
+        classpath: '',
+        customArgs: ':api:test --tests "com.example.*IT"',
+        jdkPath: '',
+        module: '',
+        gradlePath: '',
+        mavenPath: '',
+        buildRoot: '',
+      } as any,
+    } as RunConfig);
+    const to = out.typeOptions as any;
+    expect(to.launchMode).toBe('gradle-custom');
+    expect(to.customArgs).toBe(':api:test --tests "com.example.*IT"');
     expect(RunConfigSchema.safeParse(out).success).toBe(true);
   });
 

@@ -35,12 +35,51 @@ export function buildCommandPreview(cfg: RunConfig): string {
     const home = to.tomcatHome || '<TOMCAT_HOME>';
     const ctx = (to.applicationContext || '/').trim();
     base = `${home}/bin/catalina.sh run  # deploy ${to.artifactPath || '<artifact>'} → ${ctx} on :${to.httpPort}`;
+  } else if (cfg.type === 'quarkus') {
+    const to = cfg.typeOptions;
+    const port = typeof to.debugPort === 'number' && to.debugPort > 0 ? to.debugPort : 5005;
+    const prof = to.profile?.trim() ? ` -Dquarkus.profile=${to.profile.trim()}` : '';
+    if (to.launchMode === 'gradle') {
+      base = `${to.gradleCommand} --console=plain quarkusDev${prof} -Ddebug=${port}`;
+    } else {
+      base = `mvn quarkus:dev${prof} -Ddebug=${port}`;
+    }
+  } else if (cfg.type === 'java') {
+    const to = cfg.typeOptions;
+    if (to.launchMode === 'java-main') {
+      const javaBin = to.jdkPath ? `${to.jdkPath.replace(/[/\\]$/, '')}/bin/java` : 'java';
+      const vm = cfg.vmArgs?.trim() ? ` ${cfg.vmArgs.trim()}` : '';
+      const cp = to.classpath?.trim() ? ` -cp ${to.classpath.trim()}` : '';
+      const mc = to.mainClass || '<MainClass>';
+      const pa = cfg.programArgs?.trim() ? ` ${cfg.programArgs.trim()}` : '';
+      base = `${javaBin}${vm}${cp} ${mc}${pa}`;
+    } else if (to.launchMode === 'gradle-custom') {
+      // Raw Gradle tail — whatever the user typed in customArgs.
+      const tail = to.customArgs?.trim() || '<args>';
+      base = `${to.gradleCommand} ${tail}`;
+    } else if (to.launchMode === 'maven-custom') {
+      const tail = to.customArgs?.trim() || '<args>';
+      base = `mvn ${tail}`;
+    } else if (to.launchMode === 'gradle') {
+      const pa = cfg.programArgs?.trim() ? ` --args='${cfg.programArgs.trim()}'` : '';
+      base = `${to.gradleCommand} --console=plain run${pa}`;
+    } else {
+      const mc = to.mainClass || '<MainClass>';
+      const pa = cfg.programArgs?.trim() ? ` -Dexec.args='${cfg.programArgs.trim()}'` : '';
+      base = `mvn exec:java -Dexec.mainClass=${mc}${pa}`;
+    }
   } else {
     return `(unsupported type: ${(cfg as RunConfig).type})`;
   }
 
+  // Adapters that bake programArgs into their preview: spring-boot/java-main,
+  // java (all modes — see branch above), quarkus, tomcat. Only spring-boot's
+  // maven/gradle preview and npm still need the `-- <args>` suffix.
   const programArgsApplied =
-    cfg.type === 'spring-boot' && cfg.typeOptions.launchMode === 'java-main';
+    (cfg.type === 'spring-boot' && cfg.typeOptions.launchMode === 'java-main') ||
+    cfg.type === 'java' ||
+    cfg.type === 'quarkus' ||
+    cfg.type === 'tomcat';
   const args = (cfg.programArgs ?? '').trim();
   const withArgs = !programArgsApplied && args ? `${base} -- ${args}` : base;
   return cfg.projectPath ? `cd ${cfg.projectPath} && ${withArgs}` : withArgs;

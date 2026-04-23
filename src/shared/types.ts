@@ -126,20 +126,32 @@ export interface QuarkusTypeOptions {
   colorOutput?: boolean;
 }
 
-// Plain Java application. Three launch modes mirror Spring Boot's, minus the
-// Spring-specific fields (profiles, rebuildOnSave) and Spring-specific flags.
-export type JavaLaunchMode = 'maven' | 'gradle' | 'java-main';
+// Plain Java application. Launch modes:
+//   - maven         mvn exec:java -Dexec.mainClass=<FQN>
+//   - gradle        ./gradlew run (application plugin)
+//   - java-main     java -cp <classpath> <MainClass>
+//   - maven-custom  mvn <raw tail the user typed in customArgs>
+//   - gradle-custom ./gradlew <raw tail the user typed in customArgs>
+// The two *-custom modes are the escape hatch for ad-hoc invocations — e.g.
+// running a single Gradle test task with --tests filters — where the standard
+// mainClass/programArgs split doesn't fit.
+export type JavaLaunchMode = 'maven' | 'gradle' | 'java-main' | 'maven-custom' | 'gradle-custom';
 
 export interface JavaTypeOptions {
   launchMode: JavaLaunchMode;
   // Echoes launchMode in maven/gradle modes; informational in java-main.
   buildTool: JavaBuildTool;
   gradleCommand: GradleCommand;
-  // Required when launchMode !== 'gradle'. Gradle's `run` task reads the main
-  // class from the `application` plugin block in build.gradle instead.
+  // Required when launchMode is 'maven' or 'java-main'. Gradle's `run` task
+  // reads the main class from application{} in build.gradle; custom modes
+  // ignore this field entirely.
   mainClass: string;
-  // Required when launchMode === 'java-main'. Blank in maven/gradle modes.
+  // Required when launchMode === 'java-main'. Blank otherwise.
   classpath: string;
+  // Raw command tail for launchMode 'maven-custom' / 'gradle-custom'. Split
+  // with the same shell-aware splitter used for programArgs, so quoted values
+  // like --tests "…" survive intact.
+  customArgs: string;
   jdkPath: string;
   module: string;
   gradlePath: string;

@@ -59,7 +59,13 @@ const commonFields = {
   port: z.number().int().positive().optional(),
 };
 
-export const JavaLaunchModeSchema = z.enum(['maven', 'gradle', 'java-main']);
+export const JavaLaunchModeSchema = z.enum([
+  'maven',
+  'gradle',
+  'java-main',
+  'maven-custom',
+  'gradle-custom',
+]);
 
 export const JavaTypeOptionsSchema = z
   .object({
@@ -68,6 +74,7 @@ export const JavaTypeOptionsSchema = z
     gradleCommand: GradleCommandSchema,
     mainClass: z.string(),
     classpath: z.string(),
+    customArgs: z.string(),
     jdkPath: z.string(),
     module: z.string(),
     gradlePath: z.string(),
@@ -79,8 +86,8 @@ export const JavaTypeOptionsSchema = z
   .superRefine((opts, ctx) => {
     // mainClass is required for java-main (the class we `java`) and for
     // maven (passed as -Dexec.mainClass=). Gradle's `run` task reads it from
-    // the `application` plugin block in build.gradle, so it's not required.
-    if (opts.launchMode !== 'gradle' && !opts.mainClass.trim()) {
+    // the `application` plugin block in build.gradle. Custom modes ignore it.
+    if ((opts.launchMode === 'maven' || opts.launchMode === 'java-main') && !opts.mainClass.trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `mainClass is required for ${opts.launchMode} launch`,
@@ -92,6 +99,14 @@ export const JavaTypeOptionsSchema = z
         code: z.ZodIssueCode.custom,
         message: 'classpath is required for java-main launch',
         path: ['classpath'],
+      });
+    }
+    if ((opts.launchMode === 'maven-custom' || opts.launchMode === 'gradle-custom')
+        && !opts.customArgs.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `customArgs is required for ${opts.launchMode} launch`,
+        path: ['customArgs'],
       });
     }
   });

@@ -21,6 +21,11 @@ interface Entry {
   // main task stops; its own lifecycle doesn't affect the config's running
   // state.
   watcher?: vscode.TaskExecution;
+  // Timer that marks the config "started" after a fixed delay. Used for
+  // runtimes where we can't (or don't want to) observe stdout — Quarkus
+  // uses its own interactive shell, so we surrender log scanning and just
+  // assume the app is up after 15s. Cleared if the task ends early.
+  readyTimer?: NodeJS.Timeout;
 }
 
 export interface RunOpts {
@@ -68,6 +73,26 @@ export class ExecutionService {
 
   isFailed(configId: string): boolean {
     return this.failed.has(configId);
+  }
+
+  // Reveal the integrated terminal for the given running config. VS Code
+  // names task terminals "Task - <source>: <taskName>" (versions vary —
+  // older builds drop the "Task - " prefix). We match by substring against
+  // the config's display name since the source is stable ("Run
+  // Configurations"). No-op if the config isn't running or the terminal
+  // was already closed.
+  focus(configId: string): void {
+    const entry = this.running.get(configId);
+    if (!entry) return;
+    const taskName = entry.execution.task.name;
+    const needle = `Run Configurations: ${taskName}`;
+    for (const term of vscode.window.terminals) {
+      if (term.name === taskName || term.name.includes(needle) || term.name.endsWith(taskName)) {
+        term.show(true);
+        return;
+      }
+    }
+    log.warn(`focus(${configId}): no terminal found for "${taskName}"`);
   }
 
   async run(
@@ -122,14 +147,15 @@ export class ExecutionService {
       ...(prepared.env ?? {}),
     };
 
-    // Custom terminal: we own the child process so we can scan stdout for
-    // readiness phrases (e.g. Spring's "Started X in 4s", Angular's "Compiled
-    // successfully") and failure banners (e.g. "APPLICATION FAILED TO START")
-    // alongside the terminal-visible output. Port polling was removed because
-    // dev-server ports tend to bind before the app is actually usable — the
-    // regex signal is slower but much more honest.
-    const readyPatterns = readyPatternsFor(resolvedCfg);
-    const failPatterns = failurePatternsFor(resolvedCfg);
+    // Quarkus dev mode is an interactive shell (press r to reload, s to run
+    // tests, etc.). We'd have to forward keystrokes to the child — instead,
+    // hand the PTY entirely to VS Code via ShellExecution and surrender log
+    // scanning. Mark started after a fixed delay; readyTimer is cleared if
+    // the task ends early.
+    const useShellExecution = resolvedCfg.type === 'quarkus';
+
+    const readyPatterns = useShellExecution ? [] : readyPatternsFor(resolvedCfg);
+    const failPatterns = useShellExecution ? [] : failurePatternsFor(resolvedCfg);
     const markReady = (reason: string) => {
       if (this.running.has(cfg.id) && !this.started.has(cfg.id) && !this.failed.has(cfg.id)) {
         this.started.add(cfg.id);
@@ -147,38 +173,54 @@ export class ExecutionService {
       }
     };
 
-    const terminal = new RunTerminal({
-      command,
-      args,
-      cwd,
-      env: mergedEnv,
-      prettifier: makePrettifier(resolvedCfg, { cwd }),
-      onOutput: chunk => {
-        if (failPatterns.length && chunkSignalsFailure(chunk, failPatterns)) {
-          markFailed('matched failure pattern');
-          return;
-        }
-        if (readyPatterns.length && chunkSignalsReady(chunk, readyPatterns)) {
-          markReady('matched readiness pattern');
-        }
-      },
-      onExit: () => {
-        // Handled by onDidEndTask listener; no-op here.
-      },
-    });
+    // ShellExecution insists on Record<string, string>; filter out the
+    // undefined entries that come from inheriting process.env.
+    const strictEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(mergedEnv)) {
+      if (typeof v === 'string') strictEnv[k] = v;
+    }
+
+    const execution2: vscode.ShellExecution | vscode.CustomExecution = useShellExecution
+      ? new vscode.ShellExecution(command, args, { cwd, env: strictEnv })
+      : new vscode.CustomExecution(async () => new RunTerminal({
+          command,
+          args,
+          cwd,
+          env: mergedEnv,
+          prettifier: makePrettifier(resolvedCfg, { cwd }),
+          onOutput: chunk => {
+            if (failPatterns.length && chunkSignalsFailure(chunk, failPatterns)) {
+              markFailed('matched failure pattern');
+              return;
+            }
+            if (readyPatterns.length && chunkSignalsReady(chunk, readyPatterns)) {
+              markReady('matched readiness pattern');
+            }
+          },
+          onExit: () => {
+            // Handled by onDidEndTask listener; no-op here.
+          },
+        }));
 
     const task = new vscode.Task(
       { type: 'run-config', configId: cfg.id } as any,
       folder,
       cfg.name,
       'Run Configurations',
-      new vscode.CustomExecution(async () => terminal),
+      execution2,
       [],
     );
 
     try {
       const execution = await vscode.tasks.executeTask(task);
       const entry: Entry = { execution, configId: cfg.id };
+
+      // Quarkus: optimistic "started" after a fixed delay (no log scanning).
+      if (useShellExecution) {
+        entry.readyTimer = setTimeout(() => {
+          markReady('elapsed grace period');
+        }, 15_000);
+      }
 
       // Opt-in continuous rebuild: spawns a parallel `./gradlew -t :mod:classes`
       // task alongside the main run. DevTools (if present on the classpath)
@@ -207,6 +249,7 @@ export class ExecutionService {
     if (!entry) return;
     entry.execution.terminate();
     entry.watcher?.terminate();
+    if (entry.readyTimer) clearTimeout(entry.readyTimer);
     this.running.delete(configId);
     this.started.delete(configId);
     this.failed.delete(configId);
@@ -218,6 +261,7 @@ export class ExecutionService {
       if (entry.execution === execution) {
         // Main task ended — also kill the watcher.
         entry.watcher?.terminate();
+        if (entry.readyTimer) clearTimeout(entry.readyTimer);
         this.running.delete(id);
         this.started.delete(id);
         this.failed.delete(id);
@@ -238,6 +282,7 @@ export class ExecutionService {
     for (const entry of this.running.values()) {
       try { entry.execution.terminate(); } catch { /* ignore */ }
       try { entry.watcher?.terminate(); } catch { /* ignore */ }
+      if (entry.readyTimer) clearTimeout(entry.readyTimer);
     }
     this.running.clear();
     this.started.clear();

@@ -30,7 +30,12 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
   const v = getPath(values, field.key);
   const set = (next: unknown) => onChange(setPath(values, field.key, next));
   const focus = () => onFocusField?.(field.key);
-  const blur = () => onFocusField?.(null);
+  // Blur intentionally does NOT clear the focused key. If blur reset the
+  // help panel to empty, its height would collapse just as the user moves
+  // toward the Save button — shifting the button out from under the cursor
+  // and causing a second click. The help text for the last-focused field
+  // stays visible until another field GAINS focus.
+  const blur = () => { /* keep previous help until next focus */ };
 
   const action = field.action;
   const actionBusy = action ? busyActionId === action.id : false;

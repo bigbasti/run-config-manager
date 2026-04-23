@@ -84,6 +84,48 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('runConfig.refresh', () => tree.refresh()),
 
+    vscode.commands.registerCommand('runConfig.reveal', (arg: ConfigNodeArg) => {
+      // Click target for a running config row — bring the task's integrated
+      // terminal into view. No-op if the config isn't actually running (e.g.,
+      // state updated between click and dispatch).
+      if (!arg || arg.kind !== 'config') return;
+      if (dbg.isRunning(arg.config.id)) {
+        // Debug sessions don't own an integrated terminal by default; fall
+        // back to revealing the task terminal if one exists, else focus the
+        // debug console.
+        exec.focus(arg.config.id);
+        return;
+      }
+      if (exec.isRunning(arg.config.id)) {
+        exec.focus(arg.config.id);
+      }
+    }),
+
+    vscode.commands.registerCommand('runConfig.clone', async (arg: ConfigNodeArg) => {
+      if (!arg || arg.kind !== 'config') return;
+      const suggested = `${arg.config.name} (copy)`;
+      const newName = await vscode.window.showInputBox({
+        title: 'Clone run configuration',
+        prompt: `Clone "${arg.config.name}"`,
+        value: suggested,
+        valueSelection: [0, suggested.length],
+        validateInput: v => v.trim() ? null : 'Name is required',
+      });
+      if (!newName) return;
+
+      // Deep-clone via JSON so nested typeOptions/env are independent from
+      // the source config. Strip id — RunConfigService.create issues a new
+      // one.
+      const clone = JSON.parse(JSON.stringify(arg.config)) as RunConfig;
+      const { id: _id, ...rest } = clone;
+      const created = { ...rest, name: newName.trim() } as Omit<RunConfig, 'id'>;
+      try {
+        await svc.create(arg.folderKey, created);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Clone failed: ${(e as Error).message}`);
+      }
+    }),
+
     vscode.commands.registerCommand('runConfig.stopAll', async () => {
       const running = svc.list().filter(r =>
         r.valid && (exec.isRunning(r.config.id) || dbg.isRunning(r.config.id)),
@@ -624,6 +666,7 @@ function mergeAutoCreateDefaults(
         gradleCommand: typeOptions.gradleCommand ?? './gradlew',
         mainClass: typeOptions.mainClass ?? '',
         classpath: typeOptions.classpath ?? '',
+        customArgs: '',
         jdkPath: typeOptions.jdkPath ?? '',
         module: '',
         gradlePath: typeOptions.gradlePath ?? '',

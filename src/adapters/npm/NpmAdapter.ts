@@ -124,6 +124,24 @@ export class NpmAdapter implements RuntimeAdapter {
     };
   }
 
+  // Child tools (Angular CLI, webpack, Vite, Node libraries) auto-detect
+  // whether stdout is a TTY and strip ANSI when it isn't. Because the
+  // prettifier's pseudoterminal pipes the child's stdout through Node's
+  // `cp.spawn`, isatty() returns false and color gets dropped by default.
+  // Setting FORCE_COLOR=1 (Node standard) + CLICOLOR_FORCE=1 (Unix standard)
+  // + COLORTERM=truecolor flips those auto-detect checks back on for the
+  // overwhelming majority of CLIs.
+  async prepareLaunch(): Promise<{ env?: Record<string, string> }> {
+    return {
+      env: {
+        FORCE_COLOR: '1',
+        CLICOLOR_FORCE: '1',
+        COLORTERM: 'truecolor',
+        npm_config_color: 'always',
+      },
+    };
+  }
+
   buildCommand(cfg: RunConfig): { command: string; args: string[] } {
     if (cfg.type !== 'npm') throw new Error('NpmAdapter received non-npm config');
     const pm = cfg.typeOptions.packageManager;

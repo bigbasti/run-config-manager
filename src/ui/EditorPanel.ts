@@ -418,6 +418,7 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
         gradleCommand: to?.gradleCommand ?? './gradlew',
         mainClass: to?.mainClass ?? '',
         classpath: to?.classpath ?? '',
+        customArgs: to?.customArgs ?? '',
         jdkPath: to?.jdkPath ?? '',
         module: to?.module ?? '',
         gradlePath: to?.gradlePath ?? '',

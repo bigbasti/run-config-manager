@@ -40,7 +40,9 @@
       { "command": "runConfig.stopAll", "title": "Stop All Running", "icon": "$(stop-circle)" },
       { "command": "runConfig.refresh", "title": "Refresh", "icon": "$(refresh)" },
       { "command": "runConfig.edit", "title": "Edit", "icon": "$(edit)" },
+      { "command": "runConfig.clone", "title": "Clone", "icon": "$(copy)" },
       { "command": "runConfig.delete", "title": "Delete", "icon": "$(trash)" },
+      { "command": "runConfig.reveal", "title": "Reveal Terminal", "icon": "$(terminal)" },
       { "command": "runConfig.run", "title": "Run", "icon": "$(play)" },
       { "command": "runConfig.stop", "title": "Stop", "icon": "$(debug-stop)" },
       { "command": "runConfig.debug", "title": "Debug", "icon": "$(debug-alt)" },
@@ -61,7 +63,8 @@
         { "command": "runConfig.fix", "when": "view == runConfigurations && viewItem == configInvalid", "group": "inline@1" },
         { "command": "runConfig.openFile", "when": "view == runConfigurations && viewItem == configInvalid", "group": "inline@2" },
         { "command": "runConfig.edit", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/", "group": "inline@3" },
-        { "command": "runConfig.delete", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/", "group": "inline@4" }
+        { "command": "runConfig.clone", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?$/", "group": "inline@4" },
+        { "command": "runConfig.delete", "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/", "group": "inline@5" }
       ]
     }
   },

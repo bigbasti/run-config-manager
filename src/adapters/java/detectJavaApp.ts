@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import type { JavaBuildTool } from '../../shared/types';
-import { findMainClasses } from '../java-shared/findMainClasses';
 
 export interface JavaAppInfo {
   // Maven/Gradle when a build file is present; null when the project is a
@@ -31,14 +30,25 @@ async function readText(uri: vscode.Uri): Promise<string | null> {
   }
 }
 
-// Detects a plain Java project. Returns null when Spring Boot / Quarkus /
-// embedded-Tomcat markers are found — those adapters take priority, and the
-// user should use them instead (auto-create respects the same precedence).
+// Fast gate: filesystem stats + reading the build file. Never walks source
+// directories — keep this <100ms on realistic projects. Intended for the
+// streaming-detection path where we must return the build-tool verdict
+// immediately and let slower probes (main classes, classpath) fill in later.
+//
+// Returns null when either no build file + no source dir, or when a more
+// specific adapter should own the config. Does NOT verify that a main class
+// exists; callers that need that run findMainClasses themselves.
 export async function detectJavaApp(folder: vscode.Uri): Promise<JavaAppInfo | null> {
   const hasPom = await exists(vscode.Uri.joinPath(folder, 'pom.xml'));
   const hasGradleKts = await exists(vscode.Uri.joinPath(folder, 'build.gradle.kts'));
   const hasGradle = hasGradleKts || (await exists(vscode.Uri.joinPath(folder, 'build.gradle')));
   const hasBuildFile = hasPom || hasGradle;
+  const hasSrcMainJava = await exists(vscode.Uri.joinPath(folder, 'src/main/java'));
+  const hasSrcMainKotlin = await exists(vscode.Uri.joinPath(folder, 'src/main/kotlin'));
+
+  // Need at least a build file OR a Java/Kotlin source tree. Bare directories
+  // aren't Java-ish enough to surface a config.
+  if (!hasBuildFile && !hasSrcMainJava && !hasSrcMainKotlin) return null;
 
   let buildText = '';
   if (hasBuildFile) {
@@ -50,22 +60,12 @@ export async function detectJavaApp(folder: vscode.Uri): Promise<JavaAppInfo | n
     buildText = (await readText(uri)) ?? '';
   }
 
-  // Skip when a more-specific adapter should own the config. Each of these is
-  // a strong signal handled upstream: Spring Boot, Quarkus, or an embedded
-  // Tomcat / Spring webapp layout.
+  // Skip when a more-specific adapter should own the config.
   if (/spring-boot-starter|spring-boot-maven-plugin|org\.springframework\.boot/i.test(buildText)) {
     return null;
   }
   if (/io\.quarkus|quarkus-maven-plugin/i.test(buildText)) return null;
   if (/tomcat-embed-core|org\.apache\.tomcat/i.test(buildText)) return null;
-
-  // Main class probe. Capped by findMainClasses's internal limits.
-  const mainClasses = await findMainClasses(folder);
-  const hasMainClass = mainClasses.length > 0;
-
-  // Need at least one of: a build file OR a main class. Bare directories
-  // without either aren't Java-ish enough to surface a config.
-  if (!hasBuildFile && !hasMainClass) return null;
 
   const buildTool: JavaBuildTool | null = hasPom
     ? 'maven'
@@ -78,5 +78,8 @@ export async function detectJavaApp(folder: vscode.Uri): Promise<JavaAppInfo | n
     (/(^|[\s(\[,;])application\b/m.test(buildText) ||
       /org\.gradle\.application/.test(buildText));
 
-  return { buildTool, hasApplicationPlugin, hasMainClass };
+  // hasMainClass is reported as "probably" — true if a source tree exists;
+  // the accurate answer only comes from findMainClasses, which the caller
+  // runs separately on the streaming path.
+  return { buildTool, hasApplicationPlugin, hasMainClass: hasSrcMainJava || hasSrcMainKotlin };
 }
