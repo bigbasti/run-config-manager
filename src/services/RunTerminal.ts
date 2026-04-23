@@ -74,6 +74,12 @@ export class RunTerminal implements vscode.Pseudoterminal {
         cwd,
         env: env as NodeJS.ProcessEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
+        // detached:true makes the child a process-group leader on Unix so
+        // signalling its negative pid hits every grandchild too. Without this,
+        // stopping a config kills only the shell and leaves dev servers
+        // (node/vite/angular) orphaned and holding the port. No-op on Windows
+        // — we use taskkill /T there instead.
+        detached: !isWin,
       });
     } catch (e) {
       this.writeLine(`Failed to spawn: ${(e as Error).message}`);
@@ -120,10 +126,37 @@ export class RunTerminal implements vscode.Pseudoterminal {
 
   private kill(): void {
     if (!this.child || this.closed) return;
-    try { this.child.kill('SIGTERM'); } catch { /* ignore */ }
-    // Force-kill after 3s if the child ignores SIGTERM (Java apps sometimes do).
+    const pid = this.child.pid;
+    if (!pid) {
+      try { this.child.kill('SIGTERM'); } catch { /* ignore */ }
+      return;
+    }
+
+    if (os.platform() === 'win32') {
+      // /T kills the whole tree rooted at pid; /F is force. Graceful stop
+      // isn't really a thing on Windows for console processes — taskkill
+      // without /F only works on windowed apps.
+      try {
+        cp.spawn('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore' });
+      } catch { /* ignore */ }
+      return;
+    }
+
+    // Unix: signal the whole process group (negative pid). Requires the
+    // child to have been spawned with detached:true so it's a group leader.
+    // SIGTERM gives dev servers (Vite, Angular, webpack) a chance to close
+    // their ports cleanly; grandchildren (node) get it too and exit.
+    try { process.kill(-pid, 'SIGTERM'); } catch {
+      // Fallback: signal just the shell if the group send fails (e.g. the
+      // child died between check and kill).
+      try { this.child.kill('SIGTERM'); } catch { /* ignore */ }
+    }
+
+    // Force-kill the group if anything survives 3s. Java apps with shutdown
+    // hooks and Gradle daemons are the usual holdouts.
     setTimeout(() => {
-      if (!this.closed && this.child && this.child.exitCode === null) {
+      if (this.closed || !this.child || this.child.exitCode !== null) return;
+      try { process.kill(-pid, 'SIGKILL'); } catch {
         try { this.child.kill('SIGKILL'); } catch { /* ignore */ }
       }
     }, 3000);
