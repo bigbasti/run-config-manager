@@ -10,6 +10,8 @@ import { SpringBootAdapter } from './adapters/spring-boot/SpringBootAdapter';
 import { TomcatAdapter } from './adapters/tomcat/TomcatAdapter';
 import { QuarkusAdapter } from './adapters/quarkus/QuarkusAdapter';
 import { JavaAdapter } from './adapters/java/JavaAdapter';
+import { MavenGoalAdapter } from './adapters/maven-goal/MavenGoalAdapter';
+import { GradleTaskAdapter } from './adapters/gradle-task/GradleTaskAdapter';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
 import { log, initLogger } from './utils/logger';
@@ -31,6 +33,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.register(new TomcatAdapter());
   registry.register(new QuarkusAdapter());
   registry.register(new JavaAdapter());
+  registry.register(new MavenGoalAdapter());
+  registry.register(new GradleTaskAdapter());
   log.debug(`Registered adapters: ${registry.all().map(a => a.type).join(', ')}`);
 
   const store = new ConfigStore();
@@ -179,6 +183,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           mode: 'edit',
           folderKey: arg.folderKey,
           folder,
+          adapter,
           existing: arg.config,
           schema: adapter.getFormSchema(detectionContext),
         }, context, svc);
@@ -193,6 +198,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           mode: 'edit',
           folderKey: arg.folderKey,
           folder,
+          adapter,
           existing: recovered as RunConfig,
           schema: adapter.getFormSchema(detectionContext),
         }, context, svc);
@@ -279,6 +285,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         mode: 'edit',
         folderKey: arg.folderKey,
         folder,
+        adapter,
         existing: merged as unknown as RunConfig,
         schema: adapter.getFormSchema(detection?.context ?? {}),
       }, context, svc);
@@ -344,11 +351,17 @@ async function addConfig(
     ? projectUri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
     : projectUri.fsPath;
 
+  // Pre-fill the name from the selected folder's basename so the user
+  // gets something reasonable without thinking. mergeBlanks semantics in
+  // the webview mean typing over it is seamless.
+  const defaultName = deriveDefaultName(projectUri, folder, typePick.label);
+
   // When the adapter supports streaming detection, open the editor immediately
   // with an empty schema and let it fill in as each probe completes.
   if (adapter.detectStreaming) {
     const seedDefaults = {
       type: typePick.value,
+      name: defaultName,
       projectPath: relProject,
       workspaceFolder: folder.name,
     };
@@ -357,6 +370,7 @@ async function addConfig(
       mode: 'create',
       folderKey: folder.uri.fsPath,
       folder,
+      adapter,
       seedDefaults: seedDefaults as Partial<RunConfig>,
       schema,
       streaming: {
@@ -395,6 +409,7 @@ async function addConfig(
   const schema = adapter.getFormSchema(detection?.context ?? {});
   const seedDefaults = {
     ...(detection?.defaults ?? {}),
+    name: defaultName,
     projectPath: relProject,
     workspaceFolder: folder.name,
   };
@@ -402,9 +417,27 @@ async function addConfig(
     mode: 'create',
     folderKey: folder.uri.fsPath,
     folder,
+    adapter,
     seedDefaults,
     schema,
   }, context, svc);
+}
+
+// Builds a default config name from the picked project folder. Examples:
+//   picked "/ws/api"      type "Spring Boot"   → "Api Spring Boot"
+//   picked "/ws"          type "Gradle Task"   → "Ws Gradle Task"
+//   picked "/ws/systest"  type "Maven Goal"    → "Systest Maven Goal"
+// Exported for testing.
+export function deriveDefaultName(
+  projectUri: vscode.Uri,
+  folder: vscode.WorkspaceFolder,
+  typeLabel: string,
+): string {
+  const basename = projectUri.fsPath.split(/[/\\]/).filter(Boolean).pop()
+    ?? folder.name
+    ?? 'App';
+  const pretty = basename.charAt(0).toUpperCase() + basename.slice(1);
+  return `${pretty} ${typeLabel}`;
 }
 
 async function buildEditContext(

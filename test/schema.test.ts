@@ -208,6 +208,66 @@ describe('RunFileSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  test('accepts a Maven Goal config', () => {
+    const r = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        id: '66666666-7777-8888-9999-aaaaaaaaaaaa',
+        name: 'Clean install',
+        type: 'maven-goal',
+        projectPath: '',
+        workspaceFolder: '',
+        env: {},
+        programArgs: '',
+        vmArgs: '',
+        typeOptions: { goal: 'clean install', jdkPath: '', mavenPath: '', buildRoot: '' },
+      }],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  test('rejects Maven Goal config with empty goal', () => {
+    const r = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        ...minimalConfig,
+        type: 'maven-goal',
+        typeOptions: { goal: '  ', jdkPath: '', mavenPath: '', buildRoot: '' },
+      }],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  test('accepts a Gradle Task config', () => {
+    const r = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        id: '77777777-8888-9999-aaaa-bbbbbbbbbbbb',
+        name: 'Drop schema',
+        type: 'gradle-task',
+        projectPath: '',
+        workspaceFolder: '',
+        env: {},
+        programArgs: '',
+        vmArgs: '',
+        typeOptions: { task: 'dropAll', gradleCommand: './gradlew', jdkPath: '', gradlePath: '', buildRoot: '' },
+      }],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  test('rejects Gradle Task config with empty task', () => {
+    const r = RunFileSchema.safeParse({
+      version: 1,
+      configurations: [{
+        ...minimalConfig,
+        type: 'gradle-task',
+        typeOptions: { task: '', gradleCommand: './gradlew', jdkPath: '', gradlePath: '', buildRoot: '' },
+      }],
+    });
+    expect(r.success).toBe(false);
+  });
+
   test('Java gradle-custom mode requires customArgs', () => {
     const base = {
       id: '55555555-6666-7777-8888-999999999999',

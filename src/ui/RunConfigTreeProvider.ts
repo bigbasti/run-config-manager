@@ -192,6 +192,8 @@ function labelForType(type: RunConfig['type']): string {
     case 'tomcat': return 'Tomcat';
     case 'quarkus': return 'Quarkus';
     case 'java': return 'Java Application';
+    case 'maven-goal': return 'Maven Goal';
+    case 'gradle-task': return 'Gradle Task';
     default: return type;
   }
 }
@@ -204,6 +206,8 @@ function iconForType(type: string): string {
     case 'tomcat': return 'server-environment';
     case 'quarkus': return 'zap';
     case 'java': return 'symbol-class';
+    case 'maven-goal': return 'tools';
+    case 'gradle-task': return 'symbol-event';
     default: return 'circle-outline';
   }
 }

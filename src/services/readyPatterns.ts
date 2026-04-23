@@ -58,6 +58,12 @@ export function readyPatternsFor(cfg: RunConfig): RegExp[] {
     // programArgs or (v2) add a per-config regex.
     return [];
   }
+  if (cfg.type === 'maven-goal' || cfg.type === 'gradle-task') {
+    // Maven phases / Gradle tasks are short-lived scripts — "started" isn't
+    // meaningful. The tree goes idle when the process ends (zero exit code)
+    // or flips to failed on a BUILD FAIL* banner.
+    return [];
+  }
   if (cfg.type === 'npm') {
     return [
       // Angular CLI 14+: 'Application bundle generation complete.' / 'Compiled successfully'
@@ -143,6 +149,12 @@ export function failurePatternsFor(cfg: RunConfig): RegExp[] {
       /java\.lang\.NoClassDefFoundError/,
       ...SHARED_BUILD_TOOL_FAILURES,
     ];
+  }
+  if (cfg.type === 'maven-goal' || cfg.type === 'gradle-task') {
+    // Tasks/goals fail loudly via their tool's standard BUILD FAIL banner.
+    // Anything more specific (e.g. liquibase errors) belongs to a different
+    // abstraction — these configs print arbitrary output.
+    return [...SHARED_BUILD_TOOL_FAILURES];
   }
   if (cfg.type === 'npm') {
     return [

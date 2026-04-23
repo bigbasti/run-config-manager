@@ -195,6 +195,21 @@ describe('failurePatternsFor', () => {
     const patterns = failurePatternsFor(cfg({ type: 'java' } as any));
     expect(chunkSignalsFailure('BUILD FAILED in 3s', patterns)).toBe(true);
   });
+
+  test('Maven Goal: only BUILD FAIL* patterns', () => {
+    const ready = readyPatternsFor(cfg({ type: 'maven-goal' } as any));
+    const fail = failurePatternsFor(cfg({ type: 'maven-goal' } as any));
+    expect(ready).toEqual([]);
+    expect(chunkSignalsFailure('BUILD FAILURE', fail)).toBe(true);
+    expect(chunkSignalsFailure('Build succeeded', fail)).toBe(false);
+  });
+
+  test('Gradle Task: only BUILD FAIL* patterns', () => {
+    const ready = readyPatternsFor(cfg({ type: 'gradle-task' } as any));
+    const fail = failurePatternsFor(cfg({ type: 'gradle-task' } as any));
+    expect(ready).toEqual([]);
+    expect(chunkSignalsFailure('BUILD FAILED in 2s', fail)).toBe(true);
+  });
 });
 
 describe('rebuildPatternsFor', () => {

@@ -7,7 +7,11 @@ export type Outbound =
   | { cmd: 'cancel' }
   | { cmd: 'pickFolder'; current?: string }
   | { cmd: 'recomputeClasspath'; config: RunConfig }
-  | { cmd: 'testVariables'; config: RunConfig };
+  | { cmd: 'testVariables'; config: RunConfig }
+  // Triggered by the "Load tasks"/"Load goals" action button on the
+  // gradle-task / maven-goal forms. Response comes back as a schemaUpdate
+  // with the goal/task options populated.
+  | { cmd: 'loadTasks'; config: RunConfig };
 
 // Field keys whose detection is still in flight (spinner rendered in-place).
 export type PendingFields = string[];

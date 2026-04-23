@@ -1,4 +1,11 @@
-export type RunConfigType = 'npm' | 'spring-boot' | 'tomcat' | 'quarkus' | 'java';
+export type RunConfigType =
+  | 'npm'
+  | 'spring-boot'
+  | 'tomcat'
+  | 'quarkus'
+  | 'java'
+  | 'maven-goal'
+  | 'gradle-task';
 
 export type PackageManager = 'npm' | 'yarn' | 'pnpm';
 
@@ -161,12 +168,36 @@ export interface JavaTypeOptions {
   colorOutput?: boolean;
 }
 
+// Maven Goal — one-click execution of a phase + optional plugin goal chain,
+// e.g. "clean install", "liquibase:dropAll -Durl=…". supportsDebug=false.
+export interface MavenGoalTypeOptions {
+  goal: string;
+  jdkPath: string;
+  mavenPath: string;
+  buildRoot: string;
+  colorOutput?: boolean;
+}
+
+// Gradle Task — e.g. "dropAll", ":api:test --tests \"pkg.*\"". No
+// automatic multi-module scoping; user types the fully-qualified task
+// name if they need it.
+export interface GradleTaskTypeOptions {
+  task: string;
+  gradleCommand: GradleCommand;
+  jdkPath: string;
+  gradlePath: string;
+  buildRoot: string;
+  colorOutput?: boolean;
+}
+
 export type RunConfig =
   | (RunConfigBase & { type: 'npm'; typeOptions: NpmTypeOptions })
   | (RunConfigBase & { type: 'spring-boot'; typeOptions: SpringBootTypeOptions })
   | (RunConfigBase & { type: 'tomcat'; typeOptions: TomcatTypeOptions })
   | (RunConfigBase & { type: 'quarkus'; typeOptions: QuarkusTypeOptions })
-  | (RunConfigBase & { type: 'java'; typeOptions: JavaTypeOptions });
+  | (RunConfigBase & { type: 'java'; typeOptions: JavaTypeOptions })
+  | (RunConfigBase & { type: 'maven-goal'; typeOptions: MavenGoalTypeOptions })
+  | (RunConfigBase & { type: 'gradle-task'; typeOptions: GradleTaskTypeOptions });
 
 export interface RunFile {
   version: 1;

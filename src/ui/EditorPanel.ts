@@ -8,6 +8,8 @@ import { log } from '../utils/logger';
 import { relativeFromWorkspace, resolveProjectUri } from '../utils/paths';
 import { recomputeClasspath } from '../adapters/spring-boot/recomputeClasspath';
 import { makeRunContext, resolveConfig } from '../utils/resolveVars';
+import { discoverGradleTasks } from '../adapters/gradle-task/discoverGradleTasks';
+import { discoverMavenGoals } from '../adapters/maven-goal/discoverMavenGoals';
 
 interface OpenArgs {
   mode: 'create' | 'edit';
@@ -16,6 +18,10 @@ interface OpenArgs {
   existing?: RunConfig;
   seedDefaults?: Partial<RunConfig>;
   schema: FormSchema;
+  // Adapter handling this panel, independent of streaming. Needed so the
+  // `loadTasks`/`loadGoals` action buttons can rebuild the form schema after
+  // populating options. Always set; required.
+  adapter: RuntimeAdapter;
   // When set, the webview is opened immediately and detection runs async;
   // each StreamingPatch posts a schemaUpdate message + (in create mode) fills
   // in any blank default fields.
@@ -31,6 +37,11 @@ export class EditorPanel {
 
   private panel: vscode.WebviewPanel;
   private args: OpenArgs;
+  // Cumulative detection context for the currently-open form. Starts from
+  // args.streaming?.initialContext, grows as streaming patches arrive, and
+  // is mutated by action handlers (loadTasks / loadGoals) so subsequent
+  // schema rebuilds keep their added options.
+  private context: Record<string, unknown> = {};
 
   private constructor(
     args: OpenArgs,
@@ -76,7 +87,9 @@ export class EditorPanel {
       | 'spring-boot'
       | 'tomcat'
       | 'quarkus'
-      | 'java';
+      | 'java'
+      | 'maven-goal'
+      | 'gradle-task';
 
     const baseCommon = {
       name: '',
@@ -120,6 +133,12 @@ export class EditorPanel {
       typeDefaults = isStreaming
         ? { debugPort: 5005, colorOutput: true }
         : { buildTool: 'maven', debugPort: 5005, colorOutput: true };
+    } else if (type === 'maven-goal') {
+      typeDefaults = { goal: '', colorOutput: true };
+    } else if (type === 'gradle-task') {
+      typeDefaults = isStreaming
+        ? { task: '', colorOutput: true }
+        : { task: '', gradleCommand: './gradlew', colorOutput: true };
     } else {
       typeDefaults = isStreaming ? { profiles: '' } : { buildTool: 'maven', profiles: '' };
     }
@@ -154,14 +173,16 @@ export class EditorPanel {
   private async runStreamingDetection(): Promise<void> {
     const s = this.args.streaming;
     if (!s || !s.adapter.detectStreaming) return;
-    const context: Record<string, unknown> = { ...s.initialContext };
+    // Seed the persistent context from the streaming initial context —
+    // action handlers (loadTasks / loadGoals) will later grow it.
+    this.context = { ...s.initialContext };
     const pending = new Set<string>(s.pending);
 
     const emit = (patch: StreamingPatch) => {
-      Object.assign(context, patch.contextPatch);
+      Object.assign(this.context, patch.contextPatch);
       for (const k of patch.resolved ?? []) pending.delete(k);
 
-      const schema = s.adapter.getFormSchema(context);
+      const schema = s.adapter.getFormSchema(this.context);
       const msg: Inbound = {
         cmd: 'schemaUpdate',
         schema,
@@ -205,6 +226,47 @@ export class EditorPanel {
         this.panel.webview.postMessage(reply);
         return;
       }
+      case 'loadTasks': {
+        // Action handler for the gradle-task / maven-goal form's "Load
+        // tasks" / "Load phases & plugin prefixes" button. Runs discovery,
+        // stores results in the persistent context, and re-emits the
+        // schema so the selectOrCustom widget picks up the new options.
+        const cfg = msg.config;
+        log.info(`Load tasks: ${cfg.type} (${cfg.name || '(unnamed)'})`);
+        try {
+          if (cfg.type === 'gradle-task') {
+            const to = cfg.typeOptions;
+            const cwd = to.buildRoot || resolveProjectUri(this.args.folder, cfg.projectPath).fsPath;
+            const binary = to.gradleCommand === './gradlew'
+              ? './gradlew'
+              : to.gradlePath ? `${to.gradlePath.replace(/[/\\]$/, '')}/bin/gradle` : 'gradle';
+            const env = to.jdkPath ? { JAVA_HOME: to.jdkPath } : undefined;
+            const tasks = await discoverGradleTasks({ cwd, gradleBinary: binary, env });
+            log.info(`Gradle tasks: discovered ${tasks.length} task(s)`);
+            this.context.loadedTasks = tasks;
+            const schema = this.args.adapter.getFormSchema(this.context);
+            this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+            if (tasks.length === 0) {
+              this.panel.webview.postMessage({
+                cmd: 'error',
+                message: 'No tasks returned from Gradle. Check the Output → Run Configurations channel for details.',
+              } satisfies Inbound);
+            }
+          } else if (cfg.type === 'maven-goal') {
+            const projectRoot = resolveProjectUri(this.args.folder, cfg.projectPath);
+            const goals = await discoverMavenGoals(projectRoot);
+            log.info(`Maven goals: ${goals.length} entries (phases + plugin prefixes)`);
+            this.context.loadedGoals = goals;
+            const schema = this.args.adapter.getFormSchema(this.context);
+            this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+          }
+        } catch (e) {
+          const err: Inbound = { cmd: 'error', message: `Load failed: ${(e as Error).message}` };
+          this.panel.webview.postMessage(err);
+          log.error('loadTasks', e);
+        }
+        return;
+      }
       case 'recomputeClasspath': {
         if (msg.config.type !== 'spring-boot') return;
         const to = msg.config.typeOptions;
@@ -245,9 +307,17 @@ export class EditorPanel {
           && cfg.typeOptions.buildRoot
             ? cfg.typeOptions.buildRoot
             : null;
+        const mavenGoalRoot = cfg.type === 'maven-goal' && cfg.typeOptions.buildRoot
+          ? cfg.typeOptions.buildRoot
+          : null;
+        const gradleTaskRoot = cfg.type === 'gradle-task' && cfg.typeOptions.buildRoot
+          ? cfg.typeOptions.buildRoot
+          : null;
         const cwd = springRoot
           ?? quarkusRoot
           ?? javaRoot
+          ?? mavenGoalRoot
+          ?? gradleTaskRoot
           ?? resolveProjectUri(this.args.folder, cfg.projectPath ?? '').fsPath;
         const ctx = makeRunContext({ workspaceFolder: this.args.folder.uri.fsPath, cwd });
         const { unresolved } = resolveConfig(cfg, ctx);
@@ -432,6 +502,35 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
         mavenPath: to?.mavenPath ?? '',
         buildRoot: to?.buildRoot ?? '',
         ...(typeof to?.debugPort === 'number' ? { debugPort: to.debugPort } : {}),
+        ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
+      },
+    };
+  }
+  if (cfg.type === 'maven-goal') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').MavenGoalTypeOptions> | undefined;
+    return {
+      ...common,
+      type: 'maven-goal',
+      typeOptions: {
+        goal: to?.goal ?? '',
+        jdkPath: to?.jdkPath ?? '',
+        mavenPath: to?.mavenPath ?? '',
+        buildRoot: to?.buildRoot ?? '',
+        ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
+      },
+    };
+  }
+  if (cfg.type === 'gradle-task') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').GradleTaskTypeOptions> | undefined;
+    return {
+      ...common,
+      type: 'gradle-task',
+      typeOptions: {
+        task: to?.task ?? '',
+        gradleCommand: to?.gradleCommand ?? './gradlew',
+        jdkPath: to?.jdkPath ?? '',
+        gradlePath: to?.gradlePath ?? '',
+        buildRoot: to?.buildRoot ?? '',
         ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
       },
     };

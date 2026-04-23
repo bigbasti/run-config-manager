@@ -4,7 +4,7 @@ This document is written for a fresh LLM session taking over work on this repo. 
 
 ## What this is
 
-A VS Code extension that gives the editor IntelliJ-style run configurations. Configs live in `.vscode/run.json`, rendered as a tree in the Activity Bar. Each config has a type (`npm`, `spring-boot`, `tomcat`, `quarkus`, `java`), and the extension spawns the right shell command for you, scanning the terminal output to show whether the app is starting, started, or failed. A webview-based editor lets the user create/edit configs with a schema-driven form.
+A VS Code extension that gives the editor IntelliJ-style run configurations. Configs live in `.vscode/run.json`, rendered as a tree in the Activity Bar. Each config has a type (`npm`, `spring-boot`, `tomcat`, `quarkus`, `java`, `maven-goal`, `gradle-task`), and the extension spawns the right shell command for you, scanning the terminal output to show whether the app is starting, started, or failed. A webview-based editor lets the user create/edit configs with a schema-driven form.
 
 Repo root: `/git/run-config-manager`. Main branch: `main`. It is an independent git repo (not a submodule of `/git/zebra`).
 
@@ -39,6 +39,8 @@ src/
     quarkus/                       # QuarkusAdapter + detectQuarkus + findQuarkusProfiles
     java/                          # JavaAdapter + detectJavaApp
     java-shared/                   # findMainClasses (used by both spring-boot and java)
+    maven-goal/                    # MavenGoalAdapter + discoverMavenGoals
+    gradle-task/                   # GradleTaskAdapter + discoverGradleTasks
   services/                        # runtime orchestration (no UI)
     ConfigStore.ts                 # .vscode/run.json loader + watcher, per workspace folder
     RunConfigService.ts            # thin CRUD wrapper on top of store
@@ -77,6 +79,8 @@ __mocks__/vscode.ts                # in-memory filesystem + event emitters
 - `{ type: 'tomcat', typeOptions: TomcatTypeOptions }` — `tomcatHome`, `jdkPath`, `httpPort`, `buildProjectPath`, `buildRoot`, `buildTool`, `gradleCommand`, `gradlePath`, `mavenPath`, `artifactPath`, `artifactKind` (`war|exploded`), `applicationContext`, `vmOptions`, `reloadable`, `rebuildOnSave`, `colorOutput?`.
 - `{ type: 'quarkus', typeOptions: QuarkusTypeOptions }` — `launchMode` (`maven|gradle` — no java-main), `buildTool`, `gradleCommand`, `profile` (single, not CSV), `jdkPath`, `module`, `gradlePath`, `mavenPath`, `buildRoot`, `debugPort?`, `colorOutput?`. No `rebuildOnSave` (Quarkus has built-in Live Coding).
 - `{ type: 'java', typeOptions: JavaTypeOptions }` — plain Java app. `launchMode` (`maven|gradle|java-main`), `buildTool`, `gradleCommand`, `mainClass`, `classpath`, `jdkPath`, `module`, `gradlePath`, `mavenPath`, `buildRoot`, `debugPort?`, `colorOutput?`. No `profiles` / `rebuildOnSave`. Schema refines: `mainClass` required unless launchMode is `gradle`; `classpath` required when `java-main`.
+- `{ type: 'maven-goal', typeOptions: MavenGoalTypeOptions }` — one-click Maven phase/goal. `goal` (free-form, Zod requires non-empty), `jdkPath`, `mavenPath`, `buildRoot`, `colorOutput?`. `supportsDebug=false`.
+- `{ type: 'gradle-task', typeOptions: GradleTaskTypeOptions }` — one-click Gradle task. `task` (free-form, Zod requires non-empty), `gradleCommand`, `jdkPath`, `gradlePath`, `buildRoot`, `colorOutput?`. `supportsDebug=false`.
 
 Shared base fields: `id`, `name`, `projectPath`, `workspaceFolder`, `env`, `programArgs`, `vmArgs`, `port?`.
 
@@ -86,7 +90,7 @@ Zod schemas in `src/shared/schema.ts` use `z.discriminatedUnion('type', ...)` an
 
 ## The adapter contract (src/adapters/RuntimeAdapter.ts)
 
-Every runtime (npm, spring-boot, tomcat, quarkus, java) implements:
+Every runtime (npm, spring-boot, tomcat, quarkus, java, maven-goal, gradle-task) implements:
 
 - **`type` / `label` / `supportsDebug`** — static metadata.
 - **`detect(folder): DetectionResult | null`** — synchronous probe of the project. Returns defaults (partial `RunConfig`) plus a context object consumed by `getFormSchema`. Null = this adapter doesn't recognize the folder.
@@ -104,6 +108,7 @@ Distinctive behaviors per adapter:
 - **TomcatAdapter** — delegates most prepare work to `tomcatRuntime.ts`. That file builds a per-config `CATALINA_BASE` (conf/, logs/, temp/, webapps/, work/), rewrites `server.xml` with user ports + context + `reloadable`, deploys the artifact (copies the WAR or symlinks the exploded dir), and returns `CATALINA_BASE`, `CATALINA_OPTS` (JDWP via `-agentlib:jdwp=...`), and `JAVA_HOME` as env.
 - **QuarkusAdapter** — two launch modes only (`maven` + `gradle`), no java-main mode (Quarkus owns the main). Dev mode is the only launch path: `mvn quarkus:dev` or `./gradlew --console=plain quarkusDev`. JDWP is opened by Quarkus itself via `-Ddebug=<port>` (default 5005) — no `JAVA_TOOL_OPTIONS` juggling. Single profile via `-Dquarkus.profile=<name>` (Quarkus accepts only one active profile). No rebuild watcher (Live Coding is built in). Reuses `findBuildRoot`, `detectJdks`, `detectBuildTools`, `gradleModulePrefix` from `spring-boot/`. Debug flow is the simplest of the attach adapters: run + `waitForPort` + attach.
 - **JavaAdapter** — plain Java app with three launch modes: `maven` (runs `mvn exec:java -Dexec.mainClass=…`), `gradle` (runs `./gradlew run` via the `application` plugin), `java-main` (runs `java -cp … MainClass`). **Maven and Gradle modes ignore `vmArgs`** — `exec:java` runs in the Maven JVM, and Gradle's `run` task reads JVM args from `application { applicationDefaultJvmArgs }` in `build.gradle`. Only `java-main` mode forwards `vmArgs`. Debug attach uses `MAVEN_OPTS` for Maven (not `JAVA_TOOL_OPTIONS` — that would double-bind JDWP on the forked plugin JVM) and `JAVA_TOOL_OPTIONS` for Gradle. `detectJavaApp` bails when Spring Boot / Quarkus / Tomcat markers are present so those adapters keep priority. Shares `findMainClasses` with Spring Boot (moved to `src/adapters/java-shared/`). Ready patterns intentionally empty — a plain Java app has no universal startup marker, so the tree stays in the spinner for the life of the process.
+- **MavenGoalAdapter / GradleTaskAdapter** — one-click saved launcher for a specific phase/goal or task. `supportsDebug=false`. No `mainClass` / `programArgs` concept — the `goal` or `task` field drives the whole command. Does NOT bail on framework markers (a Spring Boot project is a perfectly valid place to run `./gradlew dropAll`). Auto-create skips these types — they're user-authored by definition. Form includes a `Load tasks` / `Load phases & plugin prefixes` action button that triggers on-demand discovery (Gradle: `./gradlew -q --console=plain tasks --all`, Maven: lifecycle phases + `<plugin>` artifactIds parsed from pom.xml). Results are stored in the EditorPanel's persistent context via a new `loadTasks` outbound message. Ready patterns empty; failure patterns: `SHARED_BUILD_TOOL_FAILURES` only.
 
 ## Services
 

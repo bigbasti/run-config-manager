@@ -68,18 +68,31 @@ export function buildCommandPreview(cfg: RunConfig): string {
       const pa = cfg.programArgs?.trim() ? ` -Dexec.args='${cfg.programArgs.trim()}'` : '';
       base = `mvn exec:java -Dexec.mainClass=${mc}${pa}`;
     }
+  } else if (cfg.type === 'maven-goal') {
+    const to = cfg.typeOptions;
+    const mvn = to.mavenPath ? `${to.mavenPath.replace(/[/\\]$/, '')}/bin/mvn` : 'mvn';
+    base = `${mvn} ${to.goal?.trim() || '<goal>'}`;
+  } else if (cfg.type === 'gradle-task') {
+    const to = cfg.typeOptions;
+    const gradle = to.gradleCommand === './gradlew'
+      ? './gradlew'
+      : to.gradlePath ? `${to.gradlePath.replace(/[/\\]$/, '')}/bin/gradle` : 'gradle';
+    base = `${gradle} --console=plain ${to.task?.trim() || '<task>'}`;
   } else {
     return `(unsupported type: ${(cfg as RunConfig).type})`;
   }
 
-  // Adapters that bake programArgs into their preview: spring-boot/java-main,
-  // java (all modes — see branch above), quarkus, tomcat. Only spring-boot's
-  // maven/gradle preview and npm still need the `-- <args>` suffix.
+  // Adapters that bake programArgs into their preview, or don't use
+  // programArgs at all (maven-goal / gradle-task drive everything from their
+  // goal/task field). Only spring-boot's maven/gradle preview and npm still
+  // need the trailing `-- <args>` suffix.
   const programArgsApplied =
     (cfg.type === 'spring-boot' && cfg.typeOptions.launchMode === 'java-main') ||
     cfg.type === 'java' ||
     cfg.type === 'quarkus' ||
-    cfg.type === 'tomcat';
+    cfg.type === 'tomcat' ||
+    cfg.type === 'maven-goal' ||
+    cfg.type === 'gradle-task';
   const args = (cfg.programArgs ?? '').trim();
   const withArgs = !programArgsApplied && args ? `${base} -- ${args}` : base;
   return cfg.projectPath ? `cd ${cfg.projectPath} && ${withArgs}` : withArgs;

@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code (npm, Angular, Node.js).",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "local",
   "license": "MIT",
   "author": {

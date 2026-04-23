@@ -111,6 +111,43 @@ export const JavaTypeOptionsSchema = z
     }
   });
 
+export const MavenGoalTypeOptionsSchema = z
+  .object({
+    goal: z.string(),
+    jdkPath: z.string(),
+    mavenPath: z.string(),
+    buildRoot: z.string(),
+    colorOutput: z.boolean().optional(),
+  })
+  .superRefine((opts, ctx) => {
+    if (!opts.goal.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'goal is required — at least one Maven phase or goal',
+        path: ['goal'],
+      });
+    }
+  });
+
+export const GradleTaskTypeOptionsSchema = z
+  .object({
+    task: z.string(),
+    gradleCommand: GradleCommandSchema,
+    jdkPath: z.string(),
+    gradlePath: z.string(),
+    buildRoot: z.string(),
+    colorOutput: z.boolean().optional(),
+  })
+  .superRefine((opts, ctx) => {
+    if (!opts.task.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'task is required — at least one Gradle task name',
+        path: ['task'],
+      });
+    }
+  });
+
 export const QuarkusLaunchModeSchema = z.enum(['maven', 'gradle']);
 
 export const QuarkusTypeOptionsSchema = z
@@ -196,6 +233,16 @@ export const RunConfigSchema = z.discriminatedUnion('type', [
     ...commonFields,
     type: z.literal('java'),
     typeOptions: JavaTypeOptionsSchema,
+  }),
+  z.object({
+    ...commonFields,
+    type: z.literal('maven-goal'),
+    typeOptions: MavenGoalTypeOptionsSchema,
+  }),
+  z.object({
+    ...commonFields,
+    type: z.literal('gradle-task'),
+    typeOptions: GradleTaskTypeOptionsSchema,
   }),
 ]);
 

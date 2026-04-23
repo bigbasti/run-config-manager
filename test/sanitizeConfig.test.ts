@@ -189,6 +189,44 @@ describe('sanitizeConfig', () => {
     expect(RunConfigSchema.safeParse(out).success).toBe(true);
   });
 
+  test('maven-goal: preserves goal + passes schema', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'maven-goal',
+      typeOptions: {
+        goal: 'liquibase:dropAll',
+        jdkPath: '',
+        mavenPath: '',
+        buildRoot: '',
+        colorOutput: true,
+      },
+    } as RunConfig);
+    expect(out.type).toBe('maven-goal');
+    const to = out.typeOptions as any;
+    expect(to.goal).toBe('liquibase:dropAll');
+    expect(to.colorOutput).toBe(true);
+    expect(RunConfigSchema.safeParse(out).success).toBe(true);
+  });
+
+  test('gradle-task: preserves task + passes schema', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'gradle-task',
+      typeOptions: {
+        task: ':api:test --tests "com.example.*IT"',
+        gradleCommand: './gradlew',
+        jdkPath: '',
+        gradlePath: '',
+        buildRoot: '',
+      } as any,
+    } as RunConfig);
+    expect(out.type).toBe('gradle-task');
+    const to = out.typeOptions as any;
+    expect(to.task).toBe(':api:test --tests "com.example.*IT"');
+    expect(to.gradleCommand).toBe('./gradlew');
+    expect(RunConfigSchema.safeParse(out).success).toBe(true);
+  });
+
   test('java: fills safe defaults when typeOptions is minimal', () => {
     const out = sanitizeConfig({
       ...base,
