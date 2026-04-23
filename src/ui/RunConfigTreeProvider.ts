@@ -6,6 +6,7 @@ import type { DebugService } from '../services/DebugService';
 import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
+import { iconForConfig } from './iconForConfig';
 
 export type Node =
   | { kind: 'folder'; folderKey: string; label: string }
@@ -23,6 +24,9 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     private readonly exec: ExecutionService,
     private readonly dbg: DebugService,
     private readonly registry: AdapterRegistry,
+    // Needed so we can build absolute URIs to the bundled brand SVGs under
+    // media/icons/. Passed in from extension.ts activate().
+    private readonly extensionUri: vscode.Uri,
   ) {
     store.onChange(() => this.refresh());
     exec.onRunningChanged(() => this.refresh());
@@ -44,7 +48,11 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       const item = new vscode.TreeItem(n.label, vscode.TreeItemCollapsibleState.Expanded);
       item.description = `(${n.count})`;
       item.contextValue = 'typeGroup';
-      item.iconPath = new vscode.ThemeIcon(iconForType(n.type));
+      // Brand icon from media/icons/ (the npm icon for plain npm groups;
+      // the specific brand — Spring Boot, Tomcat, etc. — for every other
+      // type). No sub-type detection here because a group spans multiple
+      // configs that may belong to different frameworks.
+      item.iconPath = vscode.Uri.joinPath(this.extensionUri, 'media', 'icons', `${iconForGroupType(n.type)}.svg`);
       return item;
     }
     if (n.kind === 'invalid') {
@@ -110,7 +118,13 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       item.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
       item.description = undefined;
     } else {
-      item.iconPath = new vscode.ThemeIcon(iconForType(n.config.type));
+      // Idle — show the brand icon so the user can visually scan npm /
+      // Angular / Spring Boot / Gradle / etc. at a glance. Brand icon
+      // resolution sniffs config-file tell-tales + package.json scripts
+      // for npm configs to pick the specific framework (Angular, Vite,
+      // Next, Svelte, Vue, React, Node).
+      const folder = this.store.getFolder(n.folderKey);
+      item.iconPath = iconForConfig(n.config, folder, this.extensionUri);
       item.description = undefined;
     }
     item.contextValue = (preparing || running)
@@ -198,16 +212,18 @@ function labelForType(type: RunConfig['type']): string {
   }
 }
 
-function iconForType(type: string): string {
-  // Codicon names only — see https://code.visualstudio.com/api/references/icons-in-labels
+// Brand SVG basename for a type-group header. Per-config icons (including
+// Angular / Vite / Next / etc. sub-type detection for npm) go through
+// iconForConfig.
+function iconForGroupType(type: string): string {
   switch (type) {
-    case 'npm': return 'package';
-    case 'spring-boot': return 'rocket';
-    case 'tomcat': return 'server-environment';
-    case 'quarkus': return 'zap';
-    case 'java': return 'symbol-class';
-    case 'maven-goal': return 'tools';
-    case 'gradle-task': return 'symbol-event';
-    default: return 'circle-outline';
+    case 'npm': return 'npm';
+    case 'spring-boot': return 'spring-boot';
+    case 'tomcat': return 'tomcat';
+    case 'quarkus': return 'quarkus';
+    case 'java': return 'java';
+    case 'maven-goal': return 'maven';
+    case 'gradle-task': return 'gradle';
+    default: return 'npm';
   }
 }

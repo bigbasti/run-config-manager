@@ -48,7 +48,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await store.attach(folders);
   log.info(`Loaded ${svc.list().length} configuration(s) across ${folders.length} folder(s).`);
 
-  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry);
+  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri);
   const view = vscode.window.createTreeView('runConfigurations', {
     treeDataProvider: tree,
     showCollapseAll: true,

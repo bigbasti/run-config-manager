@@ -41,6 +41,11 @@ src/
     java-shared/                   # findMainClasses (used by both spring-boot and java)
     maven-goal/                    # MavenGoalAdapter + discoverMavenGoals
     gradle-task/                   # GradleTaskAdapter + discoverGradleTasks
+  ui/
+    iconForConfig.ts               # brand-SVG resolution + npm sub-type detection
+media/icons/                       # brand SVGs: npm, node, angular, vite, react,
+                                   #   vue, svelte, nextjs, spring-boot, tomcat,
+                                   #   quarkus, java, maven, gradle
   services/                        # runtime orchestration (no UI)
     ConfigStore.ts                 # .vscode/run.json loader + watcher, per workspace folder
     RunConfigService.ts            # thin CRUD wrapper on top of store
@@ -151,7 +156,7 @@ Tracks `running` sessions and fires `onRunningChanged` the same way ExecutionSer
 - `failed` — red `error` icon, description `Failed` (`exec.isFailed`).
 - `running && !started` — `loading~spin`, description `Starting…`.
 - `started` — green `pass-filled`.
-- else — type icon (`package` / `rocket` / `server-environment`).
+- else — **brand SVG** from `media/icons/` via `iconForConfig` (npm configs run through sub-type sniffing — angular.json / vite.config / next.config / svelte.config / vue.config and/or `ng serve` / `next dev` / `vite` / `react-scripts` / `nodemon` script content / `@angular/core`-etc dependency to pick the specific framework icon; Spring Boot / Tomcat / Quarkus / Java / Maven Goal / Gradle Task get their dedicated brand icons). Running/starting/failed/rebuilding/preparing states keep codicon state indicators — those convey state, not identity.
 
 The tree emits `runConfig.edit` on item click so single-click opens the editor. Tooltip shows command preview + state summary via `buildCommandPreview`.
 
