@@ -85,8 +85,18 @@ export class JavaAdapter implements RuntimeAdapter {
     folder: vscode.Uri,
     emit: (patch: StreamingPatch) => void,
   ): Promise<void> {
-    const info = await detectJavaApp(folder);
-    if (!info) return;
+    // When the user manually picks "Java Application" in the Add dialog, they
+    // might point at a Spring Boot / Quarkus / Tomcat project on purpose —
+    // typically to use the gradle-custom / maven-custom launch modes for
+    // running a test task, a clean build, etc. The strict negative gate in
+    // detectJavaApp (used by auto-create to keep priority ordering sane)
+    // would reject those projects and leave the form empty.
+    //
+    // detectStreaming sees only the explicit manual path. We run a stripped-
+    // down build-file probe here so JDKs / build-tool installs / main classes
+    // all still populate, regardless of what framework the project uses.
+    const info = await probeBuildTool(folder);
+    if (!info.buildTool && !info.hasSourceTree) return;
 
     emit({
       contextPatch: { buildTool: info.buildTool, hasApplicationPlugin: info.hasApplicationPlugin },
@@ -472,6 +482,43 @@ export class JavaAdapter implements RuntimeAdapter {
       timeout: 60_000,
     };
   }
+}
+
+// Lightweight build-tool probe used by detectStreaming. Unlike detectJavaApp
+// this does NOT bail when Spring Boot / Quarkus / Tomcat markers are present
+// — the user explicitly picked "Java Application", so we serve them whatever
+// project they pointed at (typically because they want a custom Gradle/Maven
+// command against a framework project).
+async function probeBuildTool(folder: vscode.Uri): Promise<{
+  buildTool: 'maven' | 'gradle' | null;
+  hasApplicationPlugin: boolean;
+  hasSourceTree: boolean;
+}> {
+  const hasPom = await fileExists(vscode.Uri.joinPath(folder, 'pom.xml'));
+  const hasGradleKts = await fileExists(vscode.Uri.joinPath(folder, 'build.gradle.kts'));
+  const hasGradle = hasGradleKts || (await fileExists(vscode.Uri.joinPath(folder, 'build.gradle')));
+  const hasSrcMainJava = await fileExists(vscode.Uri.joinPath(folder, 'src/main/java'));
+  const hasSrcMainKotlin = await fileExists(vscode.Uri.joinPath(folder, 'src/main/kotlin'));
+  const buildTool: 'maven' | 'gradle' | null = hasPom ? 'maven' : hasGradle ? 'gradle' : null;
+
+  let hasApplicationPlugin = false;
+  if (buildTool === 'gradle') {
+    const uri = hasGradleKts
+      ? vscode.Uri.joinPath(folder, 'build.gradle.kts')
+      : vscode.Uri.joinPath(folder, 'build.gradle');
+    try {
+      const text = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
+      hasApplicationPlugin =
+        /(^|[\s(\[,;])application\b/m.test(text) ||
+        /org\.gradle\.application/.test(text);
+    } catch { /* best-effort */ }
+  }
+
+  return {
+    buildTool,
+    hasApplicationPlugin,
+    hasSourceTree: hasSrcMainJava || hasSrcMainKotlin,
+  };
 }
 
 async function detectGradleCommand(folder: vscode.Uri): Promise<'./gradlew' | 'gradle'> {

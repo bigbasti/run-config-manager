@@ -77,3 +77,31 @@ describe('JavaAdapter.detect', () => {
     expect(to.colorOutput).toBe(true);
   });
 });
+
+describe('JavaAdapter.detectStreaming', () => {
+  beforeEach(() => __resetFs());
+
+  test('emits on a Spring Boot project too (manual pick, unlike detect())', async () => {
+    // detect() bails on Spring Boot markers so auto-create doesn't step on
+    // Spring Boot's territory, but detectStreaming is only reached after the
+    // user manually picked "Java Application" — they want gradle-custom or
+    // maven-custom on a framework project, and the form must still populate.
+    __writeFs('/proj/pom.xml',
+      '<project><dependency><artifactId>spring-boot-starter-web</artifactId></dependency></project>');
+    __writeFs('/proj/src/main/java/com/example/App.java',
+      'package com.example;\npublic class App { public static void main(String[] args) {} }');
+
+    const patches: any[] = [];
+    await adapter.detectStreaming!(Uri.file('/proj'), p => patches.push(p));
+
+    // First patch is the synchronous build-tool verdict.
+    expect(patches.length).toBeGreaterThanOrEqual(1);
+    expect(patches[0].contextPatch.buildTool).toBe('maven');
+  });
+
+  test('emits nothing when folder is neither a build project nor a source tree', async () => {
+    const patches: any[] = [];
+    await adapter.detectStreaming!(Uri.file('/empty'), p => patches.push(p));
+    expect(patches).toEqual([]);
+  });
+});
