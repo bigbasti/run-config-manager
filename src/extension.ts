@@ -31,6 +31,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.register(new TomcatAdapter());
   registry.register(new QuarkusAdapter());
   registry.register(new JavaAdapter());
+  log.debug(`Registered adapters: ${registry.all().map(a => a.type).join(', ')}`);
 
   const store = new ConfigStore();
   const svc = new RunConfigService(store);
@@ -39,7 +40,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const dbg = new DebugService(registry, exec);
 
   const folders = vscode.workspace.workspaceFolders ?? [];
+  log.debug(`Workspace folders: ${folders.length ? folders.map(f => f.uri.fsPath).join(', ') : '(none)'}`);
   await store.attach(folders);
+  log.info(`Loaded ${svc.list().length} configuration(s) across ${folders.length} folder(s).`);
 
   const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry);
   const view = vscode.window.createTreeView('runConfigurations', {
@@ -82,13 +85,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('runConfig.refresh', () => tree.refresh()),
+    vscode.commands.registerCommand('runConfig.refresh', () => {
+      log.debug('Command: refresh');
+      tree.refresh();
+    }),
 
     vscode.commands.registerCommand('runConfig.reveal', (arg: ConfigNodeArg) => {
       // Click target for a running config row — bring the task's integrated
       // terminal into view. No-op if the config isn't actually running (e.g.,
       // state updated between click and dispatch).
       if (!arg || arg.kind !== 'config') return;
+      log.info(`Reveal terminal: "${arg.config.name}"`);
       if (dbg.isRunning(arg.config.id)) {
         // Debug sessions don't own an integrated terminal by default; fall
         // back to revealing the task terminal if one exists, else focus the
@@ -121,7 +128,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const created = { ...rest, name: newName.trim() } as Omit<RunConfig, 'id'>;
       try {
         await svc.create(arg.folderKey, created);
+        log.info(`Cloned "${arg.config.name}" → "${newName.trim()}"`);
       } catch (e) {
+        log.error(`Clone failed for "${arg.config.name}"`, e);
         vscode.window.showErrorMessage(`Clone failed: ${(e as Error).message}`);
       }
     }),
@@ -137,6 +146,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         'Stop All',
       );
       if (confirm !== 'Stop All') return;
+      log.info(`Stop All: terminating ${running.length} configuration(s).`);
       // Fire every stop in parallel — they're independent and each may have
       // to wait for a SIGTERM→SIGKILL grace period.
       await Promise.all(running.map(async r => {
@@ -146,10 +156,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
 
     vscode.commands.registerCommand('runConfig.autoCreate', async () => {
+      log.info('Command: auto-create configurations');
       await autoCreateConfigs(store, svc, registry);
     }),
 
     vscode.commands.registerCommand('runConfig.add', async () => {
+      log.info('Command: add configuration');
       await addConfig(context, store, svc, scanner, registry);
     }),
 
@@ -159,6 +171,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!folder) return;
 
       if (arg.kind === 'config') {
+        log.info(`Edit: "${arg.config.name}" (${arg.config.type})`);
         const adapter = registry.get(arg.config.type);
         if (!adapter) return;
         const detectionContext = await buildEditContext(adapter, folder, arg.config.projectPath);
@@ -170,6 +183,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           schema: adapter.getFormSchema(detectionContext),
         }, context, svc);
       } else {
+        log.info(`Edit invalid entry: "${arg.entry.name}"`);
         const recovered = buildRecoveredConfig(arg.entry);
         const type: RunConfigType = (recovered.type as RunConfigType) ?? 'npm';
         const adapter = registry.get(type);
@@ -195,6 +209,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         'Delete',
       );
       if (confirm !== 'Delete') return;
+      log.info(`Delete: "${name}"`);
       await svc.delete(arg.folderKey, id);
     }),
 
@@ -202,11 +217,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!arg || arg.kind !== 'config') return;
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
+      log.info(`Run: "${arg.config.name}" (${arg.config.type})`);
       await exec.run(arg.config, folder);
     }),
 
     vscode.commands.registerCommand('runConfig.stop', async (arg: ConfigNodeArg) => {
       if (!arg || arg.kind !== 'config') return;
+      log.info(`Stop: "${arg.config.name}"`);
       // A single config can be either in a run task OR a debug session.
       // Stop whichever is actually tracking it.
       if (dbg.isRunning(arg.config.id)) {
@@ -220,6 +237,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!arg || arg.kind !== 'config') return;
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
+      log.info(`Debug: "${arg.config.name}" (${arg.config.type})`);
       await dbg.debug(arg.config, folder);
     }),
 
@@ -227,6 +245,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!arg || arg.kind !== 'invalid') return;
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
+      log.info(`Fix invalid: "${arg.entry.name}"`);
 
       const recovered = buildRecoveredConfig(arg.entry);
       const type: RunConfigType = (recovered.type as RunConfigType) ?? 'npm';
@@ -270,6 +289,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
       const uri = vscode.Uri.joinPath(folder.uri, '.vscode', 'run.json');
+      log.info(`Open file: ${uri.fsPath}`);
       await vscode.commands.executeCommand('vscode.open', uri);
     }),
 
@@ -318,6 +338,7 @@ async function addConfig(
   if (!typePick) return;
 
   const adapter = registry.get(typePick.value)!;
+  log.info(`Add: type=${typePick.value}, projectPath=${projectUri.fsPath}, folder=${folder.name}`);
 
   const relProject = projectUri.fsPath.startsWith(folder.uri.fsPath)
     ? projectUri.fsPath.slice(folder.uri.fsPath.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')
@@ -451,6 +472,7 @@ async function autoCreateConfigs(
       const children = await listDirectChildren(root);
       // Also scan the root itself as a candidate module (single-module repos).
       const candidates: vscode.Uri[] = [root, ...children];
+      log.debug(`Auto-create: scanning ${candidates.length} folder(s) under ${root.fsPath}`);
 
       const existing = new Set<string>();
       for (const c of svc.list()) {
@@ -516,6 +538,7 @@ async function autoCreateConfigs(
         for (const s of skipped.slice(0, 5)) lines.push(`  • ${s}`);
         if (skipped.length > 5) lines.push(`  • …and ${skipped.length - 5} more`);
       }
+      log.info(`Auto-create: created=${created.length}, skipped=${skipped.length}`);
       if (!created.length && !skipped.length) {
         vscode.window.showInformationMessage('Auto-create found no recognised modules under the chosen folder.');
       } else {

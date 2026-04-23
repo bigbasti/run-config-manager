@@ -9,6 +9,7 @@ import { prepareTomcatLaunch, catalinaExecutable } from './tomcatRuntime';
 import { resolveProjectUri } from '../../utils/paths';
 import { findGradleRoot } from '../spring-boot/findBuildRoot';
 import type { PrepareContext, PrepareResult } from '../RuntimeAdapter';
+import { log } from '../../utils/logger';
 
 // Shared help-text footer — mirrors the Spring Boot adapter's pattern.
 const VAR_SYNTAX_HINT =
@@ -24,6 +25,7 @@ export class TomcatAdapter implements RuntimeAdapter {
   readonly supportsDebug = true;
 
   async detect(folder: vscode.Uri): Promise<DetectionResult | null> {
+    log.debug(`Tomcat detect: ${folder.fsPath}`);
     // Tomcat has no auto-detect from project files alone — any web project
     // could be deployed. We consider any folder a valid Tomcat target and
     // defer the "is this project buildable?" decision to the user.
@@ -34,6 +36,10 @@ export class TomcatAdapter implements RuntimeAdapter {
       findTomcatArtifacts(folder),
       findGradleRoot(folder),
     ]);
+    log.info(
+      `Tomcat detect: tomcatInstalls=${tomcatInstalls.length}, jdks=${jdks.length}, ` +
+      `artifacts=${artifacts.length}`,
+    );
 
     const firstArtifact = artifacts[0];
     // Only fill buildRoot when walking up actually moved — for single-module
@@ -76,6 +82,7 @@ export class TomcatAdapter implements RuntimeAdapter {
     folder: vscode.Uri,
     emit: (patch: StreamingPatch) => void,
   ): Promise<void> {
+    log.debug(`Tomcat detectStreaming: probing ${folder.fsPath}`);
     // Initial: establish that this is a tomcat config so the form knows which
     // schema to render. No fast-path signal here; tomcat is user-declared.
     emit({
@@ -97,6 +104,7 @@ export class TomcatAdapter implements RuntimeAdapter {
 
     (async () => {
       const tomcatInstalls = await detectTomcatInstalls();
+      log.debug(`Tomcat probe: tomcatInstalls=${tomcatInstalls.length}`);
       emit({
         contextPatch: { tomcatInstalls },
         defaultsPatch: tomcatInstalls[0]
@@ -104,19 +112,21 @@ export class TomcatAdapter implements RuntimeAdapter {
           : undefined,
         resolved: ['typeOptions.tomcatHome'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Tomcat probe (tomcatInstalls) failed: ${(e as Error).message}`));
 
     (async () => {
       const jdks = await detectJdks();
+      log.debug(`Tomcat probe: jdks=${jdks.length}`);
       emit({
         contextPatch: { jdks },
         defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
         resolved: ['typeOptions.jdkPath'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Tomcat probe (jdks) failed: ${(e as Error).message}`));
 
     (async () => {
       const bt = await detectBuildTools();
+      log.debug(`Tomcat probe: gradleInstalls=${bt.gradleInstalls.length}, mavenInstalls=${bt.mavenInstalls.length}`);
       emit({
         contextPatch: { gradleInstalls: bt.gradleInstalls, mavenInstalls: bt.mavenInstalls },
         defaultsPatch: {
@@ -127,10 +137,11 @@ export class TomcatAdapter implements RuntimeAdapter {
         },
         resolved: ['typeOptions.gradlePath', 'typeOptions.mavenPath'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Tomcat probe (buildTools) failed: ${(e as Error).message}`));
 
     (async () => {
       const artifacts = await findTomcatArtifacts(folder);
+      log.debug(`Tomcat probe: artifacts=${artifacts.length}`);
       const first = artifacts[0];
       emit({
         contextPatch: { artifacts },
@@ -144,7 +155,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           : undefined,
         resolved: ['typeOptions.artifactPath', 'typeOptions.artifactKind'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Tomcat probe (artifacts) failed: ${(e as Error).message}`));
 
     // Gradle root walk-up: for multi-module projects where the chosen project
     // is a submodule (e.g. /git/zebra/api) and the wrapper lives at the root
@@ -153,13 +164,14 @@ export class TomcatAdapter implements RuntimeAdapter {
     (async () => {
       const root = await findGradleRoot(folder);
       if (root.fsPath !== folder.fsPath) {
+        log.debug(`Tomcat probe: gradleRoot=${root.fsPath}`);
         emit({
           contextPatch: { buildRoot: root.fsPath },
           defaultsPatch: { typeOptions: { buildRoot: root.fsPath } as any },
           resolved: ['typeOptions.buildRoot'],
         });
       }
-    })().catch(() => {});
+    })().catch(e => log.warn(`Tomcat probe (gradleRoot) failed: ${(e as Error).message}`));
   }
 
   getFormSchema(context: Record<string, unknown>): FormSchema {

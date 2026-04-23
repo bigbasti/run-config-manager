@@ -10,6 +10,7 @@ import { detectBuildTools } from './detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from './findBuildRoot';
 import { findSpringProfiles } from './findProfiles';
 import { resolveProjectUri } from '../../utils/paths';
+import { log } from '../../utils/logger';
 
 // Shared help-text footer for fields where ${VAR} expansion applies. The
 // actual expansion happens at launch (ExecutionService / DebugService) —
@@ -39,9 +40,12 @@ export class SpringBootAdapter implements RuntimeAdapter {
   readonly supportsDebug = true;
 
   async detect(folder: vscode.Uri): Promise<DetectionResult | null> {
+    log.debug(`Spring Boot detect: ${folder.fsPath}`);
     const info = await readSpringBootInfo(folder);
-    if (!info) return null;
-    if (!info.hasSpringBootApplication) return null;
+    if (!info || !info.hasSpringBootApplication) {
+      log.debug(`Spring Boot detect: no match`);
+      return null;
+    }
 
     const [mainClasses, gradleCommand, jdks, classpath, buildTools, gradleRoot, mavenRoot, profiles] =
       await Promise.all([
@@ -58,6 +62,11 @@ export class SpringBootAdapter implements RuntimeAdapter {
     // If the user selected a sub-module, the build root might be a parent dir.
     // Store it so recompute / run can cd to the right place.
     const buildRoot = info.buildTool === 'gradle' ? gradleRoot.fsPath : mavenRoot.fsPath;
+    log.info(
+      `Spring Boot detect: buildTool=${info.buildTool}, ` +
+      `mainClasses=${mainClasses.length}, jdks=${jdks.length}, profiles=${profiles.length}, ` +
+      `buildRoot=${buildRoot}`,
+    );
     // If the wrapper exists in the detected root (not the sub-module), prefer it.
     const effectiveGradleCommand: 'gradle' | './gradlew' =
       info.buildTool === 'gradle' && (await fileExists(vscode.Uri.joinPath(gradleRoot, 'gradlew')))
@@ -100,10 +109,15 @@ export class SpringBootAdapter implements RuntimeAdapter {
     folder: vscode.Uri,
     emit: (patch: import('../RuntimeAdapter').StreamingPatch) => void,
   ): Promise<void> {
+    log.debug(`Spring Boot detectStreaming: probing ${folder.fsPath}`);
     // Fast: is this a Spring Boot project? If not, early-exit silently — the
     // editor was already opened with whatever the user is editing.
     const info = await readSpringBootInfo(folder);
-    if (!info || !info.hasSpringBootApplication) return;
+    if (!info || !info.hasSpringBootApplication) {
+      log.debug(`Spring Boot detectStreaming: no Spring Boot markers — bailing`);
+      return;
+    }
+    log.debug(`Spring Boot detectStreaming: buildTool=${info.buildTool}`);
 
     // Emit the build-tool verdict immediately so the form knows whether it's
     // Maven or Gradle — this drives which recompute path we dispatch later.
@@ -129,6 +143,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
         info.buildTool === 'gradle' && (await fileExists(vscode.Uri.joinPath(gradleRoot, 'gradlew')))
           ? './gradlew'
           : gradleCommand;
+      log.debug(`Spring Boot probe: gradleCommand=${effective}, buildRoot=${buildRoot}`);
       emit({
         contextPatch: { gradleCommand: effective, buildRoot },
         defaultsPatch: {
@@ -139,17 +154,19 @@ export class SpringBootAdapter implements RuntimeAdapter {
         },
         resolved: ['typeOptions.gradleCommand', 'typeOptions.buildRoot'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Spring Boot probe (gradleCommand/buildRoot) failed: ${(e as Error).message}`));
 
     // Profiles: directory walk, usually <1s.
     (async () => {
       const profiles = await findSpringProfiles(folder);
+      log.debug(`Spring Boot probe: profiles=${profiles.length}`);
       emit({ contextPatch: { profiles }, resolved: ['typeOptions.profiles'] });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Spring Boot probe (profiles) failed: ${(e as Error).message}`));
 
     // Main classes: file-system walk with regex, can take several seconds.
     (async () => {
       const mainClasses = await findMainClasses(folder);
+      log.debug(`Spring Boot probe: mainClasses=${mainClasses.length}`);
       emit({
         contextPatch: { mainClasses },
         defaultsPatch: mainClasses[0]
@@ -157,21 +174,23 @@ export class SpringBootAdapter implements RuntimeAdapter {
           : undefined,
         resolved: ['typeOptions.mainClass'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Spring Boot probe (mainClasses) failed: ${(e as Error).message}`));
 
     // JDK probe: filesystem + (possibly) Java extension API.
     (async () => {
       const jdks = await detectJdks();
+      log.debug(`Spring Boot probe: jdks=${jdks.length}`);
       emit({
         contextPatch: { jdks },
         defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
         resolved: ['typeOptions.jdkPath'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Spring Boot probe (jdks) failed: ${(e as Error).message}`));
 
     // Build-tool installs.
     (async () => {
       const bt = await detectBuildTools();
+      log.debug(`Spring Boot probe: gradleInstalls=${bt.gradleInstalls.length}, mavenInstalls=${bt.mavenInstalls.length}`);
       emit({
         contextPatch: { gradleInstalls: bt.gradleInstalls, mavenInstalls: bt.mavenInstalls },
         defaultsPatch: {
@@ -182,17 +201,18 @@ export class SpringBootAdapter implements RuntimeAdapter {
         },
         resolved: ['typeOptions.gradlePath', 'typeOptions.mavenPath'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Spring Boot probe (buildTools) failed: ${(e as Error).message}`));
 
     // Classpath hint: fast path (Java extension) + fallback to static string.
     (async () => {
       const classpath = await suggestClasspath(folder, info.buildTool);
+      log.debug(`Spring Boot probe: classpath length=${classpath.length}`);
       emit({
         contextPatch: { classpath },
         defaultsPatch: { typeOptions: { classpath } as any },
         resolved: ['typeOptions.classpath'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Spring Boot probe (classpath) failed: ${(e as Error).message}`));
   }
 
   getFormSchema(context: Record<string, unknown>): FormSchema {

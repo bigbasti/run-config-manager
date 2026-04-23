@@ -10,6 +10,7 @@ import { findGradleRoot, findMavenRoot, gradleModulePrefix } from '../spring-boo
 import { suggestClasspath } from '../spring-boot/suggestClasspath';
 import { resolveProjectUri } from '../../utils/paths';
 import { splitArgs } from '../npm/splitArgs';
+import { log } from '../../utils/logger';
 
 const VAR_SYNTAX_HINT =
   'Supports ${VAR} and ${env:VAR} (environment variables), ' +
@@ -22,8 +23,12 @@ export class JavaAdapter implements RuntimeAdapter {
   readonly supportsDebug = true;
 
   async detect(folder: vscode.Uri): Promise<DetectionResult | null> {
+    log.debug(`Java detect: ${folder.fsPath}`);
     const info = await detectJavaApp(folder);
-    if (!info) return null;
+    if (!info) {
+      log.debug(`Java detect: no match (not a plain Java project, or framework markers present)`);
+      return null;
+    }
 
     const [mainClasses, gradleCommand, jdks, buildTools, gradleRoot, mavenRoot, classpath] =
       await Promise.all([
@@ -48,6 +53,13 @@ export class JavaAdapter implements RuntimeAdapter {
       info.buildTool === 'maven' ? 'maven'
       : info.buildTool === 'gradle' ? 'gradle'
       : 'java-main';
+
+    log.info(
+      `Java detect: buildTool=${info.buildTool ?? 'none'}, launchMode=${launchMode}, ` +
+      `mainClasses=${mainClasses.length}, jdks=${jdks.length}, ` +
+      `gradleInstalls=${buildTools.gradleInstalls.length}, mavenInstalls=${buildTools.mavenInstalls.length}, ` +
+      `buildRoot=${buildRoot}`,
+    );
 
     return {
       defaults: {
@@ -95,8 +107,16 @@ export class JavaAdapter implements RuntimeAdapter {
     // detectStreaming sees only the explicit manual path. We run a stripped-
     // down build-file probe here so JDKs / build-tool installs / main classes
     // all still populate, regardless of what framework the project uses.
+    log.debug(`Java detectStreaming: probing ${folder.fsPath}`);
     const info = await probeBuildTool(folder);
-    if (!info.buildTool && !info.hasSourceTree) return;
+    if (!info.buildTool && !info.hasSourceTree) {
+      log.debug(`Java detectStreaming: no build file and no source tree — bailing`);
+      return;
+    }
+    log.debug(
+      `Java detectStreaming: buildTool=${info.buildTool ?? 'none'}, ` +
+      `applicationPlugin=${info.hasApplicationPlugin}, sourceTree=${info.hasSourceTree}`,
+    );
 
     emit({
       contextPatch: { buildTool: info.buildTool, hasApplicationPlugin: info.hasApplicationPlugin },
@@ -119,6 +139,7 @@ export class JavaAdapter implements RuntimeAdapter {
         info.buildTool === 'gradle' && (await fileExists(vscode.Uri.joinPath(gradleRoot, 'gradlew')))
           ? './gradlew'
           : gradleCommand;
+      log.debug(`Java probe: gradleCommand=${effective}, buildRoot=${buildRoot}`);
       emit({
         contextPatch: { gradleCommand: effective, buildRoot },
         defaultsPatch: {
@@ -129,10 +150,11 @@ export class JavaAdapter implements RuntimeAdapter {
         },
         resolved: ['typeOptions.gradleCommand', 'typeOptions.buildRoot'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Java probe (gradleCommand/buildRoot) failed: ${(e as Error).message}`));
 
     (async () => {
       const mainClasses = await findMainClasses(folder);
+      log.debug(`Java probe: mainClasses=${mainClasses.length}`);
       emit({
         contextPatch: { mainClasses },
         defaultsPatch: mainClasses[0]
@@ -140,19 +162,21 @@ export class JavaAdapter implements RuntimeAdapter {
           : undefined,
         resolved: ['typeOptions.mainClass'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Java probe (mainClasses) failed: ${(e as Error).message}`));
 
     (async () => {
       const jdks = await detectJdks();
+      log.debug(`Java probe: jdks=${jdks.length}`);
       emit({
         contextPatch: { jdks },
         defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
         resolved: ['typeOptions.jdkPath'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Java probe (jdks) failed: ${(e as Error).message}`));
 
     (async () => {
       const bt = await detectBuildTools();
+      log.debug(`Java probe: gradleInstalls=${bt.gradleInstalls.length}, mavenInstalls=${bt.mavenInstalls.length}`);
       emit({
         contextPatch: { gradleInstalls: bt.gradleInstalls, mavenInstalls: bt.mavenInstalls },
         defaultsPatch: {
@@ -163,17 +187,18 @@ export class JavaAdapter implements RuntimeAdapter {
         },
         resolved: ['typeOptions.gradlePath', 'typeOptions.mavenPath'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Java probe (buildTools) failed: ${(e as Error).message}`));
 
     if (info.buildTool) {
       (async () => {
         const classpath = await suggestClasspath(folder, info.buildTool!);
+        log.debug(`Java probe: classpath length=${classpath.length}`);
         emit({
           contextPatch: { classpath },
           defaultsPatch: { typeOptions: { classpath } as any },
           resolved: ['typeOptions.classpath'],
         });
-      })().catch(() => {});
+      })().catch(e => log.warn(`Java probe (classpath) failed: ${(e as Error).message}`));
     }
   }
 

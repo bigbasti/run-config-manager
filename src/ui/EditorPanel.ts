@@ -200,6 +200,7 @@ export class EditorPanel {
         });
         if (!picked || picked.length === 0) return;
         const rel = relativeFromWorkspace(this.args.folder, picked[0]);
+        log.debug(`pickFolder picked: ${rel}`);
         const reply: Inbound = { cmd: 'folderPicked', path: rel };
         this.panel.webview.postMessage(reply);
         return;
@@ -207,6 +208,7 @@ export class EditorPanel {
       case 'recomputeClasspath': {
         if (msg.config.type !== 'spring-boot') return;
         const to = msg.config.typeOptions;
+        log.info(`Recompute classpath: "${msg.config.name}" (${to.buildTool})`);
         try {
           const projectRoot = resolveProjectUri(this.args.folder, msg.config.projectPath);
           const buildRoot = to.buildRoot ? vscode.Uri.file(to.buildRoot) : projectRoot;
@@ -264,12 +266,17 @@ export class EditorPanel {
       case 'save':
         try {
           const sanitized = this.sanitize(msg.config);
+          log.debug(
+            `Save (${this.args.mode}): ${sanitized.type} "${sanitized.name}" ` +
+            `→ ${this.args.folderKey}`,
+          );
           if (this.args.mode === 'create') {
             const { id, ...rest } = sanitized;
             await this.svc.create(this.args.folderKey, rest);
           } else {
             await this.svc.update(this.args.folderKey, sanitized);
           }
+          log.info(`${this.args.mode === 'create' ? 'Created' : 'Updated'}: "${sanitized.name}"`);
           this.panel.dispose();
         } catch (e) {
           const err: Inbound = { cmd: 'error', message: (e as Error).message };

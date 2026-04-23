@@ -123,11 +123,19 @@ export class ExecutionService {
     if (adapter.prepareLaunch) {
       this.preparing.add(cfg.id);
       this.emitter.fire(cfg.id);
+      log.debug(`Preparing launch: ${cfg.name} (debug=${opts?.debug ?? false})`);
       try {
         prepared = await adapter.prepareLaunch(resolvedCfg, folder, {
           debug: opts?.debug ?? false,
           debugPort: opts?.debugPort,
         });
+        const envKeys = Object.keys(prepared.env ?? {});
+        if (envKeys.length || prepared.cwd) {
+          log.debug(
+            `prepareLaunch result: env=[${envKeys.join(', ')}]` +
+            (prepared.cwd ? `, cwd=${prepared.cwd}` : ''),
+          );
+        }
       } catch (e) {
         this.preparing.delete(cfg.id);
         this.emitter.fire(cfg.id);
@@ -141,6 +149,8 @@ export class ExecutionService {
 
     const cwd = prepared.cwd ?? initialCwd;
     const { command, args } = adapter.buildCommand(resolvedCfg, folder);
+    log.debug(`buildCommand: ${command} ${args.join(' ')}`);
+    log.debug(`cwd: ${cwd}`);
     const mergedEnv: Record<string, string | undefined> = {
       ...process.env,
       ...resolvedCfg.env,

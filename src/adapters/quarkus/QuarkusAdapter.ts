@@ -9,6 +9,7 @@ import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from '../spring-boot/findBuildRoot';
 import { resolveProjectUri } from '../../utils/paths';
 import { splitArgs } from '../npm/splitArgs';
+import { log } from '../../utils/logger';
 
 const VAR_SYNTAX_HINT =
   'Supports ${VAR} and ${env:VAR} (environment variables), ' +
@@ -21,8 +22,12 @@ export class QuarkusAdapter implements RuntimeAdapter {
   readonly supportsDebug = true;
 
   async detect(folder: vscode.Uri): Promise<DetectionResult | null> {
+    log.debug(`Quarkus detect: ${folder.fsPath}`);
     const info = await readQuarkusInfo(folder);
-    if (!info) return null;
+    if (!info) {
+      log.debug(`Quarkus detect: no match`);
+      return null;
+    }
 
     const [gradleCommand, jdks, buildTools, gradleRoot, mavenRoot, profiles] = await Promise.all([
       detectGradleCommand(folder),
@@ -38,6 +43,11 @@ export class QuarkusAdapter implements RuntimeAdapter {
       info.buildTool === 'gradle' && (await fileExists(vscode.Uri.joinPath(gradleRoot, 'gradlew')))
         ? './gradlew'
         : gradleCommand;
+
+    log.info(
+      `Quarkus detect: buildTool=${info.buildTool}, jdks=${jdks.length}, ` +
+      `profiles=${profiles.length}, buildRoot=${buildRoot}`,
+    );
 
     return {
       defaults: {
@@ -72,8 +82,13 @@ export class QuarkusAdapter implements RuntimeAdapter {
     folder: vscode.Uri,
     emit: (patch: StreamingPatch) => void,
   ): Promise<void> {
+    log.debug(`Quarkus detectStreaming: probing ${folder.fsPath}`);
     const info = await readQuarkusInfo(folder);
-    if (!info) return;
+    if (!info) {
+      log.debug(`Quarkus detectStreaming: no Quarkus markers — bailing`);
+      return;
+    }
+    log.debug(`Quarkus detectStreaming: buildTool=${info.buildTool}`);
 
     // Emit the build-tool verdict first so the form knows which launch mode to
     // show — everything downstream depends on it.
@@ -98,6 +113,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
         info.buildTool === 'gradle' && (await fileExists(vscode.Uri.joinPath(gradleRoot, 'gradlew')))
           ? './gradlew'
           : gradleCommand;
+      log.debug(`Quarkus probe: gradleCommand=${effective}, buildRoot=${buildRoot}`);
       emit({
         contextPatch: { gradleCommand: effective, buildRoot },
         defaultsPatch: {
@@ -108,24 +124,27 @@ export class QuarkusAdapter implements RuntimeAdapter {
         },
         resolved: ['typeOptions.gradleCommand', 'typeOptions.buildRoot'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Quarkus probe (gradleCommand/buildRoot) failed: ${(e as Error).message}`));
 
     (async () => {
       const profiles = await findQuarkusProfiles(folder);
+      log.debug(`Quarkus probe: profiles=${profiles.length}`);
       emit({ contextPatch: { profiles }, resolved: ['typeOptions.profile'] });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Quarkus probe (profiles) failed: ${(e as Error).message}`));
 
     (async () => {
       const jdks = await detectJdks();
+      log.debug(`Quarkus probe: jdks=${jdks.length}`);
       emit({
         contextPatch: { jdks },
         defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
         resolved: ['typeOptions.jdkPath'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Quarkus probe (jdks) failed: ${(e as Error).message}`));
 
     (async () => {
       const bt = await detectBuildTools();
+      log.debug(`Quarkus probe: gradleInstalls=${bt.gradleInstalls.length}, mavenInstalls=${bt.mavenInstalls.length}`);
       emit({
         contextPatch: { gradleInstalls: bt.gradleInstalls, mavenInstalls: bt.mavenInstalls },
         defaultsPatch: {
@@ -136,7 +155,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
         },
         resolved: ['typeOptions.gradlePath', 'typeOptions.mavenPath'],
       });
-    })().catch(() => {});
+    })().catch(e => log.warn(`Quarkus probe (buildTools) failed: ${(e as Error).message}`));
   }
 
   getFormSchema(context: Record<string, unknown>): FormSchema {

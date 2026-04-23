@@ -4,6 +4,7 @@ import type { RunConfig } from '../../shared/types';
 import type { FormField, FormSchema } from '../../shared/formSchema';
 import { readPackageJsonInfo } from './detectPackageJson';
 import { splitArgs } from './splitArgs';
+import { log } from '../../utils/logger';
 
 export class NpmAdapter implements RuntimeAdapter {
   readonly type = 'npm' as const;
@@ -11,8 +12,16 @@ export class NpmAdapter implements RuntimeAdapter {
   readonly supportsDebug = true;
 
   async detect(folder: vscode.Uri): Promise<DetectionResult | null> {
+    log.debug(`npm detect: ${folder.fsPath}`);
     const info = await readPackageJsonInfo(folder);
-    if (!info) return null;
+    if (!info) {
+      log.debug(`npm detect: no package.json`);
+      return null;
+    }
+    log.info(
+      `npm detect: packageManager=${info.packageManager}, scripts=${info.scripts.length}, ` +
+      `defaultScript=${info.defaultScript}`,
+    );
     return {
       defaults: {
         type: 'npm',

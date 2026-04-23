@@ -56,6 +56,7 @@ export class DebugService {
     }
 
     const conf = adapter.getDebugConfig(resolvedCfg, folder);
+    log.debug(`getDebugConfig: type=${conf.type}, request=${conf.request}${conf.port ? `, port=${conf.port}` : ''}`);
 
     // Java-type debug requires the Java Debugger extension.
     if (conf.type === 'java' && !vscode.extensions.getExtension(JAVA_DEBUG_EXTENSION_ID)) {

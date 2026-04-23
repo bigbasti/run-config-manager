@@ -82,6 +82,7 @@ export class ConfigStore {
       entry.file = parsed.value;
       entry.invalid = [];
       entry.lastError = undefined;
+      log.debug(`Loaded ${uri.fsPath}: ${parsed.value.configurations.length} valid configuration(s)`);
       this.emitter.fire(key);
       return;
     }
@@ -136,6 +137,7 @@ export class ConfigStore {
         ? `Found ${invalidList.length} invalid configuration(s). See the sidebar.`
         : parsed.error;
 
+    log.debug(`Loaded ${uri.fsPath}: ${validList.length} valid, ${invalidList.length} invalid`);
     if (invalidList.length > 0) {
       log.warn(`${uri.fsPath}: ${invalidList.length} invalid entr${invalidList.length === 1 ? 'y' : 'ies'}`);
       vscode.window.showWarningMessage(
