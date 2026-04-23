@@ -9,6 +9,7 @@ import { RunTerminal } from './RunTerminal';
 import {
   readyPatternsFor,
   failurePatternsFor,
+  rebuildPatternsFor,
   firstMatch,
 } from './readyPatterns';
 import { makePrettifier } from './prettyOutput';
@@ -50,6 +51,12 @@ export class ExecutionService {
   // "APPLICATION FAILED TO START"). Renders as a red circle; the process may
   // still be alive but the tree reflects the terminal state.
   private failed = new Set<string>();
+  // "Rebuilding" is a transient state that dev servers (Angular, Vite, CRA,
+  // webpack, Next.js) enter on file-watch. Scanner flips us here from either
+  // started or failed; the next ready/failure pattern moves us back. Renders
+  // as a yellow sync-spin in the tree. Mutually exclusive with started and
+  // failed while active.
+  private rebuilding = new Set<string>();
   private emitter = new vscode.EventEmitter<string>();
   readonly onRunningChanged = this.emitter.event;
   private taskEndSub: vscode.Disposable;
@@ -72,6 +79,10 @@ export class ExecutionService {
 
   isFailed(configId: string): boolean {
     return this.failed.has(configId);
+  }
+
+  isRebuilding(configId: string): boolean {
+    return this.rebuilding.has(configId);
   }
 
   // Reveal the integrated terminal for the given running config. VS Code
@@ -165,21 +176,46 @@ export class ExecutionService {
 
     const readyPatterns = useShellExecution ? [] : readyPatternsFor(resolvedCfg);
     const failPatterns = useShellExecution ? [] : failurePatternsFor(resolvedCfg);
+    const rebuildPatterns = useShellExecution ? [] : rebuildPatternsFor(resolvedCfg);
     const markReady = (reason: string) => {
-      if (this.running.has(cfg.id) && !this.started.has(cfg.id) && !this.failed.has(cfg.id)) {
+      if (!this.running.has(cfg.id)) return;
+      // A ready match clears both the failed and rebuilding flags. This is
+      // the happy path after a successful dev-server rebuild — we want the
+      // tree to flip straight from yellow to green.
+      const wasFailed = this.failed.delete(cfg.id);
+      const wasRebuilding = this.rebuilding.delete(cfg.id);
+      if (!this.started.has(cfg.id) || wasFailed || wasRebuilding) {
         this.started.add(cfg.id);
         this.emitter.fire(cfg.id);
         log.info(`Ready: ${cfg.name} — ${reason}`);
       }
     };
     const markFailed = (reason: string) => {
-      if (this.running.has(cfg.id) && !this.failed.has(cfg.id)) {
+      if (!this.running.has(cfg.id)) return;
+      const wasRebuilding = this.rebuilding.delete(cfg.id);
+      if (!this.failed.has(cfg.id) || wasRebuilding) {
         this.failed.add(cfg.id);
         // Clear started in case a ready signal fired just before the failure.
         this.started.delete(cfg.id);
         this.emitter.fire(cfg.id);
         log.warn(`Failed: ${cfg.name} — ${reason}`);
       }
+    };
+    const markRebuilding = (reason: string) => {
+      if (!this.running.has(cfg.id)) return;
+      // Only flip from started / failed. If we're still in the initial
+      // starting phase (neither set), let the first ready/failure pattern
+      // decide — a "Compiling…" line before the very first "compiled" is
+      // expected and shouldn't flip us to yellow.
+      if (!this.started.has(cfg.id) && !this.failed.has(cfg.id)) return;
+      if (this.rebuilding.has(cfg.id)) return;
+      this.rebuilding.add(cfg.id);
+      // Rebuilding supersedes started/failed visually; clear both so the
+      // tree renders the yellow spinner.
+      this.started.delete(cfg.id);
+      this.failed.delete(cfg.id);
+      this.emitter.fire(cfg.id);
+      log.info(`Rebuilding: ${cfg.name} — ${reason}`);
     };
 
     // Format a RegExp as the literal we embed in the log. `RegExp.toString()`
@@ -202,8 +238,12 @@ export class ExecutionService {
           env: mergedEnv,
           prettifier: makePrettifier(resolvedCfg, { cwd }),
           onOutput: chunk => {
-            // Check failure first: if both fire in the same chunk, the red
-            // signal wins and we don't want to have logged green first.
+            // Priority: failure > ready > rebuild. If a chunk happens to
+            // contain both (e.g. a dev server prints an error line right
+            // before it announces a new compile), the most-decisive signal
+            // wins. Ready beats rebuild because a "compiled successfully"
+            // line should flip us green even if the same chunk carries
+            // a "Compiling…" line from earlier.
             const failHit = failPatterns.length ? firstMatch(chunk, failPatterns) : null;
             if (failHit) {
               markFailed(`matched failure pattern ${patternLabel(failHit)}`);
@@ -212,6 +252,11 @@ export class ExecutionService {
             const readyHit = readyPatterns.length ? firstMatch(chunk, readyPatterns) : null;
             if (readyHit) {
               markReady(`matched readiness pattern ${patternLabel(readyHit)}`);
+              return;
+            }
+            const rebuildHit = rebuildPatterns.length ? firstMatch(chunk, rebuildPatterns) : null;
+            if (rebuildHit) {
+              markRebuilding(`matched rebuild pattern ${patternLabel(rebuildHit)}`);
             }
           },
           onExit: () => {
@@ -270,6 +315,7 @@ export class ExecutionService {
     this.running.delete(configId);
     this.started.delete(configId);
     this.failed.delete(configId);
+    this.rebuilding.delete(configId);
     this.emitter.fire(configId);
   }
 
@@ -282,6 +328,7 @@ export class ExecutionService {
         this.running.delete(id);
         this.started.delete(id);
         this.failed.delete(id);
+        this.rebuilding.delete(id);
         this.emitter.fire(id);
         return;
       }
@@ -304,6 +351,7 @@ export class ExecutionService {
     this.running.clear();
     this.started.clear();
     this.failed.clear();
+    this.rebuilding.clear();
     this.taskEndSub.dispose();
     this.emitter.dispose();
   }

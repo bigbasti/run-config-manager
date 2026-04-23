@@ -177,3 +177,42 @@ export function firstMatch(text: string, patterns: RegExp[]): RegExp | null {
   }
   return null;
 }
+
+// Patterns signalling that a running dev server is recompiling / restarting
+// after a file change. When one fires on a config that's currently in
+// `started` or `failed` state, the tree flips to a yellow spinner
+// ("Rebuilding…"). A subsequent ready match flips it back to green; a
+// failure match flips it red. The cycle repeats for the life of the process.
+//
+// Only npm / Node runtimes have watch mode that's this chatty; JVM runtimes
+// that have it (Spring Boot DevTools, Quarkus Live Coding) already manage
+// their own "Restarted …" log lines which match the existing ready pattern,
+// so they don't need a rebuilding state.
+export function rebuildPatternsFor(cfg: RunConfig): RegExp[] {
+  if (cfg.type === 'npm') {
+    return [
+      // Angular CLI 15+.
+      /Changes detected\.?\s*Rebuilding/i,
+      /^\s*Rebuilding\.\.\./m,
+      // Webpack + webpack-dev-server.
+      /^\s*Compiling\.\.\./m,
+      /webpack is watching the files/i,
+      // Vite HMR / full reload.
+      /\[vite\] (page reload|hmr update)/i,
+      /\[vite\] restarting server/i,
+      // Next.js dev server — spacing varies; loose whitespace between tokens.
+      /^\s*(wait|event)\s+-\s+(compiling|compiled)/im,
+      /^\s*- event compiled/im,
+      // Create React App / react-scripts.
+      /^\s*Compiling\.\.\. ?$/m,
+      // SvelteKit / Vite-based Svelte setups.
+      /hmr update/i,
+      /rebuilding\b/i,
+      // Nodemon / ts-node-dev restart banners.
+      /\[nodemon\] restarting due to changes/i,
+      /\[nodemon\] starting/i,
+      /ts-node-dev\b.*(restarting|compilation)/i,
+    ];
+  }
+  return [];
+}

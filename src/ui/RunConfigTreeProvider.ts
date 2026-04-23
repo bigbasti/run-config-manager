@@ -62,6 +62,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     const running = this.exec.isRunning(n.config.id) || this.dbg.isRunning(n.config.id);
     const started = this.exec.isStarted(n.config.id);
     const failed = this.exec.isFailed(n.config.id);
+    const rebuilding = this.exec.isRebuilding(n.config.id);
     const adapter = this.registry.get(n.config.type);
     const debuggable = adapter?.supportsDebug === true;
     const item = new vscode.TreeItem(n.config.name, vscode.TreeItemCollapsibleState.None);
@@ -71,6 +72,8 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       `Command: \`${buildCommandPreview(n.config)}\`` +
       (preparing
         ? '\n\n_Preparing (running build / writing scaffold)…_'
+        : rebuilding
+        ? '\n\n_Rebuilding — dev server detected a file change._'
         : failed
         ? '\n\n_Startup failed — see terminal for details._'
         : running && !started
@@ -80,14 +83,23 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
         : ''),
     );
     // Visual states, in order of precedence:
-    //   preparing (blue sync-spin + "Preparing…")
-    //   failed    (red error — log scanner matched a failure banner)
-    //   starting  (loading-spin — running, no ready signal yet)
-    //   started   (green pass-filled — ready pattern matched)
-    //   idle      (type icon)
+    //   preparing  (blue sync-spin + "Preparing…")
+    //   rebuilding (yellow sync-spin — dev server is recompiling on change)
+    //   failed     (red error — log scanner matched a failure banner)
+    //   starting   (loading-spin — running, no ready signal yet)
+    //   started    (green pass-filled — ready pattern matched)
+    //   idle       (type icon)
+    //
+    // Rebuilding sits above failed because a user-initiated save-and-rebuild
+    // is a transient in-flight state even if the previous build was red;
+    // keeping the icon red while the dev server is actively working would
+    // misrepresent the situation.
     if (preparing) {
       item.iconPath = new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.blue'));
       item.description = 'Preparing…';
+    } else if (rebuilding) {
+      item.iconPath = new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.yellow'));
+      item.description = 'Rebuilding…';
     } else if (failed) {
       item.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
       item.description = 'Failed';

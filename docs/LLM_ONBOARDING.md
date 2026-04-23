@@ -111,7 +111,7 @@ Distinctive behaviors per adapter:
 
 **RunConfigService** — thin CRUD over ConfigStore. `list()` returns `ConfigRef[]` (discriminated on `valid`). `create/update/delete` handle both valid and invalid entries.
 
-**ExecutionService** — owns four state sets per config id: `preparing`, `running` (a `Map<id, Entry>`), `started`, `failed`. `run(cfg, folder, opts?)` resolves variables, calls `prepareLaunch` (setting preparing), spawns a `RunTerminal` with a `prettifier` and the readiness/failure scanner as `onOutput`. Fires `onRunningChanged(configId)` on every transition. Stop clears all state for the id. The Gradle rebuild watcher is a separate secondary task tracked in `Entry.watcher`; it's killed when the main task ends but its own death doesn't affect the main task's state.
+**ExecutionService** — owns five state sets per config id: `preparing`, `running` (a `Map<id, Entry>`), `started`, `failed`, `rebuilding`. `run(cfg, folder, opts?)` resolves variables, calls `prepareLaunch` (setting preparing), spawns a `RunTerminal` with a `prettifier` and the readiness/failure/rebuild scanner as `onOutput`. Fires `onRunningChanged(configId)` on every transition. The rebuild scanner only runs for npm configs — JVM runtimes have their own reload semantics that map cleanly to ready patterns. Stop clears all state for the id. The Gradle rebuild watcher is a separate secondary task tracked in `Entry.watcher`; it's killed when the main task ends but its own death doesn't affect the main task's state.
 
 **DebugService** — debugging has two flavors:
 - **Launch** (npm, spring-boot/java-main, java/java-main): calls `vscode.debug.startDebugging(folder, getDebugConfig(cfg))`. That's it.
@@ -140,8 +140,9 @@ Tracks `running` sessions and fires `onRunningChanged` the same way ExecutionSer
 
 ## UI
 
-**RunConfigTreeProvider** — renders 4 kinds of tree nodes: `folder`, `typeGroup` (only when >1 config of a type in a folder), `config`, `invalid`. A config has 5 possible visual states, precedence top-to-bottom:
+**RunConfigTreeProvider** — renders 4 kinds of tree nodes: `folder`, `typeGroup` (only when >1 config of a type in a folder), `config`, `invalid`. A config has 6 possible visual states, precedence top-to-bottom:
 - `preparing` — blue `sync~spin`, description `Preparing…` (`exec.isPreparing`).
+- `rebuilding` — yellow `sync~spin`, description `Rebuilding…` (`exec.isRebuilding`). Dev servers (Angular, Vite, CRA, webpack, Next.js) set this on file-watch. Next ready pattern → green; next failure pattern → red.
 - `failed` — red `error` icon, description `Failed` (`exec.isFailed`).
 - `running && !started` — `loading~spin`, description `Starting…`.
 - `started` — green `pass-filled`.

@@ -3,6 +3,8 @@ import {
   chunkSignalsReady,
   failurePatternsFor,
   chunkSignalsFailure,
+  rebuildPatternsFor,
+  firstMatch,
 } from '../src/services/readyPatterns';
 import type { RunConfig } from '../src/shared/types';
 
@@ -192,5 +194,52 @@ describe('failurePatternsFor', () => {
   test('Java: BUILD FAILED shared pattern', () => {
     const patterns = failurePatternsFor(cfg({ type: 'java' } as any));
     expect(chunkSignalsFailure('BUILD FAILED in 3s', patterns)).toBe(true);
+  });
+});
+
+describe('rebuildPatternsFor', () => {
+  const npmCfg = cfg({ type: 'npm' } as any);
+  const patterns = () => rebuildPatternsFor(npmCfg);
+  const matches = (text: string) => firstMatch(text, patterns()) !== null;
+
+  test('Angular CLI: Changes detected / Rebuilding', () => {
+    expect(matches('Changes detected. Rebuilding...')).toBe(true);
+    expect(matches('Rebuilding...')).toBe(true);
+  });
+
+  test('Webpack: Compiling...', () => {
+    expect(matches('Compiling...')).toBe(true);
+    expect(matches('webpack is watching the files…')).toBe(true);
+  });
+
+  test('Vite: page reload / hmr update / restart', () => {
+    expect(matches('[vite] page reload src/App.tsx')).toBe(true);
+    expect(matches('[vite] hmr update /src/App.tsx')).toBe(true);
+    expect(matches('[vite] restarting server...')).toBe(true);
+  });
+
+  test('Next.js: wait / event compiling', () => {
+    expect(matches('wait  - compiling /page (client and server)')).toBe(true);
+    expect(matches('event - compiled client and server successfully in 1.2s')).toBe(true);
+  });
+
+  test('Nodemon / ts-node-dev: restart banner', () => {
+    expect(matches('[nodemon] restarting due to changes...')).toBe(true);
+    expect(matches('[nodemon] starting `node dist/app.js`')).toBe(true);
+    expect(matches('[INFO] ts-node-dev ver. 2.0.0 restarting compilation')).toBe(true);
+  });
+
+  test('non-npm runtimes have no rebuild patterns', () => {
+    expect(rebuildPatternsFor(cfg({ type: 'spring-boot' } as any))).toEqual([]);
+    expect(rebuildPatternsFor(cfg({ type: 'java' } as any))).toEqual([]);
+    expect(rebuildPatternsFor(cfg({ type: 'quarkus' } as any))).toEqual([]);
+    expect(rebuildPatternsFor(cfg({ type: 'tomcat' } as any))).toEqual([]);
+  });
+
+  test('no false positives on Angular happy-path build log', () => {
+    // "✔ Compiled successfully" and "Application bundle generation complete"
+    // are READY signals, not rebuild starts — must not match here.
+    expect(matches('✔ Compiled successfully.')).toBe(false);
+    expect(matches('Application bundle generation complete.')).toBe(false);
   });
 });
