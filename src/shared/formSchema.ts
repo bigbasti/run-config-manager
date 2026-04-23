@@ -30,7 +30,11 @@ export type FormField =
       kind: 'selectOrCustom';
       key: string;
       label: string;
-      options: Array<{ value: string; label: string }>;
+      // Options may include an optional `group` (for collapsible grouping in
+      // the dropdown) and `description` (rendered alongside the label in a
+      // dimmer color). When `group` is absent on every option, the widget
+      // renders a flat filterable list instead of grouped sections.
+      options: Array<{ value: string; label: string; group?: string; description?: string }>;
       placeholder?: string;
     } & BaseFieldMeta)
   | ({

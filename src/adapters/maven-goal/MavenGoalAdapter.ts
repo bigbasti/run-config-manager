@@ -116,9 +116,15 @@ export class MavenGoalAdapter implements RuntimeAdapter {
     const detectedBuildRoot = (context.buildRoot as string | undefined) ?? '';
     const loadedGoals = (context.loadedGoals as MavenGoalEntry[] | undefined) ?? [];
 
+    // Partition into two groups: lifecycle phases (which are single-word
+    // values like "clean", "install") and plugin prefixes (colon-terminated
+    // like "liquibase:" — inviting the user to complete with a goal).
+    // SelectOrCustom uses the group for its collapsible section headers.
     const goalOptions = loadedGoals.map(g => ({
       value: g.value,
-      label: `${g.value}${g.description ? ` — ${g.description}` : ''}`,
+      label: g.value,
+      group: g.value.endsWith(':') ? 'Plugin prefixes' : 'Lifecycle phases',
+      description: g.description,
     }));
 
     const goalHelp = loadedGoals.length

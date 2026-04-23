@@ -132,11 +132,15 @@ export class GradleTaskAdapter implements RuntimeAdapter {
     const detectedBuildRoot = (context.buildRoot as string | undefined) ?? '';
     const loadedTasks = (context.loadedTasks as GradleTaskEntry[] | undefined) ?? [];
 
-    // Flatten {group, name, description} into SelectOrCustom options with
-    // the group in the label so users see the native Gradle grouping.
+    // Emit structured options — SelectOrCustom will use `group` for its
+    // collapsible section headers and `description` for the dim column on
+    // each row. The `label` stays as just the task name so the filter
+    // matches what the user sees.
     const taskOptions = loadedTasks.map(t => ({
       value: t.name,
-      label: `[${t.group}] ${t.name}${t.description ? ` — ${t.description}` : ''}`,
+      label: t.name,
+      group: t.group,
+      description: t.description,
     }));
 
     const taskHelp = loadedTasks.length
