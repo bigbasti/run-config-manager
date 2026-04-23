@@ -8,9 +8,8 @@ import { makeRunContext, resolveConfig } from '../utils/resolveVars';
 import { RunTerminal } from './RunTerminal';
 import {
   readyPatternsFor,
-  chunkSignalsReady,
   failurePatternsFor,
-  chunkSignalsFailure,
+  firstMatch,
 } from './readyPatterns';
 import { makePrettifier } from './prettyOutput';
 
@@ -183,6 +182,10 @@ export class ExecutionService {
       }
     };
 
+    // Format a RegExp as the literal we embed in the log. `RegExp.toString()`
+    // yields the familiar /pattern/flags form.
+    const patternLabel = (re: RegExp) => re.toString();
+
     // ShellExecution insists on Record<string, string>; filter out the
     // undefined entries that come from inheriting process.env.
     const strictEnv: Record<string, string> = {};
@@ -199,12 +202,16 @@ export class ExecutionService {
           env: mergedEnv,
           prettifier: makePrettifier(resolvedCfg, { cwd }),
           onOutput: chunk => {
-            if (failPatterns.length && chunkSignalsFailure(chunk, failPatterns)) {
-              markFailed('matched failure pattern');
+            // Check failure first: if both fire in the same chunk, the red
+            // signal wins and we don't want to have logged green first.
+            const failHit = failPatterns.length ? firstMatch(chunk, failPatterns) : null;
+            if (failHit) {
+              markFailed(`matched failure pattern ${patternLabel(failHit)}`);
               return;
             }
-            if (readyPatterns.length && chunkSignalsReady(chunk, readyPatterns)) {
-              markReady('matched readiness pattern');
+            const readyHit = readyPatterns.length ? firstMatch(chunk, readyPatterns) : null;
+            if (readyHit) {
+              markReady(`matched readiness pattern ${patternLabel(readyHit)}`);
             }
           },
           onExit: () => {

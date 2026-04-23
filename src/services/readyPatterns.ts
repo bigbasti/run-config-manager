@@ -166,3 +166,14 @@ export function chunkSignalsFailure(text: string, patterns: RegExp[]): boolean {
   }
   return false;
 }
+
+// Returns the first pattern whose test matches `text`, or null. Used by
+// ExecutionService to log which specific pattern fired when flipping a
+// config to started/failed — the source ("/Started .../") is much more
+// useful than a generic "matched readiness pattern".
+export function firstMatch(text: string, patterns: RegExp[]): RegExp | null {
+  for (const p of patterns) {
+    if (p.test(text)) return p;
+  }
+  return null;
+}
