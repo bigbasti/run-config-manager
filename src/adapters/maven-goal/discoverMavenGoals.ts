@@ -162,7 +162,11 @@ async function describePlugin(opts: DescribeOpts): Promise<{ plugin: PluginRef; 
   const coord = `${plugin.groupId}:${plugin.artifactId}`;
   log.debug(`Maven goals: probing ${coord}`);
 
-  const args = ['-q', '-B', 'help:describe', `-Dplugin=${coord}`];
+  // IMPORTANT: do NOT pass -q. Maven's help:describe prints the goal
+  // listing at INFO level; -q suppresses INFO and we get an empty
+  // stdout. Keep -B for non-interactive (no download-progress noise)
+  // but let INFO lines flow so the parser sees the goal block.
+  const args = ['-B', 'help:describe', `-Dplugin=${coord}`];
   const output = await runAndCollect(binary, args, { cwd, env, timeoutMs });
   if (output === null) {
     return { plugin, goals: [] };
