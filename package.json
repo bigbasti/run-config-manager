@@ -1,15 +1,27 @@
 {
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
-  "description": "IntelliJ-style run configurations for VS Code (npm, Angular, Node.js).",
-  "version": "0.3.0",
-  "publisher": "local",
+  "description": "IntelliJ-style run configurations for VS Code.",
+  "version": "0.3.1",
+  "publisher": "SebastianGross",
   "license": "MIT",
   "author": {
     "name": "Sebastian Gross",
-    "email": "sebastian.gross@telekom.de"
+    "email": "bigbasti@outlook.com"
   },
   "icon": "media/runconf.png",
+  "keywords": [
+    "run",
+    "configuration",
+    "manager",
+    "intellij",
+    "runner",
+    "debugger",
+    "tasks"
+  ],
+  "categories": [
+    "Other"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
