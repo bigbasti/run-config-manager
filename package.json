@@ -193,7 +193,7 @@
     "test": "jest",
     "typecheck": "tsc -p tsconfig.extension.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "gen:icons": "node scripts/generate-icons.mjs",
-    "package": "npm run build && vsce package --no-dependencies"
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository"
   },
   "dependencies": {
     "uuid": "^9.0.1",
