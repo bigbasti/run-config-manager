@@ -281,15 +281,25 @@ export class EditorPanel {
                   );
                 }
               } else if (cfg.type === 'maven-goal') {
-                const projectRoot = resolveProjectUri(this.args.folder, cfg.projectPath);
-                log.info(`Load ${label}: parsing pom.xml at ${projectRoot.fsPath}`);
-                const goals = await discoverMavenGoals(projectRoot);
-                log.info(`Load ${label}: ${goals.length} entries (phases + plugin prefixes)`);
+                const to = cfg.typeOptions;
+                const projectRoot = to.buildRoot
+                  ? vscode.Uri.file(to.buildRoot)
+                  : resolveProjectUri(this.args.folder, cfg.projectPath);
+                const mavenBinary = to.mavenPath
+                  ? `${to.mavenPath.replace(/[/\\]$/, '')}/bin/mvn`
+                  : 'mvn';
+                log.info(`Load ${label}: parsing pom.xml at ${projectRoot.fsPath} and probing plugins via ${mavenBinary} help:describe`);
+                const goals = await discoverMavenGoals({
+                  folder: projectRoot,
+                  mavenBinary,
+                  javaHome: to.jdkPath || undefined,
+                });
+                log.info(`Load ${label}: ${goals.length} entries (lifecycle phases + plugin goals)`);
                 this.context.loadedGoals = goals;
                 const schema = this.args.adapter.getFormSchema(this.context);
                 this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
                 vscode.window.showInformationMessage(
-                  `Loaded ${goals.length} Maven entr${goals.length === 1 ? 'y' : 'ies'} (lifecycle phases + plugin prefixes).`,
+                  `Loaded ${goals.length} Maven entr${goals.length === 1 ? 'y' : 'ies'} (lifecycle phases + plugin goals).`,
                 );
               } else {
                 // Shouldn't happen — the action button is only defined on

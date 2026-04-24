@@ -116,20 +116,33 @@ export class MavenGoalAdapter implements RuntimeAdapter {
     const detectedBuildRoot = (context.buildRoot as string | undefined) ?? '';
     const loadedGoals = (context.loadedGoals as MavenGoalEntry[] | undefined) ?? [];
 
-    // Partition into two groups: lifecycle phases (which are single-word
-    // values like "clean", "install") and plugin prefixes (colon-terminated
-    // like "liquibase:" — inviting the user to complete with a goal).
-    // SelectOrCustom uses the group for its collapsible section headers.
-    const goalOptions = loadedGoals.map(g => ({
-      value: g.value,
-      label: g.value,
-      group: g.value.endsWith(':') ? 'Plugin prefixes' : 'Lifecycle phases',
-      description: g.description,
-    }));
+    // Group rows so the dropdown's collapsible sections partition cleanly:
+    //   - Lifecycle phases (clean / compile / test / package / ...)
+    //   - One section per plugin (Liquibase goals, Spring Boot goals, ...)
+    //   - "Plugin prefixes" catch-all for plugins whose describe probe
+    //     failed and only the prefix was surfaced as a fallback.
+    const goalOptions = loadedGoals.map(g => {
+      let group: string;
+      if (!g.value.includes(':')) {
+        group = 'Lifecycle phases';
+      } else if (g.value.endsWith(':')) {
+        group = 'Plugin prefixes';
+      } else {
+        // <prefix>:<goal> — group by prefix with a human-readable label.
+        const prefix = g.value.split(':')[0];
+        group = `${prefix} goals`;
+      }
+      return {
+        value: g.value,
+        label: g.value,
+        group,
+        description: g.description,
+      };
+    });
 
     const goalHelp = loadedGoals.length
-      ? 'Maven lifecycle phase or plugin goal. Options include the standard phases (clean, compile, test, package, install…) and prefixes for each plugin declared in pom.xml — complete these after the colon (e.g. `liquibase:dropAll`). You can chain multiple phases/goals: `clean install`, `clean verify -Pprod`.'
-      : 'Maven lifecycle phase or plugin goal. Click "Load phases & plugin prefixes" to populate the dropdown from pom.xml. Typical values: `clean install`, `verify -Pprod`, `liquibase:dropAll`.';
+      ? 'Maven lifecycle phase or plugin goal. The dropdown is grouped — lifecycle phases + one section per plugin detected in pom.xml with its actual goals (liquibase:dropAll, liquibase:update, …). You can chain multiple phases/goals: `clean install`, `clean verify -Pprod`.'
+      : 'Maven lifecycle phase or plugin goal. Click "Load phases & plugin goals" to enumerate what your pom\'s plugins expose. Typical values: `clean install`, `verify -Pprod`, `liquibase:dropAll`.';
 
     return {
       common: [
@@ -165,7 +178,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
             'liquibase:dropAll -Dliquibase.url=jdbc:h2:mem:test',
           ],
           inspectable: true,
-          action: { id: 'loadGoals', label: 'Load phases & plugin prefixes', busyLabel: 'Loading…' },
+          action: { id: 'loadGoals', label: 'Load phases & plugin goals', busyLabel: 'Loading…' },
         },
         {
           kind: 'selectOrCustom',
