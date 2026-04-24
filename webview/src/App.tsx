@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RunConfig } from '../../src/shared/types';
-import type { FormSchema } from '../../src/shared/formSchema';
+import type { FormField, FormSchema } from '../../src/shared/formSchema';
+import { getPath } from './state';
 import type { Inbound, Outbound } from '../../src/shared/protocol';
 import { ConfigForm } from './ConfigForm';
 import { HelpPanel } from './HelpPanel';
@@ -9,6 +10,14 @@ declare function acquireVsCodeApi(): { postMessage(msg: Outbound): void; getStat
 
 const vscode = acquireVsCodeApi();
 function post(msg: Outbound) { vscode.postMessage(msg); }
+
+// Returns the buildTool a folderPath field opted into validation for, or
+// null if it didn't. Hoisted out of the component so the auto-validation
+// effect stays readable.
+function fieldValidateBuildPath(f: FormField): 'maven' | 'gradle' | 'either' | null {
+  if (f.kind !== 'folderPath') return null;
+  return f.validateBuildPath ?? null;
+}
 
 // The hint emitted by suggestClasspath contains a `/*` glob that isn't valid
 // as a literal classpath entry — treat it (and empty) as "not yet computed".
@@ -54,6 +63,10 @@ export function App() {
   // When non-null, a save is queued waiting for an async precondition (e.g.,
   // classpath recompute). We fire it after the precondition resolves.
   const pendingSaveRef = useRef<boolean>(false);
+  // Tracks the last projectPath we asked the extension to validate, keyed
+  // on field key. Lets us dedupe the auto-revalidation effect below so we
+  // don't flood the extension when an unrelated field re-renders.
+  const lastValidatedRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     const onMessage = (e: MessageEvent<Inbound>) => {
@@ -130,7 +143,31 @@ export function App() {
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
+  // Auto-validate every folderPath field that declared `validateBuildPath`
+  // whenever the schema loads, a streaming update arrives, or the user's
+  // value for such a field changes (e.g. clicking "Use (workspace root)"
+  // re-runs validation on the new value, clearing the warning). Blur-only
+  // validation would miss both the initial render and the post-apply
+  // case — users never focus a field whose prefilled value they intend to
+  // keep, and they never re-focus after clicking the suggestion button.
+  useEffect(() => {
+    if (!schema) return;
+    const fields = [...schema.common, ...schema.typeSpecific, ...schema.advanced];
+    for (const f of fields) {
+      const target = fieldValidateBuildPath(f);
+      if (!target) continue;
+      const current = (getPath(values, f.key) as string | undefined) ?? '';
+      if (lastValidatedRef.current.get(f.key) === current) continue;
+      lastValidatedRef.current.set(f.key, current);
+      post({ cmd: 'validateProjectPath', fieldKey: f.key, projectPath: current, buildTool: target });
+    }
+  }, [schema, values]);
+
   const onValidatePath = (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', p: string) => {
+    // Manual trigger (blur). Bypass the dedupe ref so an explicit blur
+    // always gets a fresh answer, even if we validated that same value
+    // on init.
+    lastValidatedRef.current.set(fieldKey, p);
     post({ cmd: 'validateProjectPath', fieldKey, projectPath: p, buildTool });
   };
 
