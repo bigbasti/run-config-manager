@@ -160,6 +160,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
           key: 'projectPath',
           label: 'Project path',
           relativeTo: 'workspaceFolder',
+          validateBuildPath: 'maven',
           help: 'Path to the Maven project root, relative to the workspace folder.',
           examples: ['', 'backend', 'services/api'],
         },

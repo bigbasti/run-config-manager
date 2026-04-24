@@ -273,6 +273,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           kind: 'folderPath',
           key: 'typeOptions.buildProjectPath',
           label: 'Build project path',
+          validateBuildPath: 'either',
           help:
             'Path (relative to workspace folder) of the project that produces the artifact. ' +
             'Leave blank to use the Project path field above. ' +

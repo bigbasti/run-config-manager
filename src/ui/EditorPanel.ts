@@ -10,6 +10,7 @@ import { recomputeClasspath } from '../adapters/spring-boot/recomputeClasspath';
 import { makeRunContext, resolveConfig } from '../utils/resolveVars';
 import { discoverGradleTasks } from '../adapters/gradle-task/discoverGradleTasks';
 import { discoverMavenGoals } from '../adapters/maven-goal/discoverMavenGoals';
+import { validateBuildProjectPath } from '../utils/validateBuildProjectPath';
 
 interface OpenArgs {
   mode: 'create' | 'edit';
@@ -353,6 +354,35 @@ export class EditorPanel {
           const err: Inbound = { cmd: 'error', message: `Classpath recompute failed: ${(e as Error).message}` };
           this.panel.webview.postMessage(err);
           log.error('recomputeClasspath', e);
+        }
+        return;
+      }
+      case 'validateProjectPath': {
+        // Fires on blur of a folderPath field whose schema declared
+        // `validateBuildPath`. Fast filesystem stats only — no shelling
+        // out — so we don't debounce or throttle.
+        log.debug(`Validate projectPath (${msg.buildTool}): "${msg.projectPath}"`);
+        try {
+          const result = await validateBuildProjectPath(
+            this.args.folder,
+            msg.projectPath,
+            msg.buildTool,
+          );
+          const reply: Inbound = result.ok
+            ? { cmd: 'projectPathValidated', fieldKey: msg.fieldKey, ok: true }
+            : {
+                cmd: 'projectPathValidated',
+                fieldKey: msg.fieldKey,
+                ok: false,
+                reason: result.reason,
+                suggestion: result.suggestion,
+              };
+          this.panel.webview.postMessage(reply);
+        } catch (e) {
+          log.warn(`validateProjectPath failed: ${(e as Error).message}`);
+          // Silent failure — don't nag the user about a best-effort check.
+          const reply: Inbound = { cmd: 'projectPathValidated', fieldKey: msg.fieldKey, ok: true };
+          this.panel.webview.postMessage(reply);
         }
         return;
       }

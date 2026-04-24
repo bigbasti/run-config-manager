@@ -244,6 +244,7 @@ export class JavaAdapter implements RuntimeAdapter {
           key: 'projectPath',
           label: 'Project path',
           relativeTo: 'workspaceFolder',
+          validateBuildPath: 'either',
           help: 'Path to the project root, relative to the workspace folder.',
           examples: ['', 'backend', 'tools/importer'],
         },

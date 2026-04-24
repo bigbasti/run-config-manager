@@ -188,6 +188,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
           key: 'projectPath',
           label: 'Project path',
           relativeTo: 'workspaceFolder',
+          validateBuildPath: 'either',
           help: 'Path to the Quarkus project root, relative to the workspace folder.',
           examples: ['', 'backend', 'services/api'],
         },

@@ -251,6 +251,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
           key: 'projectPath',
           label: 'Project path',
           relativeTo: 'workspaceFolder',
+          validateBuildPath: 'either',
           help: 'Path to the Spring Boot project root, relative to the workspace folder.',
           examples: ['', 'backend', 'services/api'],
         },

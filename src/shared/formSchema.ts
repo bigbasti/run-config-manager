@@ -46,7 +46,16 @@ export type FormField =
     } & BaseFieldMeta)
   | ({ kind: 'boolean'; key: string; label: string } & BaseFieldMeta)
   | ({ kind: 'kv'; key: string; label: string } & BaseFieldMeta)
-  | ({ kind: 'folderPath'; key: string; label: string; relativeTo?: 'workspaceFolder' } & BaseFieldMeta);
+  | ({
+      kind: 'folderPath';
+      key: string;
+      label: string;
+      relativeTo?: 'workspaceFolder';
+      // When set, the webview posts a `validateProjectPath` on blur with
+      // this build tool. The extension responds with a warning + optional
+      // parent-folder suggestion the user can apply with one click.
+      validateBuildPath?: 'maven' | 'gradle' | 'either';
+    } & BaseFieldMeta);
 
 export interface FormSchema {
   common: FormField[];

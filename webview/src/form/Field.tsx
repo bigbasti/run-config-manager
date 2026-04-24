@@ -16,9 +16,14 @@ interface Props {
   onFieldAction?: (actionId: string) => void;
   busyActionId?: string | null;
   pending?: Set<string>;
+  // Validation results for folderPath fields with `validateBuildPath`.
+  // Map key is the field key; value is null when the path is valid,
+  // {reason, suggestion?} when not. Undefined means "not validated yet".
+  pathWarnings?: Map<string, { reason: string; suggestion?: string } | null>;
+  onValidatePath?: (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', path: string) => void;
 }
 
-export function Field({ field, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending }: Props) {
+export function Field({ field, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath }: Props) {
   // Honor dependsOn: hide the field if its dependency's current value doesn't match.
   if (field.dependsOn) {
     const dep = getPath(values, field.dependsOn.key);
@@ -52,7 +57,13 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
       </label>
       <div className="field-row">
         <div style={{ flex: 1, minWidth: 0 }}>
-          {renderInput(field, v, set, { onPickFolder, focus, blur })}
+          {renderInput(field, v, set, {
+            onPickFolder,
+            focus,
+            blur,
+            pathWarning: pathWarnings?.get(field.key),
+            onValidatePath,
+          })}
         </div>
         {inspectable && (
           <button
@@ -94,6 +105,8 @@ interface RenderHandlers {
   onPickFolder?: () => void;
   focus: () => void;
   blur: () => void;
+  pathWarning?: { reason: string; suggestion?: string } | null;
+  onValidatePath?: (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', path: string) => void;
 }
 
 function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderHandlers) {
@@ -182,15 +195,24 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
           onBlur={h.blur}
         />
       );
-    case 'folderPath':
+    case 'folderPath': {
+      const validate = field.validateBuildPath;
       return (
         <FolderPathInput
           value={v ?? ''}
           onChange={set}
           onPick={() => h.onPickFolder?.()}
           onFocus={h.focus}
-          onBlur={h.blur}
+          onBlur={() => {
+            h.blur();
+            if (validate && h.onValidatePath) {
+              h.onValidatePath(field.key, validate, (v as string) ?? '');
+            }
+          }}
+          warning={h.pathWarning}
+          onApplySuggestion={(path) => set(path)}
         />
       );
+    }
   }
 }

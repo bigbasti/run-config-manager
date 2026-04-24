@@ -13,15 +13,20 @@ interface Props {
   onFieldAction: (actionId: string) => void;
   busyActionId: string | null;
   pending?: Set<string>;
+  pathWarnings?: Map<string, { reason: string; suggestion?: string } | null>;
+  onValidatePath?: (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', path: string) => void;
 }
 
-export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending }: Props) {
+export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath }: Props) {
   const preview = useMemo(() => {
     try { return buildCommandPreview(values as RunConfig); } catch { return ''; }
   }, [values]);
 
   const change = (next: Record<string, unknown>) => onChange(next as Partial<RunConfig>);
-  const shared = { values: values as any, onChange: change, onFocusField, onFieldAction, busyActionId, pending };
+  const shared = {
+    values: values as any, onChange: change, onFocusField, onFieldAction,
+    busyActionId, pending, pathWarnings, onValidatePath,
+  };
 
   return (
     <div className="form">

@@ -68,9 +68,35 @@ function needsLighten(hex) {
   return y < 40;
 }
 
+// Hand-authored overrides for brands where the simple-icons mark reads
+// poorly at 16px or doesn't match the community-standard visual. Keys
+// are our internal filenames; values are the SVG <path d="…"/> data
+// plus a color. The generator emits these the same way as simple-icons
+// entries (single-color, single-path) and skips the SI lookup.
+const OVERRIDES = {
+  // simple-icons ships the official "feathers" Maven mark, but the wider
+  // community associates Maven with the circular "M" glyph. Viewbox
+  // matches the other icons (24×24). Design: filled red ring, reversed
+  // white capital M set in a geometric form that stays legible at 16px.
+  maven: {
+    hex: 'C71A36',
+    title: 'Apache Maven',
+    // Ring (12,12) r=11 outline, inner white circle r=8, with an M shape
+    // cut out by a white path. Using fill-rule "evenodd" on a compound
+    // path to punch the M through.
+    path: 'M12 1a11 11 0 100 22 11 11 0 000-22zm0 2.2a8.8 8.8 0 110 17.6 8.8 8.8 0 010-17.6zM7.2 7.8v8.4h1.9v-4.9l1.9 3.4h1.8l1.9-3.4v4.9h2v-8.4h-2.1l-2.7 5-2.7-5H7.2z',
+  },
+};
+
 let written = 0;
 for (const [fileName, slug] of ICONS) {
-  const icon = si[slug];
+  const override = OVERRIDES[fileName];
+  let icon;
+  if (override) {
+    icon = override;
+  } else {
+    icon = si[slug];
+  }
   if (!icon) {
     console.error(`simple-icons slug ${slug} not found — skipping ${fileName}`);
     process.exitCode = 1;

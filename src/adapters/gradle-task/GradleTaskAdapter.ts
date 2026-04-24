@@ -164,6 +164,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
           key: 'projectPath',
           label: 'Project path',
           relativeTo: 'workspaceFolder',
+          validateBuildPath: 'gradle',
           help: 'Path to the Gradle project root, relative to the workspace folder.',
           examples: ['', 'backend', 'systemtest'],
         },

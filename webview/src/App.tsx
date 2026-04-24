@@ -46,6 +46,11 @@ export function App() {
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+  // Validation results for folderPath fields with `validateBuildPath`.
+  // null = valid, {reason, suggestion?} = warn under the input. The map
+  // is keyed on field.key; entries persist until the next blur of the
+  // same field rewrites them.
+  const [pathWarnings, setPathWarnings] = useState<Map<string, { reason: string; suggestion?: string } | null>>(new Map());
   // When non-null, a save is queued waiting for an async precondition (e.g.,
   // classpath recompute). We fire it after the precondition resolves.
   const pendingSaveRef = useRef<boolean>(false);
@@ -103,6 +108,16 @@ export function App() {
       } else if (msg.cmd === 'variablesTested') {
         setTesting(false);
         setTestResult({ unresolved: msg.unresolved, builtins: msg.builtins });
+      } else if (msg.cmd === 'projectPathValidated') {
+        setPathWarnings(prev => {
+          const next = new Map(prev);
+          if (msg.ok) {
+            next.set(msg.fieldKey, null);
+          } else {
+            next.set(msg.fieldKey, { reason: msg.reason ?? '', suggestion: msg.suggestion });
+          }
+          return next;
+        });
       } else if (msg.cmd === 'error') {
         setError(msg.message);
         setBusyActionId(null);
@@ -114,6 +129,10 @@ export function App() {
     post({ cmd: 'ready' });
     return () => window.removeEventListener('message', onMessage);
   }, []);
+
+  const onValidatePath = (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', p: string) => {
+    post({ cmd: 'validateProjectPath', fieldKey, projectPath: p, buildTool });
+  };
 
   const onFieldAction = (actionId: string) => {
     if (actionId === 'recomputeClasspath') {
@@ -191,6 +210,8 @@ export function App() {
           onFieldAction={onFieldAction}
           busyActionId={busyActionId}
           pending={pending}
+          pathWarnings={pathWarnings}
+          onValidatePath={onValidatePath}
         />
         <div className="side-column">
           <HelpPanel schema={schema} focusedKey={focusedKey} />
