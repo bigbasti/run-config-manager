@@ -72,6 +72,9 @@ export class EditorPanel {
   ): EditorPanel {
     if (EditorPanel.instance) {
       EditorPanel.instance.args = args;
+      // Reset per-form context so options from the previous edit don't
+      // leak into the next one (loaded Gradle tasks, Maven goals, etc.).
+      EditorPanel.instance.context = {};
       EditorPanel.instance.panel.title = args.mode === 'create' ? 'New Run Configuration' : `Edit: ${args.existing?.name ?? ''}`;
       EditorPanel.instance.panel.reveal(vscode.ViewColumn.Active);
       EditorPanel.instance.sendInit();
@@ -438,7 +441,22 @@ export class EditorPanel {
             const { id, ...rest } = sanitized;
             await this.svc.create(this.args.folderKey, rest);
           } else {
-            await this.svc.update(this.args.folderKey, sanitized);
+            // Authoritative-id guard: in edit mode, the panel's own record
+            // of which config is being edited wins over whatever the
+            // webview posted. Protects against stale-state bugs where the
+            // webview somehow shipped a different id than we opened the
+            // panel with (caught a wrong-config-overwrite bug in the wild).
+            const expectedId = this.args.existing?.id;
+            if (expectedId && sanitized.id !== expectedId) {
+              log.warn(
+                `Save id mismatch: webview posted id=${sanitized.id} but panel was opened for id=${expectedId}. ` +
+                `Coercing to the opened id.`,
+              );
+            }
+            const toSave = expectedId
+              ? ({ ...sanitized, id: expectedId } as RunConfig)
+              : sanitized;
+            await this.svc.update(this.args.folderKey, toSave);
           }
           log.info(`${this.args.mode === 'create' ? 'Created' : 'Updated'}: "${sanitized.name}"`);
           this.panel.dispose();
