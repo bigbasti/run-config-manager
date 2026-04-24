@@ -204,7 +204,6 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@iconify-icons/logos": "^1.2.36",
     "@types/jest": "^29.5.11",
     "@types/node": "^18.19.3",
     "@types/react": "^18.2.45",
