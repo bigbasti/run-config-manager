@@ -5,6 +5,10 @@
   "version": "0.3.1",
   "publisher": "SebastianGross",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bigbasti/run-config-manager.git"
+  },
   "author": {
     "name": "Sebastian Gross",
     "email": "bigbasti@outlook.com"
@@ -193,7 +197,7 @@
     "test": "jest",
     "typecheck": "tsc -p tsconfig.extension.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "gen:icons": "node scripts/generate-icons.mjs",
-    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository"
+    "package": "npm run build && vsce package --no-dependencies"
   },
   "dependencies": {
     "uuid": "^9.0.1",
