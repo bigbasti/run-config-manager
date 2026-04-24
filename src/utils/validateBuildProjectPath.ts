@@ -92,13 +92,21 @@ async function hasBuildFile(dir: string, buildTool: BuildTool): Promise<boolean>
   };
 
   if (buildTool === 'maven' || buildTool === 'either') {
+    // pom.xml at any level is runnable on its own — Maven resolves parent
+    // POMs from <relativePath>, and `mvn` invoked from a submodule still
+    // works even when a reactor pom lives higher.
     if (await hasFile('pom.xml')) return true;
   }
   if (buildTool === 'gradle' || buildTool === 'either') {
-    if (await hasFile('build.gradle')) return true;
-    if (await hasFile('build.gradle.kts')) return true;
+    // A Gradle directory is "runnable as-is" only when:
+    //   - it has the wrapper script (gradlew), OR
+    //   - it IS the Gradle root (settings.gradle[.kts]).
+    // A bare build.gradle in a submodule doesn't count — without a wrapper
+    // or settings, Gradle has nothing to anchor the project layout to, and
+    // running `./gradlew …` from that dir fails with "gradlew: not found"
+    // (see commit message). That's precisely the case we want to warn on
+    // and suggest the ancestor that DOES have the wrapper.
     if (await hasFile('gradlew')) return true;
-    // A settings.gradle[.kts] marks a Gradle root too.
     if (await hasFile('settings.gradle')) return true;
     if (await hasFile('settings.gradle.kts')) return true;
   }

@@ -36,8 +36,22 @@ describe('validateBuildProjectPath', () => {
     }
   });
 
-  test('build.gradle.kts counts as a valid Gradle project', async () => {
+  test('bare build.gradle.kts does NOT count — needs wrapper or settings', async () => {
+    // This is the scenario that sparked the fix: /ws has the gradlew +
+    // settings.gradle; /ws/data only has a submodule build.gradle. The
+    // submodule can't be run standalone (`./gradlew` would be missing)
+    // — we warn and suggest the parent.
+    __writeFs('/ws/gradlew', '#!/bin/bash');
+    __writeFs('/ws/settings.gradle', 'include "data"');
+    __writeFs('/ws/data/build.gradle', '');
+    const r = await validateBuildProjectPath(folder, 'data', 'gradle');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.suggestion).toBe('');
+  });
+
+  test('build.gradle.kts with settings.gradle.kts in same dir → ok', async () => {
     __writeFs('/ws/mod/build.gradle.kts', '');
+    __writeFs('/ws/mod/settings.gradle.kts', '');
     const r = await validateBuildProjectPath(folder, 'mod', 'gradle');
     expect(r.ok).toBe(true);
   });
@@ -48,11 +62,21 @@ describe('validateBuildProjectPath', () => {
     expect(r.ok).toBe(true);
   });
 
-  test('"either" accepts pom.xml or gradle files', async () => {
+  test('"either" accepts pom.xml or Gradle roots (wrapper OR settings)', async () => {
     __writeFs('/ws/a/pom.xml', '');
-    __writeFs('/ws/b/build.gradle', '');
+    __writeFs('/ws/b/gradlew', '#!/bin/bash');
+    __writeFs('/ws/c/settings.gradle', '');
     expect((await validateBuildProjectPath(folder, 'a', 'either')).ok).toBe(true);
     expect((await validateBuildProjectPath(folder, 'b', 'either')).ok).toBe(true);
+    expect((await validateBuildProjectPath(folder, 'c', 'either')).ok).toBe(true);
+  });
+
+  test('"either" rejects bare build.gradle without wrapper/settings', async () => {
+    __writeFs('/ws/gradlew', '#!/bin/bash');
+    __writeFs('/ws/submodule/build.gradle', '');
+    const r = await validateBuildProjectPath(folder, 'submodule', 'either');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.suggestion).toBe('');
   });
 
   test('maven-only strict: build.gradle at path does NOT satisfy maven', async () => {
@@ -86,8 +110,8 @@ describe('validateBuildProjectPath', () => {
     expect(r.ok).toBe(true);
   });
 
-  test('deep submodule with build file several levels up → suggests the build-file parent', async () => {
-    __writeFs('/ws/build.gradle', '');
+  test('deep submodule with wrapper several levels up → suggests the wrapper parent', async () => {
+    __writeFs('/ws/gradlew', '#!/bin/bash');
     __writeFs('/ws/modules/a/b/c/.empty', '');
     const r = await validateBuildProjectPath(folder, 'modules/a/b/c', 'gradle');
     expect(r.ok).toBe(false);
