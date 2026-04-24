@@ -174,6 +174,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
           kind: 'selectOrCustom',
           key: 'typeOptions.task',
           label: 'Task',
+          required: true,
           options: taskOptions,
           placeholder: 'dropAll',
           help: taskHelp,

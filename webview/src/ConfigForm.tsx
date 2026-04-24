@@ -15,9 +15,10 @@ interface Props {
   pending?: Set<string>;
   pathWarnings?: Map<string, { reason: string; suggestion?: string } | null>;
   onValidatePath?: (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', path: string) => void;
+  fieldErrors?: Map<string, string>;
 }
 
-export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath }: Props) {
+export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath, fieldErrors }: Props) {
   const preview = useMemo(() => {
     try { return buildCommandPreview(values as RunConfig); } catch { return ''; }
   }, [values]);
@@ -25,7 +26,7 @@ export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusFiel
   const change = (next: Record<string, unknown>) => onChange(next as Partial<RunConfig>);
   const shared = {
     values: values as any, onChange: change, onFocusField, onFieldAction,
-    busyActionId, pending, pathWarnings, onValidatePath,
+    busyActionId, pending, pathWarnings, onValidatePath, fieldErrors,
   };
 
   return (

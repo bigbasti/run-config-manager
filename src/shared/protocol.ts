@@ -49,4 +49,9 @@ export type Inbound =
       // path the widget offers as a "Use <path>" button.
       suggestion?: string;
     }
+  // Field-scoped validation errors, posted on Save or Fix-open. Each entry
+  // targets a specific form field by its dotted key (e.g.
+  // "typeOptions.mainClass"). The webview renders a red border + the
+  // message under the field. An empty array clears all field errors.
+  | { cmd: 'fieldErrors'; errors: Array<{ fieldKey: string; message: string }> }
   | { cmd: 'error'; message: string };

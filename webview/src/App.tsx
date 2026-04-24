@@ -60,6 +60,11 @@ export function App() {
   // is keyed on field.key; entries persist until the next blur of the
   // same field rewrites them.
   const [pathWarnings, setPathWarnings] = useState<Map<string, { reason: string; suggestion?: string } | null>>(new Map());
+  // Server-side validation errors keyed by dotted field key. Populated by
+  // `fieldErrors` inbound messages (post-save rejection, Fix-invalid flow)
+  // and cleared on the next successful save or when the user edits the
+  // offending field — see onChange wrapper below.
+  const [fieldErrors, setFieldErrors] = useState<Map<string, string>>(new Map());
   // When non-null, a save is queued waiting for an async precondition (e.g.,
   // classpath recompute). We fire it after the precondition resolves.
   const pendingSaveRef = useRef<boolean>(false);
@@ -78,6 +83,10 @@ export function App() {
         setPending(new Set(msg.pending ?? []));
         setError(null);
         setTestResult(null);
+        // The Fix-flow may push fieldErrors right after init; clear first
+        // so any stale errors from a previous edit don't linger when the
+        // singleton panel is reused.
+        setFieldErrors(new Map());
         if (msg.config.type === 'spring-boot') {
           const to = msg.config.typeOptions as { launchMode?: string; classpath?: string } | undefined;
           if (to?.launchMode === 'java-main' && classpathLooksLikeHint(to.classpath ?? '')) {
@@ -121,6 +130,21 @@ export function App() {
       } else if (msg.cmd === 'variablesTested') {
         setTesting(false);
         setTestResult({ unresolved: msg.unresolved, builtins: msg.builtins });
+      } else if (msg.cmd === 'fieldErrors') {
+        const next = new Map<string, string>();
+        for (const e of msg.errors) next.set(e.fieldKey, e.message);
+        setFieldErrors(next);
+        // Also surface a short banner so the user notices the errors
+        // without having to scan for red borders.
+        if (msg.errors.length > 0) {
+          setError(
+            msg.errors.length === 1
+              ? `Can't save: 1 field needs attention.`
+              : `Can't save: ${msg.errors.length} fields need attention.`,
+          );
+        } else {
+          setError(null);
+        }
       } else if (msg.cmd === 'projectPathValidated') {
         setPathWarnings(prev => {
           const next = new Map(prev);
@@ -241,7 +265,16 @@ export function App() {
         <ConfigForm
           schema={schema}
           values={values}
-          onChange={setValues}
+          onChange={next => {
+            setValues(next);
+            // Clear server-side field errors whenever the form is edited.
+            // The next save triggers fresh validation; stale red borders
+            // from a previously-rejected save shouldn't linger.
+            if (fieldErrors.size > 0) {
+              setFieldErrors(new Map());
+              setError(null);
+            }
+          }}
           onPickFolder={() => post({ cmd: 'pickFolder', current: values.projectPath })}
           onFocusField={setFocusedKey}
           onFieldAction={onFieldAction}
@@ -249,6 +282,7 @@ export function App() {
           pending={pending}
           pathWarnings={pathWarnings}
           onValidatePath={onValidatePath}
+          fieldErrors={fieldErrors}
         />
         <div className="side-column">
           <HelpPanel schema={schema} focusedKey={focusedKey} />

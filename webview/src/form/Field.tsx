@@ -21,9 +21,13 @@ interface Props {
   // {reason, suggestion?} when not. Undefined means "not validated yet".
   pathWarnings?: Map<string, { reason: string; suggestion?: string } | null>;
   onValidatePath?: (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', path: string) => void;
+  // Server-side field errors from a rejected save or a Fix-invalid open.
+  // Lookup by field key. Undefined means "no error"; otherwise the message
+  // is rendered below the input and a red border is drawn around the field.
+  fieldErrors?: Map<string, string>;
 }
 
-export function Field({ field, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath }: Props) {
+export function Field({ field, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath, fieldErrors }: Props) {
   // Honor dependsOn: hide the field if its dependency's current value doesn't match.
   if (field.dependsOn) {
     const dep = getPath(values, field.dependsOn.key);
@@ -49,13 +53,38 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
 
   const inspectable = field.inspectable && typeof v === 'string';
 
+  const isRequired = Boolean(field.required);
+  const errorMessage = fieldErrors?.get(field.key);
+
   return (
     <div>
       <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span>{field.label}{'required' in field && field.required ? ' *' : ''}</span>
+        <span>
+          {field.label}
+          {isRequired && (
+            <span
+              title="Required"
+              aria-label="Required"
+              style={{
+                color: 'var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground, #ff5555))',
+                marginLeft: 3,
+                fontWeight: 700,
+              }}
+            >*</span>
+          )}
+        </span>
         {isPending && <span className="field-spinner" title="Detecting…">⟳</span>}
       </label>
-      <div className="field-row">
+      <div
+        className="field-row"
+        style={errorMessage ? {
+          // A red outline around the whole field-row. Uses VS Code's
+          // native input-validation palette so it matches themes.
+          outline: '1px solid var(--vscode-inputValidation-errorBorder, #be1100)',
+          outlineOffset: 1,
+          borderRadius: 2,
+        } : undefined}
+      >
         <div style={{ flex: 1, minWidth: 0 }}>
           {renderInput(field, v, set, {
             onPickFolder,
@@ -77,6 +106,19 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
           </button>
         )}
       </div>
+      {errorMessage && (
+        <div
+          style={{
+            marginTop: 4,
+            padding: '2px 6px',
+            color: 'var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground, #ff5555))',
+            background: 'var(--vscode-inputValidation-errorBackground, transparent)',
+            fontSize: '0.9em',
+          }}
+        >
+          ✖ {errorMessage}
+        </div>
+      )}
       {action && (
         <div style={{ marginTop: 4 }}>
           <button

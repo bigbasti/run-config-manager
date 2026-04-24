@@ -41,6 +41,7 @@ export class NpmAdapter implements RuntimeAdapter {
           kind: 'select',
           key: 'typeOptions.scriptName',
           label: 'Script',
+          required: true,
           options: scripts.map(s => ({ value: s, label: s })),
           help: 'Which package.json script to invoke. The dropdown lists every script we detected in your package.json.',
           examples: ['start', 'dev', 'build'],

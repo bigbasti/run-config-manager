@@ -265,6 +265,7 @@ export class JavaAdapter implements RuntimeAdapter {
           kind: 'textarea',
           key: 'typeOptions.customArgs',
           label: 'Custom command',
+          required: true,
           rows: 2,
           placeholder: ':systemtest:systemtestDev --tests "de.telit.pkg.*Test"',
           help:
@@ -331,6 +332,7 @@ export class JavaAdapter implements RuntimeAdapter {
           kind: 'selectOrCustom',
           key: 'typeOptions.mainClass',
           label: 'Main class',
+          required: true,
           options: mainClassOptions,
           placeholder: 'com.example.Main',
           help: mainClasses.length > 0
@@ -343,6 +345,7 @@ export class JavaAdapter implements RuntimeAdapter {
           kind: 'textarea',
           key: 'typeOptions.classpath',
           label: 'Classpath',
+          required: true,
           rows: 3,
           placeholder: 'target/classes:lib/*',
           help: 'Colon-separated on macOS/Linux, semicolon on Windows. Click "Recompute classpath" to populate from your build tool. Values containing "*" are a placeholder hint — recompute before saving.',

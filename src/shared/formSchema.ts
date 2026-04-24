@@ -3,6 +3,11 @@
 type BaseFieldMeta = {
   help?: string;
   examples?: string[];
+  // Purely cosmetic: shows a red asterisk next to the label and a
+  // "Required" tooltip. Actual enforcement is Zod-schema level; this is
+  // just to warn the user before they click Save. Any field kind can opt
+  // in — not just text/textarea.
+  required?: boolean;
   // When set, the webview hides this field unless the value at `key` in the
   // current form state equals `equals` (or is contained in `equals` when an array).
   dependsOn?: { key: string; equals: string | string[] };
@@ -17,7 +22,7 @@ type BaseFieldMeta = {
 };
 
 export type FormField =
-  | ({ kind: 'text'; key: string; label: string; placeholder?: string; required?: boolean } & BaseFieldMeta)
+  | ({ kind: 'text'; key: string; label: string; placeholder?: string } & BaseFieldMeta)
   | ({ kind: 'textarea'; key: string; label: string; placeholder?: string; rows?: number } & BaseFieldMeta)
   | ({ kind: 'number'; key: string; label: string; min?: number; max?: number } & BaseFieldMeta)
   | ({

@@ -62,6 +62,7 @@ export class CustomCommandAdapter implements RuntimeAdapter {
           kind: 'textarea',
           key: 'typeOptions.command',
           label: 'Command',
+          required: true,
           rows: 3,
           placeholder: './scripts/seed.sh --profile dev',
           help:

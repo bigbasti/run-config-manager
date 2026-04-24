@@ -19,6 +19,7 @@ import { log, initLogger } from './utils/logger';
 import type { RunConfig, RunConfigType } from './shared/types';
 import type { InvalidConfigEntry } from './shared/types';
 import { buildRecoveredConfig } from './recovery/buildRecoveredConfig';
+import { RunConfigSchema } from './shared/schema';
 
 type ConfigNodeArg =
   | { kind: 'config'; folderKey: string; config: RunConfig }
@@ -283,6 +284,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         },
       };
 
+      // Run the reconstructed config through Zod so the editor can
+      // highlight the specific fields that made this entry invalid. The
+      // entry's stored `error` is also surfaced via the tree tooltip, but
+      // per-field feedback inside the form is what actually guides the fix.
+      const initialFieldErrors = collectFieldErrors(merged);
       EditorPanel.open({
         mode: 'edit',
         folderKey: arg.folderKey,
@@ -290,6 +296,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         adapter,
         existing: merged as unknown as RunConfig,
         schema: adapter.getFormSchema(detection?.context ?? {}),
+        initialFieldErrors,
       }, context, svc);
     }),
 
@@ -754,6 +761,19 @@ function mergeAutoCreateDefaults(
     };
   }
   return null;
+}
+
+// Runs a partial/reconstructed config through the Zod schema and flattens
+// issue paths into dotted field keys the form recognises. Used by the Fix
+// flow so the editor highlights exactly which fields made the invalid
+// entry fail validation.
+function collectFieldErrors(cfg: Record<string, unknown>): Array<{ fieldKey: string; message: string }> {
+  const parse = RunConfigSchema.safeParse(cfg);
+  if (parse.success) return [];
+  return parse.error.issues.map(issue => ({
+    fieldKey: issue.path.join('.'),
+    message: issue.message,
+  }));
 }
 
 export function deactivate(): void {

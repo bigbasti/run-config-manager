@@ -11,6 +11,7 @@ import { makeRunContext, resolveConfig } from '../utils/resolveVars';
 import { discoverGradleTasks } from '../adapters/gradle-task/discoverGradleTasks';
 import { discoverMavenGoals } from '../adapters/maven-goal/discoverMavenGoals';
 import { validateBuildProjectPath } from '../utils/validateBuildProjectPath';
+import { RunConfigSchema } from '../shared/schema';
 
 interface OpenArgs {
   mode: 'create' | 'edit';
@@ -23,6 +24,10 @@ interface OpenArgs {
   // `loadTasks`/`loadGoals` action buttons can rebuild the form schema after
   // populating options. Always set; required.
   adapter: RuntimeAdapter;
+  // Optional: field-level errors to surface on first render (red border +
+  // message). Used by the Fix flow to highlight which fields made the
+  // invalid entry fail schema validation. Cleared as the user edits.
+  initialFieldErrors?: Array<{ fieldKey: string; message: string }>;
   // When set, the webview is opened immediately and detection runs async;
   // each StreamingPatch posts a schemaUpdate message + (in create mode) fills
   // in any blank default fields.
@@ -170,6 +175,16 @@ export class EditorPanel {
       pending: this.args.streaming?.pending,
     };
     this.panel.webview.postMessage(init);
+
+    // Pre-populated field errors (Fix-invalid flow) — send immediately
+    // after init so the webview's listener processes them on the same
+    // frame as the initial render.
+    if (this.args.initialFieldErrors && this.args.initialFieldErrors.length > 0) {
+      this.panel.webview.postMessage({
+        cmd: 'fieldErrors',
+        errors: this.args.initialFieldErrors,
+      } satisfies Inbound);
+    }
 
     // If streaming detection is enabled, kick it off now (non-blocking).
     if (this.args.streaming && this.args.mode === 'create') {
@@ -437,6 +452,27 @@ export class EditorPanel {
             `Save (${this.args.mode}): ${sanitized.type} "${sanitized.name}" ` +
             `→ ${this.args.folderKey}`,
           );
+          // Pre-flight Zod check so we can surface per-field errors (red
+          // border + inline message under the offending input) instead of
+          // a single generic banner. Skipping the check means the same
+          // errors would still fire inside svc.update/create but without
+          // the structured field paths reaching the webview.
+          const parse = RunConfigSchema.safeParse(sanitized);
+          if (!parse.success) {
+            const errors = parse.error.issues.map(issue => ({
+              // Issue paths are arrays like ['typeOptions','mainClass'];
+              // the form's field keys use dotted notation so we just join.
+              fieldKey: issue.path.join('.'),
+              message: issue.message,
+            }));
+            log.warn(`Save rejected: ${errors.length} validation error(s)`);
+            this.panel.webview.postMessage({ cmd: 'fieldErrors', errors } satisfies Inbound);
+            return;
+          }
+          // Happy path — clear any lingering field errors from a previous
+          // rejected submit.
+          this.panel.webview.postMessage({ cmd: 'fieldErrors', errors: [] } satisfies Inbound);
+
           if (this.args.mode === 'create') {
             const { id, ...rest } = sanitized;
             await this.svc.create(this.args.folderKey, rest);

@@ -204,6 +204,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           kind: 'selectOrCustom',
           key: 'typeOptions.tomcatHome',
           label: 'Tomcat installation',
+          required: true,
           options: tomcatInstalls.map(p => ({ value: p, label: p })),
           placeholder: '/opt/apache-tomcat-10.1.18',
           help:
@@ -334,6 +335,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           kind: 'selectOrCustom',
           key: 'typeOptions.artifactPath',
           label: 'Artifact to deploy',
+          required: true,
           options: artifacts.map(a => ({ value: a.path, label: a.label })),
           placeholder: '/git/…/build/libs/app.war',
           help:

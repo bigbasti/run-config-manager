@@ -170,6 +170,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
           kind: 'selectOrCustom',
           key: 'typeOptions.goal',
           label: 'Goal / phase',
+          required: true,
           options: goalOptions,
           placeholder: 'clean install',
           help: goalHelp,
