@@ -589,6 +589,7 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
         artifactPath: to?.artifactPath ?? '',
         artifactKind: (to?.artifactKind ?? 'war') as 'war' | 'exploded',
         applicationContext: to?.applicationContext ?? '/',
+        profiles: to?.profiles ?? '',
         vmOptions: to?.vmOptions ?? '',
         reloadable: to?.reloadable ?? true,
         rebuildOnSave: to?.rebuildOnSave ?? false,

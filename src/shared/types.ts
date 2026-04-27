@@ -96,6 +96,12 @@ export interface TomcatTypeOptions {
   artifactKind: ArtifactKind;
   // Context under which Tomcat mounts the deployment. "" / "/" = root context.
   applicationContext: string;
+  // Spring profiles to activate when the deployed webapp is Spring-based.
+  // Comma-separated, same convention as SpringBootTypeOptions.profiles. When
+  // non-empty, prepareTomcatLaunch appends `-Dspring.profiles.active=<csv>`
+  // to CATALINA_OPTS. Detection scans the build project's resources/ for
+  // profile files and populates the dropdown.
+  profiles: string;
   // Extra -D / -X options appended to CATALINA_OPTS.
   vmOptions: string;
   // Tomcat <Context reloadable="true"/> — reloads webapp on class changes.

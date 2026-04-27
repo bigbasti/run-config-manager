@@ -56,4 +56,17 @@ describe('migrateSpringBootConfig', () => {
     expect(migrateSpringBootConfig('hello')).toBe('hello');
     expect(migrateSpringBootConfig(42)).toBe(42);
   });
+
+  test('adds missing profiles to legacy tomcat configs', () => {
+    const legacy = { type: 'tomcat', typeOptions: { tomcatHome: '/opt/tc', httpPort: 8080 } };
+    const m = migrateSpringBootConfig(legacy) as any;
+    expect(m.typeOptions.profiles).toBe('');
+    expect(m.typeOptions.tomcatHome).toBe('/opt/tc');
+  });
+
+  test('leaves tomcat profiles untouched when already set', () => {
+    const cfg = { type: 'tomcat', typeOptions: { profiles: 'dev', httpPort: 8080 } };
+    const m = migrateSpringBootConfig(cfg) as any;
+    expect(m.typeOptions.profiles).toBe('dev');
+  });
 });

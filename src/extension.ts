@@ -692,6 +692,7 @@ function mergeAutoCreateDefaults(
         artifactPath: typeOptions.artifactPath ?? '',
         artifactKind: typeOptions.artifactKind ?? 'war',
         applicationContext: '/',
+        profiles: '',
         vmOptions: '',
         reloadable: true,
         rebuildOnSave: false,

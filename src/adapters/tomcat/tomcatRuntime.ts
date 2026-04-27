@@ -56,6 +56,13 @@ export async function prepareTomcatLaunch(
 
   const catalinaOpts: string[] = [];
   if (to.vmOptions.trim()) catalinaOpts.push(to.vmOptions.trim());
+  // Spring profiles: if any were selected, pass them through as the standard
+  // -Dspring.profiles.active system property. Harmless when the webapp isn't
+  // Spring-based (the property is simply ignored).
+  const profilesCsv = to.profiles?.trim();
+  if (profilesCsv) {
+    catalinaOpts.push(`-Dspring.profiles.active=${profilesCsv}`);
+  }
   if (typeof to.jmxPort === 'number' && to.jmxPort > 0) {
     catalinaOpts.push(
       `-Dcom.sun.management.jmxremote`,

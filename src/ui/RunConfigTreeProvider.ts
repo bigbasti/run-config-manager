@@ -7,6 +7,8 @@ import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 import { iconForConfig, brandIconUri } from './iconForConfig';
+import { checkConfigHealth, peekConfigHealth, type ConfigHealth } from '../services/configHealth';
+import { log } from '../utils/logger';
 
 export type Node =
   | { kind: 'folder'; folderKey: string; label: string }
@@ -17,6 +19,9 @@ export type Node =
 export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
   private emitter = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.emitter.event;
+  // Tracks which config ids have an in-flight health probe, so we don't kick
+  // a second probe while the first is running (each render calls getTreeItem).
+  private pendingHealthProbes = new Set<string>();
 
   constructor(
     private readonly store: ConfigStore,
@@ -74,11 +79,29 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     const rebuilding = this.exec.isRebuilding(n.config.id);
     const adapter = this.registry.get(n.config.type);
     const debuggable = adapter?.supportsDebug === true;
+    // Stale-config check: consult the synchronous cache first; the async
+    // probe (kicked off below when it hasn't run) refreshes the view once
+    // the result is in. Keeps the initial render instant and the later
+    // re-render updates the icon / tooltip in place.
+    const folder = this.store.getFolder(n.folderKey);
+    const health = folder ? peekConfigHealth(n.config, folder) : undefined;
+    if (folder && health === undefined && !this.pendingHealthProbes.has(n.config.id)) {
+      this.pendingHealthProbes.add(n.config.id);
+      checkConfigHealth(n.config, folder)
+        .catch(e => { log.warn(`configHealth probe failed for ${n.config.name}: ${(e as Error).message}`); return { healthy: true } as ConfigHealth; })
+        .finally(() => {
+          this.pendingHealthProbes.delete(n.config.id);
+          this.refresh();
+        });
+    }
+    const stale = health && health.healthy === false ? health : null;
+
     const item = new vscode.TreeItem(n.config.name, vscode.TreeItemCollapsibleState.None);
     item.tooltip = new vscode.MarkdownString(
       `**${n.config.name}** _(${n.config.type})_\n\n` +
       (n.config.projectPath ? `Path: \`${n.config.projectPath}\`\n\n` : '') +
       `Command: \`${buildCommandPreview(n.config)}\`` +
+      (stale ? `\n\n⚠ **Config may be stale.** ${stale.reason}` : '') +
       (preparing
         ? '\n\n_Preparing (running build / writing scaffold)…_'
         : rebuilding
@@ -118,13 +141,18 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     } else if (started) {
       item.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
       item.description = undefined;
+    } else if (stale) {
+      // Idle + stale: surface the warning as the idle-state signal. The
+      // tooltip explains; the description nudges the user to re-create the
+      // config without claiming we'll do it for them.
+      item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+      item.description = 'Stale — re-create to fix';
     } else {
       // Idle — show the brand icon so the user can visually scan npm /
       // Angular / Spring Boot / Gradle / etc. at a glance. Brand icon
       // resolution sniffs config-file tell-tales + package.json scripts
       // for npm configs to pick the specific framework (Angular, Vite,
       // Next, Svelte, Vue, React, Node).
-      const folder = this.store.getFolder(n.folderKey);
       item.iconPath = iconForConfig(n.config, folder, this.extensionUri);
       item.description = undefined;
     }

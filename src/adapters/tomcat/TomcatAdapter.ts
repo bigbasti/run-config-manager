@@ -8,6 +8,7 @@ import { detectTomcatInstalls, findTomcatArtifacts } from './detectTomcat';
 import { prepareTomcatLaunch, catalinaExecutable } from './tomcatRuntime';
 import { resolveProjectUri } from '../../utils/paths';
 import { findGradleRoot } from '../spring-boot/findBuildRoot';
+import { findSpringProfiles } from '../spring-boot/findProfiles';
 import type { PrepareContext, PrepareResult } from '../RuntimeAdapter';
 import { log } from '../../utils/logger';
 
@@ -29,12 +30,13 @@ export class TomcatAdapter implements RuntimeAdapter {
     // Tomcat has no auto-detect from project files alone — any web project
     // could be deployed. We consider any folder a valid Tomcat target and
     // defer the "is this project buildable?" decision to the user.
-    const [tomcatInstalls, jdks, buildTools, artifacts, gradleRoot] = await Promise.all([
+    const [tomcatInstalls, jdks, buildTools, artifacts, gradleRoot, profiles] = await Promise.all([
       detectTomcatInstalls(),
       detectJdks(),
       detectBuildTools(),
       findTomcatArtifacts(folder),
       findGradleRoot(folder),
+      findSpringProfiles(folder),
     ]);
     log.info(
       `Tomcat detect: tomcatInstalls=${tomcatInstalls.length}, jdks=${jdks.length}, ` +
@@ -62,6 +64,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           artifactPath: firstArtifact?.path ?? '',
           artifactKind: firstArtifact?.kind ?? 'war',
           applicationContext: '/',
+          profiles: '',
           vmOptions: '',
           reloadable: true,
           rebuildOnSave: false,
@@ -74,6 +77,7 @@ export class TomcatAdapter implements RuntimeAdapter {
         mavenInstalls: buildTools.mavenInstalls,
         artifacts,
         buildRoot: gradleRoot.fsPath,
+        profiles,
       },
     };
   }
@@ -172,6 +176,16 @@ export class TomcatAdapter implements RuntimeAdapter {
         });
       }
     })().catch(e => log.warn(`Tomcat probe (gradleRoot) failed: ${(e as Error).message}`));
+
+    // Spring profile scan — harmless for non-Spring webapps (just yields []).
+    // When the deployed artifact is Spring-based, the profile dropdown
+    // populates and picking one adds -Dspring.profiles.active=… to
+    // CATALINA_OPTS at launch.
+    (async () => {
+      const profiles = await findSpringProfiles(folder);
+      log.debug(`Tomcat probe: springProfiles=${profiles.length}`);
+      emit({ contextPatch: { profiles }, resolved: ['typeOptions.profiles'] });
+    })().catch(e => log.warn(`Tomcat probe (profiles) failed: ${(e as Error).message}`));
   }
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
@@ -180,6 +194,8 @@ export class TomcatAdapter implements RuntimeAdapter {
     const gradleInstalls = (context.gradleInstalls as string[] | undefined) ?? [];
     const mavenInstalls = (context.mavenInstalls as string[] | undefined) ?? [];
     const artifacts = (context.artifacts as Array<{ path: string; kind: string; label: string }> | undefined) ?? [];
+    const detectedProfiles = (context.profiles as string[] | undefined) ?? [];
+    const profileOptions = detectedProfiles.map(p => ({ value: p, label: p }));
 
     return {
       common: [
@@ -363,6 +379,19 @@ export class TomcatAdapter implements RuntimeAdapter {
           placeholder: '/',
           help: 'Path under which Tomcat mounts the webapp. "/" = root context.',
           examples: ['/', '/api', '/zebra'],
+        },
+        {
+          kind: 'csvChecklist',
+          key: 'typeOptions.profiles',
+          label: 'Active profiles',
+          options: profileOptions,
+          placeholder: detectedProfiles.length
+            ? 'Custom profiles (comma-separated)'
+            : 'dev,local',
+          help: detectedProfiles.length
+            ? `Detected ${detectedProfiles.length} profile(s) in the webapp's resources. Selected profiles are passed to the JVM as -Dspring.profiles.active=<csv> via CATALINA_OPTS. Safe to leave blank for non-Spring webapps — the flag is only added when profiles are picked.`
+            : 'Spring profiles to activate. No profile files detected in this project, but you can still type them (passed via -Dspring.profiles.active). Leave blank if the webapp isn\'t Spring-based.',
+          examples: ['dev', 'dev,local', 'prod'],
         },
         {
           kind: 'boolean',

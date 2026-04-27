@@ -206,6 +206,7 @@ export const TomcatTypeOptionsSchema = z
     artifactPath: z.string(),
     artifactKind: ArtifactKindSchema,
     applicationContext: z.string(),
+    profiles: z.string(),
     vmOptions: z.string(),
     reloadable: z.boolean(),
     rebuildOnSave: z.boolean(),

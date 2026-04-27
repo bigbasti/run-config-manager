@@ -79,6 +79,40 @@ describe('sanitizeConfig', () => {
     expect(RunConfigSchema.safeParse(out).success).toBe(true);
   });
 
+  test('tomcat: preserves user-selected profiles', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'tomcat',
+      typeOptions: {
+        tomcatHome: '/opt/tomcat-10',
+        httpPort: 8080,
+        buildTool: 'gradle',
+        artifactPath: '/opt/app.war',
+        artifactKind: 'war',
+        applicationContext: '/',
+        profiles: 'dev,local',
+      } as any,
+    } as RunConfig);
+    expect((out.typeOptions as any).profiles).toBe('dev,local');
+    expect(RunConfigSchema.safeParse(out).success).toBe(true);
+  });
+
+  test('tomcat: defaults profiles to empty when absent (legacy config path)', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'tomcat',
+      typeOptions: {
+        tomcatHome: '/opt/tomcat-10',
+        httpPort: 8080,
+        buildTool: 'gradle',
+        artifactPath: '/opt/app.war',
+        artifactKind: 'war',
+        applicationContext: '/',
+      } as any,
+    } as RunConfig);
+    expect((out.typeOptions as any).profiles).toBe('');
+  });
+
   test('quarkus: keeps type (regression guard)', () => {
     const out = sanitizeConfig({
       ...base,

@@ -1,9 +1,11 @@
-// Normalises pre-1c spring-boot configs: fills in launchMode + new fields so
-// Zod validation succeeds. Pure; call once on every row read from disk before
-// schema parsing.
+// Normalises legacy configs: fills in fields added in later versions so Zod
+// validation succeeds. Pure; call once on every row read from disk before
+// schema parsing. Handles spring-boot (1c fields) and tomcat (profiles field
+// added in the profile-plumbing change).
 export function migrateSpringBootConfig(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw;
   const r = raw as Record<string, unknown>;
+  if (r.type === 'tomcat') return migrateTomcat(r);
   if (r.type !== 'spring-boot') return raw;
 
   const to = (r.typeOptions && typeof r.typeOptions === 'object' ? r.typeOptions : {}) as Record<string, unknown>;
@@ -41,4 +43,12 @@ export function migrateSpringBootConfig(raw: unknown): unknown {
       ...(typeof to.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
     },
   };
+}
+
+function migrateTomcat(r: Record<string, unknown>): unknown {
+  const to = (r.typeOptions && typeof r.typeOptions === 'object' ? r.typeOptions : {}) as Record<string, unknown>;
+  // Only rewrite when the profiles field is missing — everything else in
+  // TomcatTypeOptions was present from v1. Keep user-set values untouched.
+  if (typeof to.profiles === 'string') return r;
+  return { ...r, typeOptions: { ...to, profiles: '' } };
 }
