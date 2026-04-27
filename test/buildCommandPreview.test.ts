@@ -84,4 +84,58 @@ describe('buildCommandPreview — spring-boot', () => {
     expect(buildCommandPreview(cfg as any))
       .toBe('cd api && /opt/jdk-21/bin/java -cp target/classes com.example.App');
   });
+
+  test('gradle submodule uses buildRoot cwd and :module:bootRun task', () => {
+    // Mirrors the queue-watcher scenario: user picked /ws/queue-watcher but the
+    // wrapper lives at /ws. Runtime execs from /ws with `:queue-watcher:bootRun`,
+    // and the preview must match so the command shown to the user is what we
+    // actually run.
+    const cfg = {
+      ...springBase,
+      projectPath: 'queue-watcher',
+      typeOptions: {
+        ...springBase.typeOptions,
+        launchMode: 'gradle',
+        gradleCommand: './gradlew',
+        buildTool: 'gradle',
+        buildRoot: '/ws',
+      },
+    };
+    expect(buildCommandPreview(cfg as any, '/ws'))
+      .toBe('cd . && ./gradlew :queue-watcher:bootRun');
+  });
+
+  test('gradle submodule without workspace folder falls back to projectPath cwd', () => {
+    // Tree provider renders the preview without a workspaceFolderPath. In that
+    // case we keep the old behavior rather than show a wrong cwd.
+    const cfg = {
+      ...springBase,
+      projectPath: 'queue-watcher',
+      typeOptions: {
+        ...springBase.typeOptions,
+        launchMode: 'gradle',
+        gradleCommand: './gradlew',
+        buildTool: 'gradle',
+        buildRoot: '/ws',
+      },
+    };
+    expect(buildCommandPreview(cfg as any))
+      .toBe('cd /ws && ./gradlew bootRun');
+  });
+
+  test('gradle mode at workspace root omits module prefix', () => {
+    const cfg = {
+      ...springBase,
+      projectPath: '',
+      typeOptions: {
+        ...springBase.typeOptions,
+        launchMode: 'gradle',
+        gradleCommand: './gradlew',
+        buildTool: 'gradle',
+        buildRoot: '',
+      },
+    };
+    expect(buildCommandPreview(cfg as any, '/ws'))
+      .toBe('./gradlew bootRun');
+  });
 });

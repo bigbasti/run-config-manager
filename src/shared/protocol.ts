@@ -27,6 +27,11 @@ export type Inbound =
       config: Partial<RunConfig>;
       schema: FormSchema;
       pending?: PendingFields;
+      // Absolute fs path of the workspace folder this config lives in.
+      // Consumed by the preview so it can compute the real cwd (which uses
+      // buildRoot when set) and the Gradle `:module:task` prefix for Spring
+      // Boot / Java / Quarkus configs anchored at a submodule.
+      workspaceFolderPath?: string;
     }
   | { cmd: 'schemaUpdate'; schema: FormSchema; pending?: PendingFields }
   | { cmd: 'configPatch'; patch: Partial<RunConfig> }

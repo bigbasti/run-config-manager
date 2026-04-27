@@ -19,6 +19,16 @@ function fieldValidateBuildPath(f: FormField): 'maven' | 'gradle' | 'either' | n
   return f.validateBuildPath ?? null;
 }
 
+// Flatten every field key the schema actually renders — used when posting
+// server-side fieldErrors so we can tell the user when an error targets a
+// key nothing in the form listens for (the bug where Zod complained about
+// an internal field like `id` and the banner named nothing).
+function renderedFieldKeys(schema: FormSchema | null): Set<string> {
+  if (!schema) return new Set();
+  const all = [...schema.common, ...schema.typeSpecific, ...schema.advanced];
+  return new Set(all.map(f => f.key));
+}
+
 // The hint emitted by suggestClasspath contains a `/*` glob that isn't valid
 // as a literal classpath entry — treat it (and empty) as "not yet computed".
 function classpathLooksLikeHint(cp: string): boolean {
@@ -55,6 +65,10 @@ export function App() {
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+  // Absolute workspace folder path, delivered on init. The command preview
+  // uses it to compute the real cwd (buildRoot for JVM configs) and the
+  // Gradle `:module:task` prefix for submodule configs.
+  const [workspaceFolderPath, setWorkspaceFolderPath] = useState<string | undefined>(undefined);
   // Validation results for folderPath fields with `validateBuildPath`.
   // null = valid, {reason, suggestion?} = warn under the input. The map
   // is keyed on field.key; entries persist until the next blur of the
@@ -72,6 +86,12 @@ export function App() {
   // on field key. Lets us dedupe the auto-revalidation effect below so we
   // don't flood the extension when an unrelated field re-renders.
   const lastValidatedRef = useRef<Map<string, string>>(new Map());
+  // Latest schema, readable from the one-time message listener (which
+  // captured stale state on mount). Used so fieldErrors can name fields that
+  // don't render as inputs — otherwise the banner would show a count with
+  // no red border anywhere on the form.
+  const schemaRef = useRef<FormSchema | null>(null);
+  useEffect(() => { schemaRef.current = schema; }, [schema]);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent<Inbound>) => {
@@ -81,6 +101,7 @@ export function App() {
         setSchema(msg.schema);
         setValues(msg.config);
         setPending(new Set(msg.pending ?? []));
+        setWorkspaceFolderPath(msg.workspaceFolderPath);
         setError(null);
         setTestResult(null);
         // The Fix-flow may push fieldErrors right after init; clear first
@@ -135,13 +156,23 @@ export function App() {
         for (const e of msg.errors) next.set(e.fieldKey, e.message);
         setFieldErrors(next);
         // Also surface a short banner so the user notices the errors
-        // without having to scan for red borders.
+        // without having to scan for red borders. If an error targets a
+        // field that isn't rendered in the current form (e.g. a validator
+        // keyed something on a hidden field), spell it out in the banner so
+        // the user isn't left hunting for an invisible red border.
         if (msg.errors.length > 0) {
-          setError(
-            msg.errors.length === 1
-              ? `Can't save: 1 field needs attention.`
-              : `Can't save: ${msg.errors.length} fields need attention.`,
-          );
+          const rendered = renderedFieldKeys(schemaRef.current);
+          const orphaned = msg.errors.filter(e => !rendered.has(e.fieldKey));
+          if (orphaned.length > 0) {
+            const detail = orphaned
+              .map(e => `${e.fieldKey}: ${e.message}`)
+              .join('; ');
+            setError(`Can't save — ${detail}`);
+          } else if (msg.errors.length === 1) {
+            setError(`Can't save: 1 field needs attention.`);
+          } else {
+            setError(`Can't save: ${msg.errors.length} fields need attention.`);
+          }
         } else {
           setError(null);
         }
@@ -265,6 +296,7 @@ export function App() {
         <ConfigForm
           schema={schema}
           values={values}
+          workspaceFolderPath={workspaceFolderPath}
           onChange={next => {
             setValues(next);
             // Clear server-side field errors whenever the form is edited.

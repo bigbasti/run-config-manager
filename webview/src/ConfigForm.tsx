@@ -16,12 +16,13 @@ interface Props {
   pathWarnings?: Map<string, { reason: string; suggestion?: string } | null>;
   onValidatePath?: (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', path: string) => void;
   fieldErrors?: Map<string, string>;
+  workspaceFolderPath?: string;
 }
 
-export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath, fieldErrors }: Props) {
+export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath, fieldErrors, workspaceFolderPath }: Props) {
   const preview = useMemo(() => {
-    try { return buildCommandPreview(values as RunConfig); } catch { return ''; }
-  }, [values]);
+    try { return buildCommandPreview(values as RunConfig, workspaceFolderPath); } catch { return ''; }
+  }, [values, workspaceFolderPath]);
 
   const change = (next: Record<string, unknown>) => onChange(next as Partial<RunConfig>);
   const shared = {

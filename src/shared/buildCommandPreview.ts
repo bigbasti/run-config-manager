@@ -1,6 +1,16 @@
 import type { RunConfig } from './types';
 
-export function buildCommandPreview(cfg: RunConfig): string {
+// Renders what we'll actually execute at run time, so the user isn't surprised
+// when they hit Run. Mirrors ExecutionService.buildCwd + the adapter
+// buildCommand paths — when those change, this must too.
+//
+// `workspaceFolderPath` is the absolute fs path of the workspace folder the
+// config belongs to. Required to compute the real cwd (buildRoot wins over
+// projectPath for JVM configs) and the Gradle `:module:task` prefix when the
+// user selected a submodule. Falls back to the legacy `cd <projectPath>`
+// preview when omitted (e.g., rendering from the tree provider which doesn't
+// always have the folder context handy).
+export function buildCommandPreview(cfg: RunConfig, workspaceFolderPath?: string): string {
   let base: string;
   if (cfg.type === 'npm') {
     const pm = cfg.typeOptions.packageManager;
@@ -21,9 +31,10 @@ export function buildCommandPreview(cfg: RunConfig): string {
       const rest: string[] = [];
       if (profiles) rest.push(`--spring.profiles.active=${profiles}`);
       if (cfg.programArgs?.trim()) rest.push(cfg.programArgs.trim());
+      const task = moduleTask('bootRun', cfg, workspaceFolderPath);
       base = rest.length
-        ? `${to.gradleCommand} bootRun --args='${rest.join(' ')}'`
-        : `${to.gradleCommand} bootRun`;
+        ? `${to.gradleCommand} ${task} --args='${rest.join(' ')}'`
+        : `${to.gradleCommand} ${task}`;
     } else {
       const profiles = to.profiles?.trim();
       base = profiles
@@ -40,7 +51,8 @@ export function buildCommandPreview(cfg: RunConfig): string {
     const port = typeof to.debugPort === 'number' && to.debugPort > 0 ? to.debugPort : 5005;
     const prof = to.profile?.trim() ? ` -Dquarkus.profile=${to.profile.trim()}` : '';
     if (to.launchMode === 'gradle') {
-      base = `${to.gradleCommand} --console=plain quarkusDev${prof} -Ddebug=${port}`;
+      const task = moduleTask('quarkusDev', cfg, workspaceFolderPath);
+      base = `${to.gradleCommand} --console=plain ${task}${prof} -Ddebug=${port}`;
     } else {
       base = `mvn quarkus:dev${prof} -Ddebug=${port}`;
     }
@@ -62,7 +74,8 @@ export function buildCommandPreview(cfg: RunConfig): string {
       base = `mvn ${tail}`;
     } else if (to.launchMode === 'gradle') {
       const pa = cfg.programArgs?.trim() ? ` --args='${cfg.programArgs.trim()}'` : '';
-      base = `${to.gradleCommand} --console=plain run${pa}`;
+      const task = moduleTask('run', cfg, workspaceFolderPath);
+      base = `${to.gradleCommand} --console=plain ${task}${pa}`;
     } else {
       const mc = to.mainClass || '<MainClass>';
       const pa = cfg.programArgs?.trim() ? ` -Dexec.args='${cfg.programArgs.trim()}'` : '';
@@ -106,5 +119,66 @@ export function buildCommandPreview(cfg: RunConfig): string {
     cfg.type === 'custom-command';
   const args = (cfg.programArgs ?? '').trim();
   const withArgs = !programArgsApplied && args ? `${base} -- ${args}` : base;
-  return cfg.projectPath ? `cd ${cfg.projectPath} && ${withArgs}` : withArgs;
+
+  const cwdLabel = previewCwd(cfg, workspaceFolderPath);
+  return cwdLabel ? `cd ${cwdLabel} && ${withArgs}` : withArgs;
+}
+
+// Mirrors ExecutionService.buildCwd — when buildRoot is set on a JVM
+// Maven/Gradle config, that's the real cwd, not projectPath. Returns a
+// workspace-relative label ('.' for the workspace root itself) when we can
+// compute it, or the raw string when we don't have the workspace folder.
+function previewCwd(cfg: RunConfig, workspaceFolderPath?: string): string {
+  const br = buildRootFor(cfg);
+  if (br) return displayPath(br, workspaceFolderPath);
+  if (cfg.projectPath) return cfg.projectPath;
+  return '';
+}
+
+function buildRootFor(cfg: RunConfig): string | undefined {
+  if (cfg.type === 'spring-boot') {
+    const to = cfg.typeOptions;
+    if ((to.launchMode === 'maven' || to.launchMode === 'gradle') && to.buildRoot) {
+      return to.buildRoot;
+    }
+  }
+  if (cfg.type === 'quarkus' && cfg.typeOptions.buildRoot) return cfg.typeOptions.buildRoot;
+  if (cfg.type === 'java') {
+    const to = cfg.typeOptions;
+    if ((to.launchMode === 'maven' || to.launchMode === 'gradle') && to.buildRoot) {
+      return to.buildRoot;
+    }
+  }
+  return undefined;
+}
+
+// Gradle `:module:task` prefix derived from buildRoot + projectPath. Mirrors
+// gradleModulePrefix in findBuildRoot.ts but works off the webview's string
+// fields. Returns the bare task when we can't compute a prefix.
+function moduleTask(baseTask: string, cfg: RunConfig, workspaceFolderPath?: string): string {
+  const br = buildRootFor(cfg);
+  if (!br || !workspaceFolderPath) return baseTask;
+  const projectAbs = joinPath(workspaceFolderPath, cfg.projectPath ?? '');
+  if (projectAbs === br) return baseTask;
+  if (!projectAbs.startsWith(br + '/')) return baseTask;
+  const rel = projectAbs.slice(br.length + 1);
+  return `:${rel.split('/').join(':')}:${baseTask}`;
+}
+
+// Produce a short, human-readable rendering of the absolute path for the
+// preview line. Inside the workspace → relative path (or '.' for the root),
+// otherwise the absolute path itself.
+function displayPath(abs: string, workspaceFolderPath?: string): string {
+  if (!workspaceFolderPath) return abs;
+  if (abs === workspaceFolderPath) return '.';
+  if (abs.startsWith(workspaceFolderPath + '/')) {
+    return abs.slice(workspaceFolderPath.length + 1);
+  }
+  return abs;
+}
+
+function joinPath(a: string, b: string): string {
+  if (!b) return a;
+  if (b.startsWith('/')) return b;
+  return `${a}/${b}`;
 }

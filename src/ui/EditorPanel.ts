@@ -173,6 +173,7 @@ export class EditorPanel {
       config: config as Partial<RunConfig>,
       schema: this.args.schema,
       pending: this.args.streaming?.pending,
+      workspaceFolderPath: this.args.folder.uri.fsPath,
     };
     this.panel.webview.postMessage(init);
 
@@ -454,20 +455,31 @@ export class EditorPanel {
           );
           // Pre-flight Zod check so we can surface per-field errors (red
           // border + inline message under the offending input) instead of
-          // a single generic banner. Skipping the check means the same
-          // errors would still fire inside svc.update/create but without
-          // the structured field paths reaching the webview.
-          const parse = RunConfigSchema.safeParse(sanitized);
+          // a single generic banner. In create mode the webview hasn't been
+          // given an id yet — svc.create assigns one — so stub a valid uuid
+          // just for the check. Without the stub, Zod fails on ['id'] which
+          // maps to no visible form field and the user sees a count with no
+          // highlighted input.
+          const stubId = this.args.mode === 'create'
+            ? '00000000-0000-4000-8000-000000000000'
+            : sanitized.id;
+          const parse = RunConfigSchema.safeParse({ ...sanitized, id: stubId });
           if (!parse.success) {
-            const errors = parse.error.issues.map(issue => ({
-              // Issue paths are arrays like ['typeOptions','mainClass'];
-              // the form's field keys use dotted notation so we just join.
-              fieldKey: issue.path.join('.'),
-              message: issue.message,
-            }));
-            log.warn(`Save rejected: ${errors.length} validation error(s)`);
-            this.panel.webview.postMessage({ cmd: 'fieldErrors', errors } satisfies Inbound);
-            return;
+            // Defense in depth: drop any ['id'] issues — the id is extension-
+            // controlled, never the user's fault.
+            const errors = parse.error.issues
+              .filter(issue => issue.path[0] !== 'id')
+              .map(issue => ({
+                // Issue paths are arrays like ['typeOptions','mainClass'];
+                // the form's field keys use dotted notation so we just join.
+                fieldKey: issue.path.join('.'),
+                message: issue.message,
+              }));
+            if (errors.length > 0) {
+              log.warn(`Save rejected: ${errors.length} validation error(s)`);
+              this.panel.webview.postMessage({ cmd: 'fieldErrors', errors } satisfies Inbound);
+              return;
+            }
           }
           // Happy path — clear any lingering field errors from a previous
           // rejected submit.
