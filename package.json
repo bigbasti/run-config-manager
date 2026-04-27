@@ -172,6 +172,11 @@
         "command": "runConfig.openRunJson",
         "title": "Open run.json",
         "icon": "$(gear)"
+      },
+      {
+        "command": "runConfig.runBuildAction",
+        "title": "Run Build Action",
+        "icon": "$(play)"
       }
     ],
     "menus": {
@@ -272,6 +277,11 @@
           "command": "runConfig.delete",
           "when": "view == runConfigurations && viewItem =~ /^docker(Idle|Running)$/",
           "group": "inline@5"
+        },
+        {
+          "command": "runConfig.runBuildAction",
+          "when": "view == runConfigurations && viewItem == buildAction",
+          "group": "inline@1"
         },
         {
           "command": "runConfig.runNativeLaunch",

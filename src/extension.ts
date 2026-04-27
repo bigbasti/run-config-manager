@@ -21,6 +21,7 @@ import { EditorPanel } from './ui/EditorPanel';
 import { NativeRunnerService, type NativeLaunch, type NativeTask } from './services/NativeRunnerService';
 import { buildDependencyOptions, rcmRef } from './services/dependencyCandidates';
 import { DependencyOrchestrator } from './services/DependencyOrchestrator';
+import { resolveBuildContext, buildCommandFor, buildActionLabel } from './services/buildActions';
 import {
   NativeLaunchContentProvider,
   SCHEME as NATIVE_VIEW_SCHEME,
@@ -485,6 +486,44 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       log.info(`Show docker logs: "${arg.config.name}"`);
       docker.showLogs(to.containerId, arg.config.name);
+    }),
+
+    // --- Build-action shortcut (Maven/Gradle clean/build/test) ---
+
+    vscode.commands.registerCommand('runConfig.runBuildAction', async (arg: any) => {
+      if (!arg || arg.kind !== 'buildAction') return;
+      const folder = store.getFolder(arg.folderKey);
+      if (!folder) return;
+      const entry = svc.list().find(r => r.valid && r.config.id === arg.configId);
+      if (!entry?.valid) return;
+      const cfg = entry.config;
+      const ctx = resolveBuildContext(cfg, folder);
+      if (!ctx) {
+        vscode.window.showWarningMessage(
+          `"${cfg.name}" has no resolved Maven/Gradle build tool — check the config's projectPath / buildRoot / buildTool.`,
+        );
+        return;
+      }
+      const taskArgs = buildCommandFor(ctx, arg.action);
+      const execution = new vscode.ShellExecution(ctx.binary, taskArgs, {
+        cwd: ctx.cwd,
+        env: ctx.env,
+      });
+      const taskName = `${cfg.name} · ${buildActionLabel(arg.action)}`;
+      const task = new vscode.Task(
+        { type: 'rcm-build', configId: cfg.id, action: arg.action } as any,
+        folder,
+        taskName,
+        'Run Configurations',
+        execution,
+        [],
+      );
+      log.info(`Build action: ${taskName} (${ctx.binary} ${taskArgs.join(' ')}) cwd=${ctx.cwd}`);
+      try {
+        await vscode.tasks.executeTask(task);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Build action failed to start: ${(e as Error).message}`);
+      }
     }),
 
     // --- Cog: open run.json for the current (or picked) workspace folder ---

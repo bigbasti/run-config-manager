@@ -8,6 +8,7 @@ import type { DockerService } from '../services/DockerService';
 import type { DependencyOrchestrator, OrchestrationStatus } from '../services/DependencyOrchestrator';
 import type { NativeRunnerService } from '../services/NativeRunnerService';
 import { parseDependencyRef, rcmRef } from '../services/dependencyCandidates';
+import { BUILD_ACTIONS, buildActionLabel, resolveBuildContext, type BuildAction } from '../services/buildActions';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 import { iconForConfig, brandIconUri } from './iconForConfig';
@@ -28,7 +29,12 @@ export type Node =
   | { kind: 'depRcm'; rootId: string; parentKey: string; ref: string; config: RunConfig; delaySeconds: number; depth: number }
   | { kind: 'depLaunch'; rootId: string; parentKey: string; ref: string; launchName: string; launchType?: string; delaySeconds: number; depth: number }
   | { kind: 'depTask'; rootId: string; parentKey: string; ref: string; source: string; taskName: string; delaySeconds: number; depth: number }
-  | { kind: 'depMissing'; rootId: string; parentKey: string; ref: string; delaySeconds: number; depth: number };
+  | { kind: 'depMissing'; rootId: string; parentKey: string; ref: string; delaySeconds: number; depth: number }
+  // Build-action shortcut (Maven/Gradle clean/build/test) on a config whose
+  // project has a build tool. Rendered alongside dependency children so the
+  // user can kick a one-shot build without needing a separate maven-goal /
+  // gradle-task config.
+  | { kind: 'buildAction'; folderKey: string; configId: string; action: BuildAction };
 
 export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
   private emitter = new vscode.EventEmitter<Node | undefined>();
@@ -65,6 +71,9 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
   }
 
   getTreeItem(n: Node): vscode.TreeItem {
+    if (n.kind === 'buildAction') {
+      return this.renderBuildActionItem(n);
+    }
     if (n.kind === 'depRcm' || n.kind === 'depLaunch' || n.kind === 'depTask' || n.kind === 'depMissing') {
       return this.renderDepItem(n);
     }
@@ -129,25 +138,26 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     }
     const stale = health && health.healthy === false ? health : null;
 
-    // Configs with a dependsOn list are collapsible so the user can see
-    // (and drill into) what gets started first. While an orchestration is
-    // active for this root we force Expanded; once it clears (1.5s after
-    // success, or immediately on manual expand after failure) we return
-    // to the default collapsed state.
+    // Configs become collapsible when they either (a) declare dependencies
+    // or (b) have a Maven/Gradle build tool the user can trigger via the
+    // Clean/Build/Test shortcuts. While an orchestration is active for
+    // this root we force Expanded; once it clears we revert to Collapsed.
     //
     // VS Code caches collapsibleState per node id. To make state changes
     // actually take effect we mint a different id whenever the active-flag
     // flips — the new id makes VS Code treat this as a fresh node and
     // respect the collapsibleState we set.
     const hasDeps = (n.config.dependsOn?.length ?? 0) > 0;
+    const hasBuildActions = folder ? resolveBuildContext(n.config, folder) !== null : false;
+    const expandable = hasDeps || hasBuildActions;
     const orchActive = this.orchestrator.snapshotOf(n.config.id) !== undefined;
-    const collapsibleState = !hasDeps
+    const collapsibleState = !expandable
       ? vscode.TreeItemCollapsibleState.None
       : orchActive
       ? vscode.TreeItemCollapsibleState.Expanded
       : vscode.TreeItemCollapsibleState.Collapsed;
     const item = new vscode.TreeItem(n.config.name, collapsibleState);
-    if (hasDeps) {
+    if (expandable) {
       // Reuse the same id normally so user-driven expand/collapse sticks,
       // but flip to a state-tagged id while orchestration is active so the
       // forced-expanded state wins. When the orchestration finishes the
@@ -285,6 +295,33 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     return item;
   }
 
+  private renderBuildActionItem(n: Extract<Node, { kind: 'buildAction' }>): vscode.TreeItem {
+    const label = buildActionLabel(n.action);
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    item.iconPath = iconForBuildAction(n.action);
+    // Build-action nodes need a runtime-resolved description — we show the
+    // underlying tool (maven/gradle) so the user can tell at a glance.
+    const folder = this.store.getFolder(n.folderKey);
+    const entry = this.svc.list().find(r => r.valid && r.config.id === n.configId);
+    const cfg = entry?.valid ? entry.config : undefined;
+    const ctx = folder && cfg ? resolveBuildContext(cfg, folder) : null;
+    item.description = ctx ? ctx.tool : undefined;
+    item.tooltip = new vscode.MarkdownString(
+      `**${label}** — ${ctx?.tool === 'gradle' ? 'Gradle' : 'Maven'} shortcut\n\n` +
+      (ctx
+        ? `Runs \`${ctx.binary}\` in \`${ctx.cwd}\`` +
+          (ctx.modulePrefix ? ` with module prefix \`${ctx.modulePrefix}\`` : '')
+        : 'Unavailable — the config has no resolved build tool.'),
+    );
+    item.contextValue = 'buildAction';
+    item.command = {
+      command: 'runConfig.runBuildAction',
+      title: label,
+      arguments: [n],
+    };
+    return item;
+  }
+
   private renderDepItem(
     n: Extract<Node, { kind: 'depRcm' | 'depLaunch' | 'depTask' | 'depMissing' }>,
   ): vscode.TreeItem {
@@ -330,20 +367,23 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     }
 
     // depRcm — recurse by making this node collapsible if it has its own
-    // deps. While the owning orchestration is active we force this node
-    // Expanded so the whole tree opens up; when it clears we flip back to
-    // Collapsed (the id change makes VS Code re-read the state — see the
-    // config-node path above for the rationale).
+    // deps OR build actions. While the owning orchestration is active we
+    // force this node Expanded so the whole tree opens up; when it clears
+    // we flip back to Collapsed (the id change makes VS Code re-read the
+    // state — see the config-node path above for the rationale).
     const cfg = n.config;
     const hasOwnDeps = (cfg.dependsOn?.length ?? 0) > 0;
+    const folderForCfg = this.store.getFolder(this.folderKeyOf(cfg));
+    const hasBuildActions = folderForCfg ? resolveBuildContext(cfg, folderForCfg) !== null : false;
+    const expandable = hasOwnDeps || hasBuildActions;
     const orchActive = this.orchestrator.snapshotOf(n.rootId) !== undefined;
-    const state = !hasOwnDeps
+    const state = !expandable
       ? vscode.TreeItemCollapsibleState.None
       : orchActive
       ? vscode.TreeItemCollapsibleState.Expanded
       : vscode.TreeItemCollapsibleState.Collapsed;
     const item = new vscode.TreeItem(cfg.name, state);
-    if (hasOwnDeps) {
+    if (expandable) {
       item.id = orchActive
         ? `dep:${n.rootId}:${n.parentKey}:${cfg.id}:orch`
         : `dep:${n.rootId}:${n.parentKey}:${cfg.id}`;
@@ -384,13 +424,35 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       return this.configsOfType(parent.folderKey, parent.type);
     }
     if (parent.kind === 'config') {
-      return this.depChildren(parent.config, parent.config.id, 1, parent.config.workspaceFolder);
+      const deps = this.depChildren(parent.config, parent.config.id, 1, parent.config.workspaceFolder);
+      const actions = this.buildActionChildren(parent.folderKey, parent.config);
+      return [...deps, ...actions];
     }
     if (parent.kind === 'depRcm') {
       // RCM-config deps can themselves have deps — recurse another level.
-      return this.depChildren(parent.config, parent.rootId, parent.depth + 1, parent.config.workspaceFolder);
+      // Build actions also surface on dep entries so users can clean/build
+      // the underlying project without opening that config's own row.
+      const deps = this.depChildren(parent.config, parent.rootId, parent.depth + 1, parent.config.workspaceFolder);
+      const actions = this.buildActionChildren(this.folderKeyOf(parent.config), parent.config);
+      return [...deps, ...actions];
     }
     return [];
+  }
+
+  // Returns the Maven/Gradle clean/build/test shortcut nodes for this
+  // config, or [] when the config has no build tool (npm, docker, custom
+  // command, tomcat with buildTool === 'none').
+  private buildActionChildren(folderKey: string, cfg: RunConfig): Node[] {
+    const folder = this.store.getFolder(folderKey);
+    if (!folder) return [];
+    const ctx = resolveBuildContext(cfg, folder);
+    if (!ctx) return [];
+    return BUILD_ACTIONS.map(action => ({
+      kind: 'buildAction' as const,
+      folderKey,
+      configId: cfg.id,
+      action,
+    }));
   }
 
   // Build child nodes for a config whose dependsOn list is non-empty. Each
@@ -525,6 +587,16 @@ function iconForGroupType(type: string): string {
     case 'custom-command': return 'bash';
     case 'docker': return 'docker';
     default: return 'npm';
+  }
+}
+
+// Codicon chosen per build action. No brand SVG needed — these are generic
+// verbs and the text label already tells the user what they do.
+function iconForBuildAction(action: BuildAction): vscode.ThemeIcon {
+  switch (action) {
+    case 'clean': return new vscode.ThemeIcon('clear-all');
+    case 'build': return new vscode.ThemeIcon('package');
+    case 'test':  return new vscode.ThemeIcon('beaker');
   }
 }
 
