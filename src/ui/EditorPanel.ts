@@ -6,7 +6,7 @@ import type { RunConfigService } from '../services/RunConfigService';
 import type { RuntimeAdapter, StreamingPatch } from '../adapters/RuntimeAdapter';
 import { log } from '../utils/logger';
 import { relativeFromWorkspace, resolveProjectUri } from '../utils/paths';
-import { recomputeClasspath } from '../adapters/spring-boot/recomputeClasspath';
+import { recomputeClasspath, RecomputeTimeoutError } from '../adapters/spring-boot/recomputeClasspath';
 import { makeRunContext, resolveConfig } from '../utils/resolveVars';
 import { discoverGradleTasks } from '../adapters/gradle-task/discoverGradleTasks';
 import { discoverMavenGoals } from '../adapters/maven-goal/discoverMavenGoals';
@@ -389,9 +389,31 @@ export class EditorPanel {
           const reply: Inbound = { cmd: 'classpathComputed', classpath: cp };
           this.panel.webview.postMessage(reply);
         } catch (e) {
-          const err: Inbound = { cmd: 'error', message: `Classpath recompute failed: ${(e as Error).message}` };
-          this.panel.webview.postMessage(err);
-          log.error('recomputeClasspath', e);
+          // Timeouts get a dedicated message. The Gradle daemon takes 60-120s
+          // on first run of a project; a retry with the daemon warm almost
+          // always completes in single-digit seconds. We toast the hint so
+          // it's visible even if the user has scrolled the form; the banner
+          // in the form itself carries the same wording for later reference.
+          if (e instanceof RecomputeTimeoutError) {
+            const hint =
+              `Recompute timed out. This is almost always the Gradle/Maven ` +
+              `daemon warming up on first run — click "Recompute classpath" ` +
+              `again; the retry normally finishes in a few seconds.`;
+            vscode.window.showWarningMessage(hint, 'Show details').then(choice => {
+              if (choice === 'Show details') log.show();
+            });
+            this.panel.webview.postMessage({
+              cmd: 'error',
+              message: `Classpath recompute timed out — click Recompute again. ${e.partialStderr.trim() ? 'See "Output → Run Configurations" for the build tool\'s last output.' : ''}`.trim(),
+            } satisfies Inbound);
+            log.warn(`recomputeClasspath timed out after 90s. Stderr tail:\n${e.partialStderr.slice(-2000)}`);
+          } else {
+            this.panel.webview.postMessage({
+              cmd: 'error',
+              message: `Classpath recompute failed: ${(e as Error).message}`,
+            } satisfies Inbound);
+            log.error('recomputeClasspath', e);
+          }
         }
         return;
       }

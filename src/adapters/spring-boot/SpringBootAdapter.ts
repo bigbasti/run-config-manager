@@ -327,7 +327,13 @@ export class SpringBootAdapter implements RuntimeAdapter {
           label: 'JDK',
           options: jdkOptions,
           placeholder: '/path/to/jdk',
-          help: 'Java installation to use. Leave blank to use `java` from PATH.',
+          help:
+            'Java installation used for this config. Applied in three places: ' +
+            '(1) the `java` binary for launchMode=java-main; ' +
+            '(2) `javaExec` on the Java debug attach so breakpoints resolve; ' +
+            '(3) JAVA_HOME for the spawned ./gradlew / mvn process when ' +
+            'recomputing the classpath. Leave blank to use `java` / the ' +
+            'build tool\'s default JAVA_HOME.',
           examples: ['/usr/lib/jvm/jdk-21', '/opt/jdk-17'],
           dependsOn: { key: 'typeOptions.launchMode', equals: 'java-main' },
         },

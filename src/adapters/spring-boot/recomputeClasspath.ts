@@ -14,7 +14,32 @@ export interface RecomputeArgs {
   jdkPath: string;               // sets JAVA_HOME for the build tool
 }
 
-// Resolves to a classpath string. Times out after 30 seconds.
+// Error subclass so the UI can give a tailored "retry this — Gradle is slow
+// to warm up" hint instead of the generic classpath-failed message. Carries
+// the partial stderr we collected so users still see Gradle's actual output
+// when they open the Output channel.
+export class RecomputeTimeoutError extends Error {
+  constructor(
+    public readonly command: string,
+    public readonly timeoutMs: number,
+    public readonly partialStderr: string,
+  ) {
+    super(
+      `${command} did not finish within ${Math.round(timeoutMs / 1000)}s. ` +
+      `The Gradle/Maven daemon is probably starting up for the first time — ` +
+      `this can take 60-120 s on a cold build. Click "Recompute classpath" ` +
+      `again; the daemon will be warm from this attempt and the retry usually ` +
+      `finishes in a few seconds. ` +
+      (partialStderr.trim() ? `\n\nLast output:\n${partialStderr.slice(-800)}` : ''),
+    );
+    this.name = 'RecomputeTimeoutError';
+  }
+}
+
+// Resolves to a classpath string. Times out after 90 seconds — generous
+// enough for a cold daemon + full dependency resolution on a typical multi-
+// module project. A hard failure wraps the partial stderr in a
+// RecomputeTimeoutError so the UI can offer a retry-specific hint.
 export async function recomputeClasspath(args: RecomputeArgs): Promise<string> {
   // 1. Try Java extension first — it knows the whole project graph.
   try {
@@ -102,18 +127,31 @@ async function gradleClasspath(args: RecomputeArgs): Promise<string> {
   // The configurations-only variant misses resources dirs and sibling modules
   // in multi-module projects — Spring Boot then can't find the profile
   // properties even when the profile is marked active.
+  // IMPORTANT: Configuration-cache-safe. The init script used to read
+  // `project.extensions` / `project.configurations` inside `doLast {}`, which
+  // Gradle 8+ rejects when configuration caching is on:
+  //   "Invocation of 'Task.project' by task '…' at execution time is
+  //    unsupported with the configuration cache."
+  //
+  // Fix: resolve the classpath at CONFIGURATION time and stash it on a
+  // FileCollection / Provider the task reads at execution time. That keeps
+  // the project-object access out of the execution path entirely.
   const init = `
     allprojects {
+      def __runtimeCp = project.files({
+        def ss = project.extensions.findByName('sourceSets')
+        if (ss != null && ss.findByName('main') != null) {
+          return ss.main.runtimeClasspath
+        }
+        def cfg = project.configurations.findByName('runtimeClasspath')
+        return cfg != null ? cfg : project.files()
+      })
       tasks.register('__printRuntimeClasspath') {
+        inputs.files(__runtimeCp)
+        def cpPathProvider = project.provider { __runtimeCp.asPath }
         doLast {
           println 'RCM_CP_BEGIN'
-          def ss = project.extensions.findByName('sourceSets')
-          if (ss != null && ss.findByName('main') != null) {
-            println ss.main.runtimeClasspath.asPath
-          } else {
-            def cfg = project.configurations.findByName('runtimeClasspath')
-            println cfg != null ? cfg.asPath : ''
-          }
+          println cpPathProvider.get()
           println 'RCM_CP_END'
         }
       }
@@ -160,6 +198,8 @@ async function gradleClasspath(args: RecomputeArgs): Promise<string> {
   }
 }
 
+const RECOMPUTE_TIMEOUT_MS = 90_000;
+
 function spawnCollect(
   command: string,
   args: string[],
@@ -176,8 +216,8 @@ function spawnCollect(
     child.stderr.on('data', d => { stderr += d.toString(); });
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error(`${command} timed out after 30s`));
-    }, 30_000);
+      reject(new RecomputeTimeoutError(command, RECOMPUTE_TIMEOUT_MS, stderr));
+    }, RECOMPUTE_TIMEOUT_MS);
     child.on('error', e => { clearTimeout(timer); reject(e); });
     child.on('exit', code => {
       clearTimeout(timer);
