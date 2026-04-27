@@ -74,6 +74,21 @@ export type FormField =
       // sections rather than free text so the layout can be styled, and so
       // long lists of ports/volumes stay readable.
       content: InfoContent;
+    } & BaseFieldMeta)
+  | ({
+      // Purpose-built dependency picker: an ordered list of {ref, delaySeconds}
+      // entries backed by a pool of candidate refs (other run configs, launch
+      // configs, native tasks). The user adds entries from a dropdown and
+      // sets a per-entry delay. Not generic — this shape is exactly what the
+      // DependencyOrchestrator consumes.
+      kind: 'dependencyList';
+      key: string;
+      label: string;
+      // Candidates the user can pick from. `value` is the stable ref
+      // ("rcm:<id>", "launch:<name>", "task:<source>::<name>"), `label` is
+      // human-readable. `group` collects them visually (e.g. "This folder",
+      // "Launch configs", "Tasks").
+      options: Array<{ value: string; label: string; group?: string; description?: string }>;
     } & BaseFieldMeta);
 
 export type InfoContent = {

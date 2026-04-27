@@ -5,6 +5,7 @@ import type { RunConfig } from '../../shared/types';
 import type { FormSchema } from '../../shared/formSchema';
 import { resolveProjectUri } from '../../utils/paths';
 import { log } from '../../utils/logger';
+import { dependsOnField } from '../sharedFields';
 
 const VAR_SYNTAX_HINT =
   'Supports ${VAR} and ${env:VAR} (environment variables), ' +
@@ -36,7 +37,7 @@ export class CustomCommandAdapter implements RuntimeAdapter {
     };
   }
 
-  getFormSchema(_context: Record<string, unknown>): FormSchema {
+  getFormSchema(context: Record<string, unknown>): FormSchema {
     return {
       common: [
         {
@@ -125,6 +126,7 @@ export class CustomCommandAdapter implements RuntimeAdapter {
           help: 'Merged on top of inherited env. ' + VAR_SYNTAX_HINT,
           examples: ['NODE_ENV=production', 'DB_URL=${DB_URL}', 'DEBUG=app:*'],
         },
+        dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
       ],
     };
   }

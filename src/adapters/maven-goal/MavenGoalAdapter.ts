@@ -8,6 +8,7 @@ import { findMavenRoot } from '../spring-boot/findBuildRoot';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
 import type { MavenGoalEntry } from './discoverMavenGoals';
+import { dependsOnField } from '../sharedFields';
 
 const VAR_SYNTAX_HINT =
   'Supports ${VAR} and ${env:VAR} (environment variables), ' +
@@ -222,6 +223,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
           help: 'Merged on top of inherited env. ' + VAR_SYNTAX_HINT,
           examples: ['MAVEN_OPTS=-Xmx2g', 'DB_URL=${DB_URL}'],
         },
+        dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
       ],
     };
   }

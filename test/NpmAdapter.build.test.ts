@@ -79,9 +79,9 @@ describe('NpmAdapter.getFormSchema', () => {
     expect(schema.common.map(f => f.key)).toEqual(['name', 'projectPath']);
   });
 
-  test('advanced fields include env, programArgs, vmArgs', () => {
+  test('advanced fields include env, programArgs, vmArgs, dependsOn', () => {
     const schema = adapter.getFormSchema({ scripts: [] });
-    expect(schema.advanced.map(f => f.key)).toEqual(['env', 'programArgs', 'vmArgs']);
+    expect(schema.advanced.map(f => f.key)).toEqual(['env', 'programArgs', 'vmArgs', 'dependsOn']);
   });
 });
 

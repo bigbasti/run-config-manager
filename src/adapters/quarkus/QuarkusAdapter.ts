@@ -8,6 +8,7 @@ import { detectJdks } from '../spring-boot/detectJdks';
 import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from '../spring-boot/findBuildRoot';
 import { resolveProjectUri } from '../../utils/paths';
+import { dependsOnField } from '../sharedFields';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
 
@@ -325,6 +326,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC'],
           inspectable: true,
         },
+        dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
       ],
     };
   }

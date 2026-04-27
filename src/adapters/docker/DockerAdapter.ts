@@ -4,6 +4,7 @@ import type { RunConfig } from '../../shared/types';
 import type { FormSchema, InfoContent } from '../../shared/formSchema';
 import type { DockerService, ContainerSummary, ContainerInfo } from '../../services/DockerService';
 import { log } from '../../utils/logger';
+import { dependsOnField } from '../sharedFields';
 
 // The Docker adapter is a thin bridge between the form UI and DockerService.
 // Key differences from the other adapters:
@@ -133,7 +134,9 @@ export class DockerAdapter implements RuntimeAdapter {
           content: infoContent,
         },
       ],
-      advanced: [],
+      advanced: [
+        dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
+      ],
     };
   }
 

@@ -8,6 +8,7 @@ import { findGradleRoot } from '../spring-boot/findBuildRoot';
 import { resolveProjectUri } from '../../utils/paths';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
+import { dependsOnField } from '../sharedFields';
 import type { GradleTaskEntry } from './discoverGradleTasks';
 
 const VAR_SYNTAX_HINT =
@@ -237,6 +238,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
           help: 'Merged on top of inherited env. ' + VAR_SYNTAX_HINT,
           examples: ['DB_URL=${DB_URL}', 'GRADLE_OPTS=-Xmx2g'],
         },
+        dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
       ],
     };
   }

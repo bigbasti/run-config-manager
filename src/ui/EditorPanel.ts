@@ -40,6 +40,12 @@ interface OpenArgs {
   // Optional DockerService used to refresh / inspect containers from the
   // Docker form. Absent for non-Docker flows (no-op for those).
   docker?: DockerService;
+  // Candidate list for the shared "Depends on" field. Assembled by the
+  // caller (extension.ts) from the current run-configs in the folder, the
+  // native launch configs, and workspace-sourced native tasks — minus the
+  // config currently being edited. Kept out of the adapter so the adapter
+  // doesn't need to know about other services.
+  dependencyOptions?: Array<{ value: string; label: string; group?: string; description?: string }>;
 }
 
 export class EditorPanel {
@@ -94,6 +100,14 @@ export class EditorPanel {
   }
 
   private sendInit(): void {
+    // Seed the persistent form context with the dependency candidates so
+    // every subsequent getFormSchema call (initial + streaming rebuilds +
+    // loadTasks/loadGoals) sees the same list. The caller assembles it
+    // once — stale entries between clicks aren't worth the churn.
+    if (this.args.dependencyOptions) {
+      this.context.dependencyOptions = this.args.dependencyOptions;
+    }
+
     const seed = (this.args.seedDefaults ?? {}) as Record<string, unknown>;
     const type = ((seed.type as string | undefined) ?? this.args.existing?.type ?? 'npm') as
       | 'npm'
@@ -103,7 +117,8 @@ export class EditorPanel {
       | 'java'
       | 'maven-goal'
       | 'gradle-task'
-      | 'custom-command';
+      | 'custom-command'
+      | 'docker';
 
     const baseCommon = {
       name: '',
@@ -602,12 +617,25 @@ function makeNonce(): string {
 // end throws loudly if it's missed, which is how we catch the "saved as npm"
 // regression that the Quarkus bug exposed.
 export function sanitizeConfig(cfg: RunConfig): RunConfig {
+  // Normalise dependsOn: drop empty refs, clamp delays, omit field entirely
+  // when the list is empty so saved JSON stays tidy.
+  const deps = (cfg.dependsOn ?? [])
+    .filter(d => d && typeof d.ref === 'string' && d.ref.trim())
+    .map(d => ({
+      ref: d.ref.trim(),
+      ...(typeof d.delaySeconds === 'number' && d.delaySeconds > 0
+        ? { delaySeconds: Math.min(600, Math.max(0, Math.floor(d.delaySeconds))) }
+        : {}),
+    }));
   const common = {
     ...cfg,
     env: cfg.env ?? {},
     programArgs: cfg.programArgs ?? '',
     vmArgs: cfg.vmArgs ?? '',
+    ...(deps.length > 0 ? { dependsOn: deps } : { dependsOn: undefined }),
   };
+  // Remove the explicit undefined so JSON.stringify doesn't leave `"dependsOn": null` artefacts.
+  if (common.dependsOn === undefined) delete (common as any).dependsOn;
   if (cfg.type === 'tomcat') {
     const to = cfg.typeOptions as Partial<import('../shared/types').TomcatTypeOptions> | undefined;
     return {

@@ -5,6 +5,9 @@ import type { ExecutionService } from '../services/ExecutionService';
 import type { DebugService } from '../services/DebugService';
 import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import type { DockerService } from '../services/DockerService';
+import type { DependencyOrchestrator, OrchestrationStatus } from '../services/DependencyOrchestrator';
+import type { NativeRunnerService } from '../services/NativeRunnerService';
+import { parseDependencyRef, rcmRef } from '../services/dependencyCandidates';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 import { iconForConfig, brandIconUri } from './iconForConfig';
@@ -15,7 +18,17 @@ export type Node =
   | { kind: 'folder'; folderKey: string; label: string }
   | { kind: 'typeGroup'; folderKey: string; type: RunConfig['type']; label: string; count: number }
   | { kind: 'config'; folderKey: string; config: RunConfig }
-  | { kind: 'invalid'; folderKey: string; entry: InvalidConfigEntry };
+  | { kind: 'invalid'; folderKey: string; entry: InvalidConfigEntry }
+  // A dependency child under a config node. Four flavours:
+  //   - rcm:   another run configuration defined in RCM.
+  //   - launch/task: pointer into VS Code's native launch.json / tasks.json.
+  //   - missing: the ref no longer resolves (renamed/removed).
+  // The rootId is the RCM config the chain started from — we carry it so
+  // orchestration status can be looked up without an extra search.
+  | { kind: 'depRcm'; rootId: string; parentKey: string; ref: string; config: RunConfig; delaySeconds: number; depth: number }
+  | { kind: 'depLaunch'; rootId: string; parentKey: string; ref: string; launchName: string; launchType?: string; delaySeconds: number; depth: number }
+  | { kind: 'depTask'; rootId: string; parentKey: string; ref: string; source: string; taskName: string; delaySeconds: number; depth: number }
+  | { kind: 'depMissing'; rootId: string; parentKey: string; ref: string; delaySeconds: number; depth: number };
 
 export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
   private emitter = new vscode.EventEmitter<Node | undefined>();
@@ -36,11 +49,15 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     // Running-state source for docker configs. Separate from ExecutionService
     // because start/stop semantics differ (no long-running task wrapper).
     private readonly docker: DockerService,
+    private readonly orchestrator: DependencyOrchestrator,
+    private readonly native: NativeRunnerService,
   ) {
     store.onChange(() => this.refresh());
     exec.onRunningChanged(() => this.refresh());
     dbg.onRunningChanged(() => this.refresh());
     docker.onChanged(() => this.refresh());
+    orchestrator.onChanged(() => this.refresh());
+    native.onRunningChanged(() => this.refresh());
   }
 
   refresh(): void {
@@ -48,6 +65,9 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
   }
 
   getTreeItem(n: Node): vscode.TreeItem {
+    if (n.kind === 'depRcm' || n.kind === 'depLaunch' || n.kind === 'depTask' || n.kind === 'depMissing') {
+      return this.renderDepItem(n);
+    }
     if (n.kind === 'folder') {
       const item = new vscode.TreeItem(n.label, vscode.TreeItemCollapsibleState.Expanded);
       item.contextValue = 'folder';
@@ -109,7 +129,34 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     }
     const stale = health && health.healthy === false ? health : null;
 
-    const item = new vscode.TreeItem(n.config.name, vscode.TreeItemCollapsibleState.None);
+    // Configs with a dependsOn list are collapsible so the user can see
+    // (and drill into) what gets started first. While an orchestration is
+    // active for this root we force Expanded; once it clears (1.5s after
+    // success, or immediately on manual expand after failure) we return
+    // to the default collapsed state.
+    //
+    // VS Code caches collapsibleState per node id. To make state changes
+    // actually take effect we mint a different id whenever the active-flag
+    // flips — the new id makes VS Code treat this as a fresh node and
+    // respect the collapsibleState we set.
+    const hasDeps = (n.config.dependsOn?.length ?? 0) > 0;
+    const orchActive = this.orchestrator.snapshotOf(n.config.id) !== undefined;
+    const collapsibleState = !hasDeps
+      ? vscode.TreeItemCollapsibleState.None
+      : orchActive
+      ? vscode.TreeItemCollapsibleState.Expanded
+      : vscode.TreeItemCollapsibleState.Collapsed;
+    const item = new vscode.TreeItem(n.config.name, collapsibleState);
+    if (hasDeps) {
+      // Reuse the same id normally so user-driven expand/collapse sticks,
+      // but flip to a state-tagged id while orchestration is active so the
+      // forced-expanded state wins. When the orchestration finishes the
+      // id flips back → VS Code treats it as a different node again and
+      // reverts to the stored default (collapsed).
+      item.id = orchActive
+        ? `config:${n.config.id}:orch`
+        : `config:${n.config.id}`;
+    }
     item.tooltip = new vscode.MarkdownString(
       `**${n.config.name}** _(${n.config.type})_\n\n` +
       (n.config.projectPath ? `Path: \`${n.config.projectPath}\`\n\n` : '') +
@@ -238,6 +285,89 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     return item;
   }
 
+  private renderDepItem(
+    n: Extract<Node, { kind: 'depRcm' | 'depLaunch' | 'depTask' | 'depMissing' }>,
+  ): vscode.TreeItem {
+    const snap = this.orchestrator.snapshotOf(n.rootId);
+    const status: OrchestrationStatus | undefined = snap?.statuses.get(n.ref);
+    const reason = snap?.reasons.get(n.ref);
+    const delayLabel = n.delaySeconds > 0 ? ` · +${n.delaySeconds}s` : '';
+
+    if (n.kind === 'depMissing') {
+      const item = new vscode.TreeItem(n.ref, vscode.TreeItemCollapsibleState.None);
+      item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+      item.description = 'missing dependency';
+      item.tooltip = new vscode.MarkdownString(
+        `**Missing dependency**\n\n` +
+        `Ref: \`${n.ref}\`\n\n` +
+        `This referenced config/launch/task could not be resolved — it may have been renamed or removed. ` +
+        `Edit the parent config to fix.`,
+      );
+      item.contextValue = 'depMissing';
+      return item;
+    }
+
+    if (n.kind === 'depLaunch') {
+      const item = new vscode.TreeItem(n.launchName, vscode.TreeItemCollapsibleState.None);
+      const running = this.native.isLaunchRunning(n.launchName);
+      item.iconPath = iconForDepStatus(status, running)
+        ?? new vscode.ThemeIcon('debug-alt');
+      item.description = `launch · ${n.launchType ?? 'launch'}${delayLabel}${running ? ' · running' : ''}`;
+      item.tooltip = depTooltip('Launch configuration', n.launchName, status, reason, n.delaySeconds);
+      item.contextValue = running ? 'depLaunchRunning' : 'depLaunchIdle';
+      return item;
+    }
+
+    if (n.kind === 'depTask') {
+      const item = new vscode.TreeItem(n.taskName, vscode.TreeItemCollapsibleState.None);
+      const running = this.native.isTaskRunning(n.source, n.taskName);
+      item.iconPath = iconForDepStatus(status, running)
+        ?? new vscode.ThemeIcon('tools');
+      item.description = `task · ${n.source}${delayLabel}${running ? ' · running' : ''}`;
+      item.tooltip = depTooltip('Task', `${n.taskName} (${n.source})`, status, reason, n.delaySeconds);
+      item.contextValue = running ? 'depTaskRunning' : 'depTaskIdle';
+      return item;
+    }
+
+    // depRcm — recurse by making this node collapsible if it has its own
+    // deps. While the owning orchestration is active we force this node
+    // Expanded so the whole tree opens up; when it clears we flip back to
+    // Collapsed (the id change makes VS Code re-read the state — see the
+    // config-node path above for the rationale).
+    const cfg = n.config;
+    const hasOwnDeps = (cfg.dependsOn?.length ?? 0) > 0;
+    const orchActive = this.orchestrator.snapshotOf(n.rootId) !== undefined;
+    const state = !hasOwnDeps
+      ? vscode.TreeItemCollapsibleState.None
+      : orchActive
+      ? vscode.TreeItemCollapsibleState.Expanded
+      : vscode.TreeItemCollapsibleState.Collapsed;
+    const item = new vscode.TreeItem(cfg.name, state);
+    if (hasOwnDeps) {
+      item.id = orchActive
+        ? `dep:${n.rootId}:${n.parentKey}:${cfg.id}:orch`
+        : `dep:${n.rootId}:${n.parentKey}:${cfg.id}`;
+    }
+    const running = cfg.type === 'docker'
+      ? this.docker.isRunning(cfg.typeOptions.containerId)
+      : (this.exec.isRunning(cfg.id) || this.dbg.isRunning(cfg.id));
+    item.iconPath = iconForDepStatus(status, running)
+      ?? iconForConfig(cfg, this.store.getFolder(this.folderKeyOf(cfg)), this.extensionUri);
+    item.description = `${cfg.type}${delayLabel}${running ? ' · running' : ''}`;
+    item.tooltip = depTooltip('Run configuration', cfg.name, status, reason, n.delaySeconds);
+    item.contextValue = running ? 'depRcmRunning' : 'depRcmIdle';
+    return item;
+  }
+
+  // Best-effort lookup of which folder a RunConfig belongs to — used for
+  // icon resolution on dep-rcm nodes. We match on the stored workspaceFolder
+  // name first, then fall back to the first known folder.
+  private folderKeyOf(cfg: RunConfig): string {
+    const keys = this.store.folderKeys();
+    const match = keys.find(k => this.store.getFolder(k)?.name === cfg.workspaceFolder);
+    return match ?? keys[0] ?? '';
+  }
+
   getChildren(parent?: Node): Node[] {
     if (!parent) {
       const keys = this.store.folderKeys();
@@ -253,7 +383,74 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     if (parent.kind === 'typeGroup') {
       return this.configsOfType(parent.folderKey, parent.type);
     }
+    if (parent.kind === 'config') {
+      return this.depChildren(parent.config, parent.config.id, 1, parent.config.workspaceFolder);
+    }
+    if (parent.kind === 'depRcm') {
+      // RCM-config deps can themselves have deps — recurse another level.
+      return this.depChildren(parent.config, parent.rootId, parent.depth + 1, parent.config.workspaceFolder);
+    }
     return [];
+  }
+
+  // Build child nodes for a config whose dependsOn list is non-empty. Each
+  // entry becomes a depRcm / depLaunch / depTask / depMissing node based on
+  // what the ref resolves to. Depth is capped at 10 to guard against
+  // pathological self-referencing configs (the orchestrator itself detects
+  // cycles; this is a UI-only safety net).
+  private depChildren(cfg: RunConfig, rootId: string, depth: number, folderName: string): Node[] {
+    const deps = cfg.dependsOn ?? [];
+    if (depth > 10) return [];
+    const parentKey = cfg.id;
+    const out: Node[] = [];
+    for (const dep of deps) {
+      const resolved = this.orchestrator.resolve(dep.ref, folderName);
+      if (!resolved) {
+        out.push({
+          kind: 'depMissing',
+          rootId,
+          parentKey,
+          ref: dep.ref,
+          delaySeconds: dep.delaySeconds ?? 0,
+          depth,
+        });
+        continue;
+      }
+      if (resolved.kind === 'rcm') {
+        out.push({
+          kind: 'depRcm',
+          rootId,
+          parentKey,
+          ref: dep.ref,
+          config: resolved.cfg,
+          delaySeconds: dep.delaySeconds ?? 0,
+          depth,
+        });
+      } else if (resolved.kind === 'launch') {
+        out.push({
+          kind: 'depLaunch',
+          rootId,
+          parentKey,
+          ref: dep.ref,
+          launchName: resolved.launch.name,
+          launchType: resolved.launch.launchType,
+          delaySeconds: dep.delaySeconds ?? 0,
+          depth,
+        });
+      } else {
+        out.push({
+          kind: 'depTask',
+          rootId,
+          parentKey,
+          ref: dep.ref,
+          source: resolved.source,
+          taskName: resolved.taskName,
+          delaySeconds: dep.delaySeconds ?? 0,
+          depth,
+        });
+      }
+    }
+    return out;
   }
 
   // Root (or per-folder) nodes: each type with >1 config becomes a group;
@@ -329,4 +526,57 @@ function iconForGroupType(type: string): string {
     case 'docker': return 'docker';
     default: return 'npm';
   }
+}
+
+// Overlay the orchestration status on top of the default icon for a dep
+// node. Returning undefined lets the caller fall back to its normal icon
+// (launch/debug-alt, tools, brand SVG for rcm).
+function iconForDepStatus(
+  status: OrchestrationStatus | undefined,
+  runningNow: boolean,
+): vscode.ThemeIcon | undefined {
+  if (!status) {
+    // No active orchestration: if the dep already looks running (user
+    // started it manually, or a previous orchestration finished), keep the
+    // tree honest about that.
+    return runningNow
+      ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'))
+      : undefined;
+  }
+  switch (status) {
+    case 'waiting':
+      return new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.foreground'));
+    case 'starting':
+      return new vscode.ThemeIcon('loading~spin');
+    case 'delaying':
+      return new vscode.ThemeIcon('watch', new vscode.ThemeColor('charts.yellow'));
+    case 'running':
+      return new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
+    case 'failed':
+      return new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
+    case 'skipped':
+      return new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('charts.foreground'));
+    default:
+      return undefined;
+  }
+}
+
+function depTooltip(
+  kind: string,
+  label: string,
+  status: OrchestrationStatus | undefined,
+  reason: string | undefined,
+  delaySeconds: number,
+): vscode.MarkdownString {
+  const lines = [`**${kind}**: ${label}`];
+  if (delaySeconds > 0) {
+    lines.push(`\nDelay after start: ${delaySeconds}s`);
+  }
+  if (status) {
+    lines.push(`\nStatus: _${status}_`);
+  }
+  if (reason) {
+    lines.push(`\n${reason}`);
+  }
+  return new vscode.MarkdownString(lines.join('\n\n'));
 }

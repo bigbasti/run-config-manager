@@ -19,6 +19,8 @@ import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { NativeRunnerTreeProvider } from './ui/NativeRunnerTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
 import { NativeRunnerService, type NativeLaunch, type NativeTask } from './services/NativeRunnerService';
+import { buildDependencyOptions, rcmRef } from './services/dependencyCandidates';
+import { DependencyOrchestrator } from './services/DependencyOrchestrator';
 import {
   NativeLaunchContentProvider,
   SCHEME as NATIVE_VIEW_SCHEME,
@@ -68,7 +70,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await store.attach(folders);
   log.info(`Loaded ${svc.list().length} configuration(s) across ${folders.length} folder(s).`);
 
-  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri, docker);
+  const orchestrator = new DependencyOrchestrator(svc, exec, dbg, docker, native);
+  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri, docker, orchestrator, native);
   // Separate view for native launch.json / tasks.json — sibling to the
   // main Configurations view, like VARIABLES / BREAKPOINTS in Run & Debug.
   const nativeTree = new NativeRunnerTreeProvider(native);
@@ -213,7 +216,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     vscode.commands.registerCommand('runConfig.add', async () => {
       log.info('Command: add configuration');
-      await addConfig(context, store, svc, scanner, registry, docker);
+      await addConfig(context, store, svc, scanner, registry, docker, native);
     }),
 
     vscode.commands.registerCommand('runConfig.edit', async (arg: ConfigNodeArg) => {
@@ -226,14 +229,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const adapter = registry.get(arg.config.type);
         if (!adapter) return;
         const detectionContext = await buildEditContext(adapter, folder, arg.config.projectPath);
+        const dependencyOptions = await gatherDependencyOptions(svc, native, arg.folderKey, arg.config.id);
         EditorPanel.open({
           mode: 'edit',
           folderKey: arg.folderKey,
           folder,
           adapter,
           existing: arg.config,
-          schema: adapter.getFormSchema(detectionContext),
+          schema: adapter.getFormSchema({ ...detectionContext, dependencyOptions }),
           docker,
+          dependencyOptions,
         }, context, svc);
       } else {
         log.info(`Edit invalid entry: "${arg.entry.name}"`);
@@ -242,14 +247,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const adapter = registry.get(type);
         if (!adapter) return;
         const detectionContext = await buildEditContext(adapter, folder, recovered.projectPath ?? '');
+        const dependencyOptions = await gatherDependencyOptions(svc, native, arg.folderKey, arg.entry.id);
         EditorPanel.open({
           mode: 'edit',
           folderKey: arg.folderKey,
           folder,
           adapter,
           existing: recovered as RunConfig,
-          schema: adapter.getFormSchema(detectionContext),
+          schema: adapter.getFormSchema({ ...detectionContext, dependencyOptions }),
           docker,
+          dependencyOptions,
         }, context, svc);
       }
     }),
@@ -273,6 +280,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
       log.info(`Run: "${arg.config.name}" (${arg.config.type})`);
+
+      // When the config has dependencies, fan out through the orchestrator.
+      // It starts each dep in order, waits for running-state, applies the
+      // per-edge delay, then starts the root. The tree expands / collapses
+      // automatically — the provider flips the root and nested depRcm nodes
+      // to Expanded while an orchestration snapshot is active, then back to
+      // Collapsed when it clears ~1.5s after the root reports running.
+      if ((arg.config.dependsOn?.length ?? 0) > 0) {
+        await orchestrator.run(arg.config, folder);
+        return;
+      }
+
       if (arg.config.type === 'docker') {
         // Docker bypasses ExecutionService entirely — start/stop are
         // one-shot daemon calls and the "running" state comes from polling.
@@ -353,15 +372,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // entry's stored `error` is also surfaced via the tree tooltip, but
       // per-field feedback inside the form is what actually guides the fix.
       const initialFieldErrors = collectFieldErrors(merged);
+      const dependencyOptions = await gatherDependencyOptions(svc, native, arg.folderKey, merged.id as string | undefined);
       EditorPanel.open({
         mode: 'edit',
         folderKey: arg.folderKey,
         folder,
         adapter,
         existing: merged as unknown as RunConfig,
-        schema: adapter.getFormSchema(detection?.context ?? {}),
+        schema: adapter.getFormSchema({ ...(detection?.context ?? {}), dependencyOptions }),
         initialFieldErrors,
         docker,
+        dependencyOptions,
       }, context, svc);
     }),
 
@@ -509,6 +530,7 @@ async function addConfig(
   scanner: ProjectScanner,
   registry: AdapterRegistry,
   docker: DockerService,
+  native: NativeRunnerService,
 ): Promise<void> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {
@@ -558,7 +580,8 @@ async function addConfig(
       projectPath: relProject,
       workspaceFolder: folder.name,
     };
-    const schema = adapter.getFormSchema({});
+    const dependencyOptions = await gatherDependencyOptions(svc, native, folder.uri.fsPath, undefined);
+    const schema = adapter.getFormSchema({ dependencyOptions });
     EditorPanel.open({
       mode: 'create',
       folderKey: folder.uri.fsPath,
@@ -566,9 +589,10 @@ async function addConfig(
       adapter,
       seedDefaults: seedDefaults as Partial<RunConfig>,
       schema,
+      dependencyOptions,
       streaming: {
         adapter,
-        initialContext: {},
+        initialContext: { dependencyOptions },
         // Fields that have their options populated by detection — the webview
         // shows spinners in these fields until schemaUpdate messages arrive.
         pending: [
@@ -602,7 +626,8 @@ async function addConfig(
   if (!detection) {
     vscode.window.showWarningMessage(`No ${typePick.label} project detected — proceeding with blank form.`);
   }
-  const schema = adapter.getFormSchema(detection?.context ?? {});
+  const dependencyOptions = await gatherDependencyOptions(svc, native, folder.uri.fsPath, undefined);
+  const schema = adapter.getFormSchema({ ...(detection?.context ?? {}), dependencyOptions });
   const seedDefaults = {
     ...(detection?.defaults ?? {}),
     name: defaultName,
@@ -617,6 +642,7 @@ async function addConfig(
     seedDefaults,
     schema,
     docker,
+    dependencyOptions,
   }, context, svc);
 }
 
@@ -651,6 +677,33 @@ async function buildEditContext(
   } catch {
     return {};
   }
+}
+
+// Snapshot the "Depends on" candidates at edit-open time: other run configs
+// in this folder plus workspace launches and tasks. Native tasks are fetched
+// async — we wait here so the form has the full list on first paint.
+async function gatherDependencyOptions(
+  svc: RunConfigService,
+  native: NativeRunnerService,
+  folderKey: string,
+  excludeId: string | undefined,
+): Promise<Array<{ value: string; label: string; group: string; description?: string }>> {
+  const folderConfigs = svc.list()
+    .filter(r => r.valid && r.folderKey === folderKey)
+    .map(r => (r as any).config as RunConfig);
+  let tasks: Awaited<ReturnType<typeof native.getTasks>> = [];
+  try {
+    tasks = await native.getTasks();
+  } catch (e) {
+    log.warn(`gatherDependencyOptions: fetchTasks failed: ${(e as Error).message}`);
+  }
+  return buildDependencyOptions({
+    folderConfigs,
+    excludeId,
+    launches: native.getLaunches(),
+    tasks,
+    folderKey,
+  });
 }
 
 // Scan every direct child of the chosen folder and ask each adapter if it

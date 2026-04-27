@@ -325,4 +325,36 @@ describe('sanitizeConfig', () => {
       expect(r.error.issues[0].path).toEqual(['typeOptions', 'containerId']);
     }
   });
+
+  test('dependsOn: entries round-trip, empty refs dropped, delays clamped', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'custom-command',
+      typeOptions: { command: 'echo', cwd: '', shell: 'default', interactive: false } as any,
+      dependsOn: [
+        { ref: 'rcm:abc123' },
+        { ref: '   ' },                              // empty — dropped
+        { ref: 'launch:Run API', delaySeconds: 3 },
+        { ref: 'task:Workspace::build', delaySeconds: -4 }, // negative → 0 → omitted
+        { ref: 'task:npm::start', delaySeconds: 9999 },     // clamp to 600
+      ],
+    } as RunConfig);
+    expect(out.dependsOn).toEqual([
+      { ref: 'rcm:abc123' },
+      { ref: 'launch:Run API', delaySeconds: 3 },
+      { ref: 'task:Workspace::build' },
+      { ref: 'task:npm::start', delaySeconds: 600 },
+    ]);
+    expect(RunConfigSchema.safeParse(out).success).toBe(true);
+  });
+
+  test('dependsOn: empty list omitted from saved config', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'custom-command',
+      typeOptions: { command: 'echo', cwd: '', shell: 'default', interactive: false } as any,
+      dependsOn: [],
+    } as RunConfig);
+    expect(out.dependsOn).toBeUndefined();
+  });
 });

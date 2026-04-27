@@ -5,6 +5,7 @@ import type { FormField, FormSchema } from '../../shared/formSchema';
 import { readPackageJsonInfo } from './detectPackageJson';
 import { splitArgs } from './splitArgs';
 import { log } from '../../utils/logger';
+import { dependsOnField } from '../sharedFields';
 
 export class NpmAdapter implements RuntimeAdapter {
   readonly type = 'npm' as const;
@@ -130,6 +131,7 @@ export class NpmAdapter implements RuntimeAdapter {
           label: 'VM args (unused for npm)',
           help: 'Reserved for future runtime types (e.g., Java -Xmx flags). Ignored for npm configurations.',
         },
+        dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
       ],
     };
   }

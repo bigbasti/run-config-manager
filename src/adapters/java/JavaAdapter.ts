@@ -11,6 +11,7 @@ import { suggestClasspath } from '../spring-boot/suggestClasspath';
 import { resolveProjectUri } from '../../utils/paths';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
+import { dependsOnField } from '../sharedFields';
 
 const VAR_SYNTAX_HINT =
   'Supports ${VAR} and ${env:VAR} (environment variables), ' +
@@ -417,6 +418,7 @@ export class JavaAdapter implements RuntimeAdapter {
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC', '-Dapp.home=${workspaceFolder}'],
           inspectable: true,
         },
+        dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
       ],
     };
   }

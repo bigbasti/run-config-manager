@@ -6,6 +6,7 @@ import { FolderPathInput } from './FolderPathInput';
 import { SelectOrCustom } from './SelectOrCustom';
 import { CsvChecklist } from './CsvChecklist';
 import { InspectDialog } from './InspectDialog';
+import { DependencyList } from './DependencyList';
 
 interface Props {
   field: FormField;
@@ -258,6 +259,16 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
     }
     case 'info':
       return <InfoPanel content={field.content} />;
+    case 'dependencyList':
+      return (
+        <DependencyList
+          value={(v as Array<{ ref: string; delaySeconds?: number }> | undefined) ?? []}
+          options={field.options}
+          onChange={set}
+          onFocus={h.focus}
+          onBlur={h.blur}
+        />
+      );
   }
 }
 

@@ -9,6 +9,7 @@ import { prepareTomcatLaunch, catalinaExecutable } from './tomcatRuntime';
 import { resolveProjectUri } from '../../utils/paths';
 import { findGradleRoot } from '../spring-boot/findBuildRoot';
 import { findSpringProfiles } from '../spring-boot/findProfiles';
+import { dependsOnField } from '../sharedFields';
 import type { PrepareContext, PrepareResult } from '../RuntimeAdapter';
 import { log } from '../../utils/logger';
 
@@ -439,6 +440,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC -Dapp.home=${workspaceFolder}'],
           inspectable: true,
         },
+        dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
       ],
     };
   }

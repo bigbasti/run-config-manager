@@ -48,6 +48,12 @@ export const SpringBootTypeOptionsSchema = z
     }
   });
 
+export const DependencyEntrySchema = z.object({
+  ref: z.string().min(1),
+  // Cap at 600 seconds (10 min) — longer delays are almost always typos.
+  delaySeconds: z.number().min(0).max(600).optional(),
+});
+
 const commonFields = {
   id: z.string().uuid(),
   name: z.string().min(1),
@@ -57,6 +63,7 @@ const commonFields = {
   programArgs: z.string(),
   vmArgs: z.string(),
   port: z.number().int().positive().optional(),
+  dependsOn: z.array(DependencyEntrySchema).optional(),
 };
 
 export const JavaLaunchModeSchema = z.enum([

@@ -33,6 +33,7 @@ const VAR_SYNTAX_HINT =
 // and the JVM tokenises fine. The visual result looks like a regular space.
 const COLORED_LOG_PATTERN = "%clr(%d{yyyy-MM-dd\\'T\\'HH:mm:ss.SSS}){faint} %clr(%5p) %clr([%t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %clr(%replace(%m){'(/[a-zA-Z0-9/._-]+)','\u001b[94m$1\u001b[0m'}) %n%wEx";
 import { splitArgs } from '../npm/splitArgs';
+import { dependsOnField } from '../sharedFields';
 
 export class SpringBootAdapter implements RuntimeAdapter {
   readonly type = 'spring-boot' as const;
@@ -438,6 +439,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC', '-Dapp.home=${workspaceFolder}'],
           inspectable: true,
         },
+        dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
       ],
     };
   }

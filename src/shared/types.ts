@@ -61,6 +61,24 @@ export type TypeOptions =
 // RunConfig is intentionally discriminated on `type` rather than on a nested
 // `kind` — the on-disk schema keeps the top-level `type` as the discriminator
 // and we cast `typeOptions` to the per-type shape inside adapters.
+// One dependency entry: what to start first, plus how long to wait after it
+// reaches "running" before we launch the parent. The ref is a stable
+// identifier that survives renames — see `parseDependencyRef` for the
+// supported schemes.
+export interface DependencyEntry {
+  // Stable identifier:
+  //   - `rcm:<configId>`         — another run configuration in the same folder.
+  //     We use the config id rather than its name so renames don't break deps.
+  //   - `launch:<name>`          — a VS Code launch.json config (compound or single).
+  //   - `task:<source>::<name>`  — a VS Code task (source identifies workspace vs
+  //     auto-detected providers like npm/gradle).
+  ref: string;
+  // Seconds to wait AFTER the dependency reaches a running / completed state
+  // before starting the next step. 0 means "start immediately once the dep
+  // is up". Clamped to [0, 600] in the orchestrator.
+  delaySeconds?: number;
+}
+
 interface RunConfigBase {
   id: string;
   name: string;
@@ -70,6 +88,12 @@ interface RunConfigBase {
   programArgs: string;
   vmArgs: string;
   port?: number;
+  // Other configurations that must be started (and reach running state)
+  // before this one. Ordered as the user arranged them in the form; the
+  // orchestrator walks them in the given order. Cycles are detected at run
+  // time and surfaced to the user — storing a cycle is not rejected at save
+  // time so partial edits don't block Save.
+  dependsOn?: DependencyEntry[];
 }
 
 export type ArtifactKind = 'war' | 'exploded';
