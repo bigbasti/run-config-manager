@@ -12,6 +12,7 @@ import { discoverGradleTasks } from '../adapters/gradle-task/discoverGradleTasks
 import { discoverMavenGoals } from '../adapters/maven-goal/discoverMavenGoals';
 import { validateBuildProjectPath } from '../utils/validateBuildProjectPath';
 import { RunConfigSchema } from '../shared/schema';
+import type { DockerService } from '../services/DockerService';
 
 interface OpenArgs {
   mode: 'create' | 'edit';
@@ -36,6 +37,9 @@ interface OpenArgs {
     initialContext: Record<string, unknown>;
     pending: string[];          // field keys showing spinners on first paint
   };
+  // Optional DockerService used to refresh / inspect containers from the
+  // Docker form. Absent for non-Docker flows (no-op for those).
+  docker?: DockerService;
 }
 
 export class EditorPanel {
@@ -373,6 +377,43 @@ export class EditorPanel {
           const err: Inbound = { cmd: 'error', message: `Classpath recompute failed: ${(e as Error).message}` };
           this.panel.webview.postMessage(err);
           log.error('recomputeClasspath', e);
+        }
+        return;
+      }
+      case 'inspectContainer': {
+        // Docker form: user picked a container (or one was restored from disk
+        // on init). Fetch inspect metadata, stash it in the persistent
+        // context, and re-emit the schema so the info panel shows details.
+        if (!this.args.docker) return;
+        log.debug(`Docker inspect: ${msg.containerId}`);
+        try {
+          const info = await this.args.docker.inspect(msg.containerId);
+          this.context.selectedContainerId = msg.containerId;
+          this.context.selectedContainerInfo = info ?? undefined;
+          // Keep the container summary list fresh too — inspect doesn't
+          // trigger a poll on its own.
+          this.context.containers = this.args.docker.list();
+          this.context.dockerAvailable = this.args.docker.isAvailable();
+          this.context.dockerError = this.args.docker.listError();
+          const schema = this.args.adapter.getFormSchema(this.context);
+          this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+        } catch (e) {
+          log.warn(`inspectContainer failed: ${(e as Error).message}`);
+        }
+        return;
+      }
+      case 'refreshContainers': {
+        if (!this.args.docker) return;
+        log.debug('Docker refresh containers');
+        try {
+          await this.args.docker.refresh();
+          this.context.containers = this.args.docker.list();
+          this.context.dockerAvailable = this.args.docker.isAvailable();
+          this.context.dockerError = this.args.docker.listError();
+          const schema = this.args.adapter.getFormSchema(this.context);
+          this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+        } catch (e) {
+          log.warn(`refreshContainers failed: ${(e as Error).message}`);
         }
         return;
       }
@@ -718,6 +759,17 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
       typeOptions: {
         scriptName: to?.scriptName ?? '',
         packageManager: to?.packageManager ?? 'npm',
+      },
+    };
+  }
+  if (cfg.type === 'docker') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').DockerTypeOptions> | undefined;
+    return {
+      ...common,
+      type: 'docker',
+      typeOptions: {
+        containerId: to?.containerId ?? '',
+        ...(to?.containerName ? { containerName: to.containerName } : {}),
       },
     };
   }

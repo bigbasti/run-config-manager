@@ -13,6 +13,8 @@ import { JavaAdapter } from './adapters/java/JavaAdapter';
 import { MavenGoalAdapter } from './adapters/maven-goal/MavenGoalAdapter';
 import { GradleTaskAdapter } from './adapters/gradle-task/GradleTaskAdapter';
 import { CustomCommandAdapter } from './adapters/custom-command/CustomCommandAdapter';
+import { DockerAdapter } from './adapters/docker/DockerAdapter';
+import { DockerService } from './services/DockerService';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { NativeRunnerTreeProvider } from './ui/NativeRunnerTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
@@ -37,6 +39,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   initLogger();
   log.info('Run Configurations activating…');
 
+  const docker = new DockerService();
+  docker.start();
+  context.subscriptions.push({ dispose: () => docker.dispose() });
+
   const registry = new AdapterRegistry();
   registry.register(new NpmAdapter());
   registry.register(new SpringBootAdapter());
@@ -46,6 +52,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.register(new MavenGoalAdapter());
   registry.register(new GradleTaskAdapter());
   registry.register(new CustomCommandAdapter());
+  registry.register(new DockerAdapter(docker));
   log.debug(`Registered adapters: ${registry.all().map(a => a.type).join(', ')}`);
 
   const store = new ConfigStore();
@@ -61,7 +68,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await store.attach(folders);
   log.info(`Loaded ${svc.list().length} configuration(s) across ${folders.length} folder(s).`);
 
-  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri);
+  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri, docker);
   // Separate view for native launch.json / tasks.json — sibling to the
   // main Configurations view, like VARIABLES / BREAKPOINTS in Run & Debug.
   const nativeTree = new NativeRunnerTreeProvider(native);
@@ -90,9 +97,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // button's when-clause. Both derive from the same running-configs count, so
   // we compute once and fan out.
   const updateRunningState = () => {
-    const running = svc.list().filter(r =>
-      r.valid && (exec.isRunning(r.config.id) || exec.isPreparing(r.config.id) || dbg.isRunning(r.config.id)),
-    );
+    const running = svc.list().filter(r => {
+      if (!r.valid) return false;
+      if (r.config.type === 'docker') {
+        return docker.isRunning(r.config.typeOptions.containerId);
+      }
+      return exec.isRunning(r.config.id) || exec.isPreparing(r.config.id) || dbg.isRunning(r.config.id);
+    });
     if (running.length > 0) {
       view.badge = { value: running.length, tooltip: `${running.length} running configuration${running.length === 1 ? '' : 's'}` };
     } else {
@@ -104,6 +115,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   exec.onRunningChanged(updateRunningState);
   dbg.onRunningChanged(updateRunningState);
   store.onChange(updateRunningState);
+  docker.onChanged(updateRunningState);
 
   // Keep store in sync when workspace folders change.
   context.subscriptions.push(
@@ -168,9 +180,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
 
     vscode.commands.registerCommand('runConfig.stopAll', async () => {
-      const running = svc.list().filter(r =>
-        r.valid && (exec.isRunning(r.config.id) || dbg.isRunning(r.config.id)),
-      );
+      const running = svc.list().filter(r => {
+        if (!r.valid) return false;
+        if (r.config.type === 'docker') return docker.isRunning(r.config.typeOptions.containerId);
+        return exec.isRunning(r.config.id) || dbg.isRunning(r.config.id);
+      });
       if (running.length === 0) return;
       const confirm = await vscode.window.showWarningMessage(
         `Stop ${running.length} running configuration${running.length === 1 ? '' : 's'}?`,
@@ -182,6 +196,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // Fire every stop in parallel — they're independent and each may have
       // to wait for a SIGTERM→SIGKILL grace period.
       await Promise.all(running.map(async r => {
+        if (r.valid && r.config.type === 'docker') {
+          try { await docker.stopContainer(r.config.typeOptions.containerId); }
+          catch (e) { log.warn(`docker stop (${r.config.name}) failed: ${(e as Error).message}`); }
+          return;
+        }
         if (dbg.isRunning(r.config.id)) await dbg.stop(r.config.id);
         if (exec.isRunning(r.config.id)) await exec.stop(r.config.id);
       }));
@@ -194,7 +213,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     vscode.commands.registerCommand('runConfig.add', async () => {
       log.info('Command: add configuration');
-      await addConfig(context, store, svc, scanner, registry);
+      await addConfig(context, store, svc, scanner, registry, docker);
     }),
 
     vscode.commands.registerCommand('runConfig.edit', async (arg: ConfigNodeArg) => {
@@ -214,6 +233,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           adapter,
           existing: arg.config,
           schema: adapter.getFormSchema(detectionContext),
+          docker,
         }, context, svc);
       } else {
         log.info(`Edit invalid entry: "${arg.entry.name}"`);
@@ -229,6 +249,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           adapter,
           existing: recovered as RunConfig,
           schema: adapter.getFormSchema(detectionContext),
+          docker,
         }, context, svc);
       }
     }),
@@ -252,12 +273,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
       log.info(`Run: "${arg.config.name}" (${arg.config.type})`);
+      if (arg.config.type === 'docker') {
+        // Docker bypasses ExecutionService entirely — start/stop are
+        // one-shot daemon calls and the "running" state comes from polling.
+        try {
+          await docker.startContainer(arg.config.typeOptions.containerId);
+        } catch (e) {
+          vscode.window.showErrorMessage(`docker start failed: ${(e as Error).message}`);
+        }
+        return;
+      }
       await exec.run(arg.config, folder);
     }),
 
     vscode.commands.registerCommand('runConfig.stop', async (arg: ConfigNodeArg) => {
       if (!arg || arg.kind !== 'config') return;
       log.info(`Stop: "${arg.config.name}"`);
+      if (arg.config.type === 'docker') {
+        try {
+          await docker.stopContainer(arg.config.typeOptions.containerId);
+        } catch (e) {
+          vscode.window.showErrorMessage(`docker stop failed: ${(e as Error).message}`);
+        }
+        return;
+      }
       // A single config can be either in a run task OR a debug session.
       // Stop whichever is actually tracking it.
       if (dbg.isRunning(arg.config.id)) {
@@ -322,6 +361,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         existing: merged as unknown as RunConfig,
         schema: adapter.getFormSchema(detection?.context ?? {}),
         initialFieldErrors,
+        docker,
       }, context, svc);
     }),
 
@@ -405,6 +445,53 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.commands.executeCommand('vscode.open', uri);
     }),
 
+    // --- Docker commands ---
+
+    vscode.commands.registerCommand('runConfig.viewDockerLogs', (arg: ConfigNodeArg) => {
+      if (!arg || arg.kind !== 'config' || arg.config.type !== 'docker') return;
+      const to = arg.config.typeOptions;
+      if (!to.containerId) {
+        vscode.window.showWarningMessage(
+          `"${arg.config.name}" has no container selected — edit it first.`,
+        );
+        return;
+      }
+      if (docker.isAvailable() === false) {
+        vscode.window.showErrorMessage(
+          `Docker daemon unreachable. Start Docker Desktop / dockerd and try again.`,
+        );
+        return;
+      }
+      log.info(`Show docker logs: "${arg.config.name}"`);
+      docker.showLogs(to.containerId, arg.config.name);
+    }),
+
+    // --- Cog: open run.json for the current (or picked) workspace folder ---
+
+    vscode.commands.registerCommand('runConfig.openRunJson', async () => {
+      const folders = vscode.workspace.workspaceFolders ?? [];
+      if (folders.length === 0) {
+        vscode.window.showErrorMessage('Open a workspace folder first.');
+        return;
+      }
+      const folder = folders.length === 1
+        ? folders[0]
+        : await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Which workspace folder\'s run.json?' });
+      if (!folder) return;
+      const uri = vscode.Uri.joinPath(folder.uri, '.vscode', 'run.json');
+      // Create an empty skeleton if the file doesn't exist yet — otherwise
+      // VS Code opens a "cannot open" error for a fresh workspace and the
+      // user ends up more confused than if the button did nothing.
+      try {
+        await vscode.workspace.fs.stat(uri);
+      } catch {
+        const skeleton = JSON.stringify({ version: 1, configurations: [] }, null, 2) + '\n';
+        await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(skeleton));
+      }
+      log.info(`Open run.json: ${uri.fsPath}`);
+      await vscode.commands.executeCommand('vscode.open', uri);
+    }),
+
     view,
     { dispose: () => store.dispose() },
     { dispose: () => exec.dispose() },
@@ -421,6 +508,7 @@ async function addConfig(
   svc: RunConfigService,
   scanner: ProjectScanner,
   registry: AdapterRegistry,
+  docker: DockerService,
 ): Promise<void> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {
@@ -500,8 +588,11 @@ async function addConfig(
           'typeOptions.artifactKind',
           // Quarkus-specific
           'typeOptions.profile',
+          // Docker
+          'typeOptions.containerId',
         ],
       },
+      docker,
     }, context, svc);
     return;
   }
@@ -525,6 +616,7 @@ async function addConfig(
     adapter,
     seedDefaults,
     schema,
+    docker,
   }, context, svc);
 }
 
@@ -716,6 +808,7 @@ function deriveConfigName(child: vscode.Uri, type: RunConfigType): string {
     type === 'tomcat'         ? 'Tomcat' :
     type === 'java'           ? 'Java' :
     type === 'custom-command' ? 'Script' :
+    type === 'docker'         ? 'Container' :
                                 'Web';
   // Capitalise first letter, keep the rest as-is ("api" → "Api").
   const pretty = base.charAt(0).toUpperCase() + base.slice(1);
@@ -854,6 +947,19 @@ function mergeAutoCreateDefaults(
         shell: typeOptions.shell ?? 'default',
         interactive: typeOptions.interactive ?? false,
         colorOutput: true,
+      },
+    };
+  }
+  if (type === 'docker') {
+    // Docker configs are always user-initiated — there's no filesystem marker
+    // that implies "this folder should have a docker container". The branch
+    // exists for parity with the other types.
+    return {
+      ...base,
+      type: 'docker',
+      typeOptions: {
+        containerId: typeOptions.containerId ?? '',
+        ...(typeOptions.containerName ? { containerName: typeOptions.containerName } : {}),
       },
     };
   }

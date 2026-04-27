@@ -218,6 +218,20 @@ export function App() {
     }
   }, [schema, values]);
 
+  // Docker: whenever the selected containerId changes, ask the extension for
+  // fresh inspect data. The extension re-emits the schema with the info
+  // panel populated. Deduped per-id so we don't flood the daemon when an
+  // unrelated field re-renders.
+  const lastInspectedRef = useRef<string>('');
+  useEffect(() => {
+    if (values.type !== 'docker') return;
+    const id = (values.typeOptions as { containerId?: string } | undefined)?.containerId ?? '';
+    if (!id) return;
+    if (lastInspectedRef.current === id) return;
+    lastInspectedRef.current = id;
+    post({ cmd: 'inspectContainer', containerId: id });
+  }, [values]);
+
   const onValidatePath = (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', p: string) => {
     // Manual trigger (blur). Bypass the dedupe ref so an explicit blur
     // always gets a fresh answer, even if we validated that same value

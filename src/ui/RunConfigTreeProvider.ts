@@ -4,6 +4,7 @@ import type { ConfigStore } from '../services/ConfigStore';
 import type { ExecutionService } from '../services/ExecutionService';
 import type { DebugService } from '../services/DebugService';
 import type { AdapterRegistry } from '../adapters/AdapterRegistry';
+import type { DockerService } from '../services/DockerService';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 import { iconForConfig, brandIconUri } from './iconForConfig';
@@ -32,10 +33,14 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     // Needed so we can build absolute URIs to the bundled brand SVGs under
     // media/icons/. Passed in from extension.ts activate().
     private readonly extensionUri: vscode.Uri,
+    // Running-state source for docker configs. Separate from ExecutionService
+    // because start/stop semantics differ (no long-running task wrapper).
+    private readonly docker: DockerService,
   ) {
     store.onChange(() => this.refresh());
     exec.onRunningChanged(() => this.refresh());
     dbg.onRunningChanged(() => this.refresh());
+    docker.onChanged(() => this.refresh());
   }
 
   refresh(): void {
@@ -70,6 +75,14 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       item.contextValue = 'configInvalid';
       item.command = { command: 'runConfig.edit', title: 'Edit', arguments: [n] };
       return item;
+    }
+
+    // Docker configs have different lifecycle semantics than every other type
+    // — start/stop aren't backed by a long-running task, running-state comes
+    // from polling the daemon, and clicking the row should show logs rather
+    // than open the editor. Render them down a separate short-circuit path.
+    if (n.config.type === 'docker') {
+      return this.renderDockerItem(n);
     }
 
     const preparing = this.exec.isPreparing(n.config.id);
@@ -168,6 +181,63 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     return item;
   }
 
+  private renderDockerItem(n: Extract<Node, { kind: 'config' }>): vscode.TreeItem {
+    if (n.config.type !== 'docker') throw new Error('renderDockerItem: non-docker config');
+    const to = n.config.typeOptions;
+    const summary = this.docker.find(to.containerId);
+    const running = this.docker.isRunning(to.containerId);
+    const item = new vscode.TreeItem(n.config.name, vscode.TreeItemCollapsibleState.None);
+
+    const tipLines = [
+      `**${n.config.name}** _(docker)_`,
+      '',
+      `Container: \`${to.containerId.slice(0, 12) || '(none)'}\`${summary?.name ? ` (${summary.name})` : to.containerName ? ` (${to.containerName}, last seen)` : ''}`,
+    ];
+    if (summary) {
+      tipLines.push(`Image: \`${summary.image}\``);
+      tipLines.push(`Status: ${summary.status}`);
+      if (summary.ports) tipLines.push(`Ports: \`${summary.ports}\``);
+    } else if (this.docker.isAvailable() === false) {
+      tipLines.push('');
+      tipLines.push('⚠ Docker daemon unreachable.');
+    } else if (to.containerId) {
+      tipLines.push('');
+      tipLines.push('⚠ Container not found. It may have been removed — re-create the config.');
+    }
+    tipLines.push('');
+    tipLines.push('Click to open logs. Inline buttons: Run / Stop / Edit.');
+    item.tooltip = new vscode.MarkdownString(tipLines.join('\n'));
+
+    // Idle configs get the Docker brand SVG (media/icons/docker.svg),
+    // matching how every other type renders when idle. Running state
+    // overrides with the green pass-filled marker; "container missing" is
+    // the one exception — the warning icon is more informative than the
+    // brand icon when the saved id no longer exists on this machine.
+    const folder = this.store.getFolder(n.folderKey);
+    if (running) {
+      item.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
+      item.description = summary?.image ?? 'running';
+      item.contextValue = 'dockerRunning';
+    } else if (!summary && to.containerId) {
+      item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+      item.description = 'not found';
+      item.contextValue = 'dockerIdle';
+    } else {
+      item.iconPath = iconForConfig(n.config, folder, this.extensionUri);
+      item.description = summary?.status || (summary?.state ?? 'stopped');
+      item.contextValue = 'dockerIdle';
+    }
+
+    // Single click → open the log tail. Edit is available via the inline
+    // button declared in package.json for dockerIdle/dockerRunning.
+    item.command = {
+      command: 'runConfig.viewDockerLogs',
+      title: 'View logs',
+      arguments: [n],
+    };
+    return item;
+  }
+
   getChildren(parent?: Node): Node[] {
     if (!parent) {
       const keys = this.store.folderKeys();
@@ -238,6 +308,7 @@ function labelForType(type: RunConfig['type']): string {
     case 'maven-goal': return 'Maven Goal';
     case 'gradle-task': return 'Gradle Task';
     case 'custom-command': return 'Custom Command';
+    case 'docker': return 'Docker';
     default: return type;
   }
 }
@@ -255,6 +326,7 @@ function iconForGroupType(type: string): string {
     case 'maven-goal': return 'maven';
     case 'gradle-task': return 'gradle';
     case 'custom-command': return 'bash';
+    case 'docker': return 'docker';
     default: return 'npm';
   }
 }

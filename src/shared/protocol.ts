@@ -15,7 +15,15 @@ export type Outbound =
   // Fired on blur of the projectPath field for adapters whose form
   // declared `validateBuildPath` on that field. Response comes back as
   // a `projectPathValidated` with a warning + optional parent-suggestion.
-  | { cmd: 'validateProjectPath'; fieldKey: string; projectPath: string; buildTool: 'maven' | 'gradle' | 'either' };
+  | { cmd: 'validateProjectPath'; fieldKey: string; projectPath: string; buildTool: 'maven' | 'gradle' | 'either' }
+  // Fired by the Docker form when the user picks a container. The extension
+  // runs `docker inspect` and replies with a schemaUpdate whose info-panel
+  // content shows image/ports/volumes/etc. Kept generic so future types
+  // reusing the info panel can piggyback without a new message.
+  | { cmd: 'inspectContainer'; containerId: string }
+  // "Refresh containers" action on the Docker form — runs `docker ps -a`
+  // and replies with a schemaUpdate whose dropdown reflects the latest.
+  | { cmd: 'refreshContainers' };
 
 // Field keys whose detection is still in flight (spinner rendered in-place).
 export type PendingFields = string[];

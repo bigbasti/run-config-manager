@@ -296,4 +296,33 @@ describe('sanitizeConfig', () => {
     // Gradle mode does not require mainClass — schema validates.
     expect(RunConfigSchema.safeParse(out).success).toBe(true);
   });
+
+  test('docker: preserves containerId + optional name', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'docker',
+      typeOptions: {
+        containerId: 'abc123',
+        containerName: 'pg-dev',
+      } as any,
+    } as RunConfig);
+    expect(out.type).toBe('docker');
+    const to = out.typeOptions as any;
+    expect(to.containerId).toBe('abc123');
+    expect(to.containerName).toBe('pg-dev');
+    expect(RunConfigSchema.safeParse(out).success).toBe(true);
+  });
+
+  test('docker: rejects empty containerId via Zod', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'docker',
+      typeOptions: { containerId: '' } as any,
+    } as RunConfig);
+    const r = RunConfigSchema.safeParse(out);
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(r.error.issues[0].path).toEqual(['typeOptions', 'containerId']);
+    }
+  });
 });

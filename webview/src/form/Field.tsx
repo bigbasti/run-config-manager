@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import type { FormField } from '../../../src/shared/formSchema';
 import { getPath, setPath } from '../state';
 import { KvEditor } from './KvEditor';
@@ -256,5 +256,75 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
         />
       );
     }
+    case 'info':
+      return <InfoPanel content={field.content} />;
   }
+}
+
+function InfoPanel({ content }: { content: import('../../../src/shared/formSchema').InfoContent }) {
+  // VS Code palette vars: we pick colors that adapt to light/dark themes
+  // automatically. Banner backgrounds lean on inputValidation so they match
+  // the existing error-state styling when in warning mode.
+  const bannerStyle = (kind: 'muted' | 'running' | 'stopped' | 'warning'): CSSProperties => {
+    if (kind === 'warning') {
+      return {
+        background: 'var(--vscode-inputValidation-warningBackground, rgba(200,150,0,0.1))',
+        border: '1px solid var(--vscode-inputValidation-warningBorder, rgba(200,150,0,0.4))',
+        color: 'var(--vscode-inputValidation-warningForeground, inherit)',
+      };
+    }
+    if (kind === 'running') {
+      return {
+        background: 'var(--vscode-notificationCenterHeader-background, rgba(0,128,0,0.1))',
+        border: '1px solid var(--vscode-terminal-ansiGreen, rgba(0,128,0,0.4))',
+        color: 'var(--vscode-terminal-ansiGreen, inherit)',
+      };
+    }
+    if (kind === 'stopped') {
+      return {
+        background: 'var(--vscode-editorWidget-background, rgba(128,128,128,0.1))',
+        border: '1px solid var(--vscode-panel-border, rgba(128,128,128,0.4))',
+      };
+    }
+    return {
+      background: 'var(--vscode-editorWidget-background, rgba(128,128,128,0.05))',
+      border: '1px dashed var(--vscode-panel-border, rgba(128,128,128,0.3))',
+      opacity: 0.85,
+    };
+  };
+  return (
+    <div
+      style={{
+        padding: '8px 10px',
+        borderRadius: 3,
+        fontSize: '0.92em',
+        ...(content.banner ? bannerStyle(content.banner.kind) : {
+          background: 'var(--vscode-editorWidget-background, transparent)',
+          border: '1px solid var(--vscode-panel-border, transparent)',
+        }),
+      }}
+    >
+      {content.banner && (
+        <div style={{ marginBottom: content.rows || content.lists ? 8 : 0 }}>{content.banner.text}</div>
+      )}
+      {content.rows && content.rows.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 10, rowGap: 2 }}>
+          {content.rows.map((r, i) => [
+            <div key={`k${i}`} style={{ opacity: 0.7 }}>{r.label}</div>,
+            <div key={`v${i}`} style={{ wordBreak: 'break-all' }}>{r.value}</div>,
+          ])}
+        </div>
+      )}
+      {content.lists?.map((l, i) => (
+        <div key={`l${i}`} style={{ marginTop: 8 }}>
+          <div style={{ opacity: 0.7, marginBottom: 2 }}>{l.label}</div>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {l.items.map((item, j) => (
+              <li key={j} style={{ wordBreak: 'break-all' }}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
 }

@@ -190,3 +190,38 @@ describe('buildCommandPreview — tomcat', () => {
       .toMatch(/CATALINA_OPTS='-Xmx2g -Dspring\.profiles\.active=prod'/);
   });
 });
+
+describe('buildCommandPreview — docker', () => {
+  const dockerBase = {
+    id: 'ffffffff-1111-2222-3333-444444444444',
+    name: 'db',
+    type: 'docker' as const,
+    projectPath: '',
+    workspaceFolder: '',
+    env: {},
+    programArgs: '',
+    vmArgs: '',
+    typeOptions: {
+      containerId: '',
+    },
+  };
+
+  test('empty containerId falls back to placeholder token', () => {
+    expect(buildCommandPreview(dockerBase as any)).toBe('docker start <container>');
+  });
+
+  test('long container id is truncated to the 12-char short form', () => {
+    const cfg = { ...dockerBase, typeOptions: { containerId: 'abcdef1234567890abcdef1234' } };
+    expect(buildCommandPreview(cfg as any)).toBe('docker start abcdef123456');
+  });
+
+  test('no cwd prefix or program-args suffix are appended', () => {
+    const cfg = {
+      ...dockerBase,
+      projectPath: 'ignored',
+      programArgs: '--also-ignored',
+      typeOptions: { containerId: 'abc' },
+    };
+    expect(buildCommandPreview(cfg as any)).toBe('docker start abc');
+  });
+});

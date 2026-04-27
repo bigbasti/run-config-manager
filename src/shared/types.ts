@@ -6,7 +6,8 @@ export type RunConfigType =
   | 'java'
   | 'maven-goal'
   | 'gradle-task'
-  | 'custom-command';
+  | 'custom-command'
+  | 'docker';
 
 export type PackageManager = 'npm' | 'yarn' | 'pnpm';
 
@@ -214,6 +215,20 @@ export interface CustomCommandTypeOptions {
   colorOutput?: boolean;
 }
 
+// Docker — quick-launch a named container. Unlike other types, Docker doesn't
+// compile / build / fork anything — it just delegates to `docker start` /
+// `docker stop`. Click-to-logs and running-state detection go through
+// DockerService (not ExecutionService).
+export interface DockerTypeOptions {
+  // The container id (short or long). We key on id rather than name because
+  // users rename containers and we don't want saved configs to break silently.
+  containerId: string;
+  // Human-readable name snapshot captured when the user picked the container.
+  // Used only for the form's info panel / tooltip when the container has been
+  // removed — we can still show "was X" instead of a bare id.
+  containerName?: string;
+}
+
 export type RunConfig =
   | (RunConfigBase & { type: 'npm'; typeOptions: NpmTypeOptions })
   | (RunConfigBase & { type: 'spring-boot'; typeOptions: SpringBootTypeOptions })
@@ -222,7 +237,8 @@ export type RunConfig =
   | (RunConfigBase & { type: 'java'; typeOptions: JavaTypeOptions })
   | (RunConfigBase & { type: 'maven-goal'; typeOptions: MavenGoalTypeOptions })
   | (RunConfigBase & { type: 'gradle-task'; typeOptions: GradleTaskTypeOptions })
-  | (RunConfigBase & { type: 'custom-command'; typeOptions: CustomCommandTypeOptions });
+  | (RunConfigBase & { type: 'custom-command'; typeOptions: CustomCommandTypeOptions })
+  | (RunConfigBase & { type: 'docker'; typeOptions: DockerTypeOptions });
 
 export interface RunFile {
   version: 1;

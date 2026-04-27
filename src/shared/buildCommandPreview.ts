@@ -108,6 +108,12 @@ export function buildCommandPreview(cfg: RunConfig, workspaceFolderPath?: string
       return `cd ${to.cwd.trim()} && ${cmd}`;
     }
     base = cmd;
+  } else if (cfg.type === 'docker') {
+    // Docker configs don't spawn a task — the Run button calls `docker start`
+    // directly. Short-circuit with the actual CLI invocation the extension
+    // will issue, with no cwd / programArgs suffix.
+    const id = cfg.typeOptions.containerId?.trim() || '<container>';
+    return `docker start ${id.slice(0, 12)}`;
   } else {
     return `(unsupported type: ${(cfg as RunConfig).type})`;
   }

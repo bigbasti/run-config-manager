@@ -229,6 +229,21 @@ export const TomcatTypeOptionsSchema = z
     }
   });
 
+export const DockerTypeOptionsSchema = z
+  .object({
+    containerId: z.string(),
+    containerName: z.string().optional(),
+  })
+  .superRefine((opts, ctx) => {
+    if (!opts.containerId.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Pick a container from the dropdown, or paste its id.',
+        path: ['containerId'],
+      });
+    }
+  });
+
 export const RunConfigSchema = z.discriminatedUnion('type', [
   z.object({
     ...commonFields,
@@ -269,6 +284,11 @@ export const RunConfigSchema = z.discriminatedUnion('type', [
     ...commonFields,
     type: z.literal('custom-command'),
     typeOptions: CustomCommandTypeOptionsSchema,
+  }),
+  z.object({
+    ...commonFields,
+    type: z.literal('docker'),
+    typeOptions: DockerTypeOptionsSchema,
   }),
 ]);
 

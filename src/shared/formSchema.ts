@@ -60,7 +60,34 @@ export type FormField =
       // this build tool. The extension responds with a warning + optional
       // parent-folder suggestion the user can apply with one click.
       validateBuildPath?: 'maven' | 'gradle' | 'either';
+    } & BaseFieldMeta)
+  | ({
+      // Read-only informational panel — renders whatever the `content`
+      // payload contains. Used by the Docker form to show image / ports /
+      // volumes / env of the selected container so the user can verify
+      // before saving. `key` is nominal (not read from values) but kept for
+      // consistency with the other field kinds.
+      kind: 'info';
+      key: string;
+      label: string;
+      // Freeform content the webview renders. Kept as an array of labelled
+      // sections rather than free text so the layout can be styled, and so
+      // long lists of ports/volumes stay readable.
+      content: InfoContent;
     } & BaseFieldMeta);
+
+export type InfoContent = {
+  // When set, rendered as the first line in a distinct style (e.g. a
+  // pale banner). Useful for "Container running" / "Pick a container
+  // to see details" states.
+  banner?: { kind: 'muted' | 'running' | 'stopped' | 'warning'; text: string };
+  // Key/value pairs rendered as a two-column list (image: nginx, state:
+  // running, …). Values wrap; no interpretation of the strings.
+  rows?: Array<{ label: string; value: string }>;
+  // Optional list of arbitrary strings rendered as a bullet list. Used
+  // for ports and volumes where each entry already has internal structure.
+  lists?: Array<{ label: string; items: string[] }>;
+};
 
 export interface FormSchema {
   common: FormField[];

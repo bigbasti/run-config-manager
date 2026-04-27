@@ -42,6 +42,8 @@ const ICONS = [
   ['nextjs',      'siNextdotjs'],
   // Custom Command (shell-prompt glyph — recognizable across platforms).
   ['bash',        'siGnubash'],
+  // Docker — canonical mid-blue reads on both themes.
+  ['docker',      'siDocker'],
 ];
 
 // For brands whose canonical color doesn't read well on a dark VS Code
