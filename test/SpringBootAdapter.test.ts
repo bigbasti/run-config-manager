@@ -261,4 +261,46 @@ describe('SpringBootAdapter.prepareLaunch — JAVA_TOOL_OPTIONS plumbing', () =>
     const r = await adapter.prepareLaunch!(c, folder, { debug: false });
     expect(r.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
   });
+
+  test('jdkPath flows to JAVA_HOME for gradle mode (regression: "invalid source release: 21")', async () => {
+    const c = cfg({
+      typeOptions: {
+        launchMode: 'gradle',
+        buildTool: 'gradle',
+        jdkPath: '/usr/lib/jvm/zulu-21-amd64',
+      },
+    });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false });
+    expect(r.env?.JAVA_HOME).toBe('/usr/lib/jvm/zulu-21-amd64');
+  });
+
+  test('jdkPath flows to JAVA_HOME for maven mode too', async () => {
+    const c = cfg({
+      typeOptions: {
+        launchMode: 'maven',
+        buildTool: 'maven',
+        jdkPath: '/usr/lib/jvm/zulu-21-amd64',
+      },
+    });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false });
+    expect(r.env?.JAVA_HOME).toBe('/usr/lib/jvm/zulu-21-amd64');
+  });
+
+  test('empty jdkPath → JAVA_HOME not set (inherit from shell)', async () => {
+    const c = cfg({
+      typeOptions: { launchMode: 'gradle', buildTool: 'gradle', jdkPath: '' },
+    });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false });
+    expect(r.env?.JAVA_HOME).toBeUndefined();
+  });
+});
+
+describe('SpringBootAdapter.getFormSchema — JDK visibility', () => {
+  test('JDK field is shown for every launch mode, not just java-main', () => {
+    const schema = adapter.getFormSchema({ buildTool: 'gradle' });
+    const jdkField = schema.typeSpecific.find(f => f.key === 'typeOptions.jdkPath');
+    expect(jdkField).toBeDefined();
+    // dependsOn used to hide it outside java-main; make sure that gate is gone.
+    expect(jdkField?.dependsOn).toBeUndefined();
+  });
 });

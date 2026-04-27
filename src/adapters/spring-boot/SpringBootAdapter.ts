@@ -328,14 +328,15 @@ export class SpringBootAdapter implements RuntimeAdapter {
           options: jdkOptions,
           placeholder: '/path/to/jdk',
           help:
-            'Java installation used for this config. Applied in three places: ' +
-            '(1) the `java` binary for launchMode=java-main; ' +
+            'Java installation used for this config. Always shown (no longer ' +
+            'just for java-main) — Maven / Gradle also need the right JDK to ' +
+            'compile sources that target newer Java releases. Applied as: ' +
+            '(1) the `java` binary when launchMode=java-main; ' +
             '(2) `javaExec` on the Java debug attach so breakpoints resolve; ' +
-            '(3) JAVA_HOME for the spawned ./gradlew / mvn process when ' +
-            'recomputing the classpath. Leave blank to use `java` / the ' +
-            'build tool\'s default JAVA_HOME.',
+            '(3) JAVA_HOME for the ./gradlew / mvn child process (build-time ' +
+            'compilation, bootRun, tests, classpath recompute). ' +
+            'Leave blank to inherit JAVA_HOME from the shell that launched VS Code.',
           examples: ['/usr/lib/jvm/jdk-21', '/opt/jdk-17'],
-          dependsOn: { key: 'typeOptions.launchMode', equals: 'java-main' },
         },
         {
           kind: 'selectOrCustom',
@@ -468,6 +469,16 @@ export class SpringBootAdapter implements RuntimeAdapter {
   ): Promise<{ env?: Record<string, string> }> {
     if (cfg.type !== 'spring-boot') return {};
     const env: Record<string, string> = {};
+    // JAVA_HOME steers which JDK Gradle / Maven use for compilation + forked
+    // JVMs. Without this, `./gradlew bootRun` uses whatever JDK happened to
+    // be on VS Code's PATH — typically too old for projects targeting
+    // Java 21, producing:
+    //   "Java compilation initialization error: invalid source release: 21"
+    // java-main mode uses jdkPath directly as its `java` binary, so JAVA_HOME
+    // there is redundant but harmless; we set it uniformly.
+    if (cfg.typeOptions.jdkPath) {
+      env.JAVA_HOME = cfg.typeOptions.jdkPath;
+    }
     // JAVA_TOOL_OPTIONS is picked up by every forked JVM — it's the only
     // channel that reaches `bootRun`'s child process. We compose it from two
     // inputs that both need to apply:
