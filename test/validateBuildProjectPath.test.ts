@@ -36,17 +36,23 @@ describe('validateBuildProjectPath', () => {
     }
   });
 
-  test('bare build.gradle.kts does NOT count — needs wrapper or settings', async () => {
-    // This is the scenario that sparked the fix: /ws has the gradlew +
-    // settings.gradle; /ws/data only has a submodule build.gradle. The
-    // submodule can't be run standalone (`./gradlew` would be missing)
-    // — we warn and suggest the parent.
+  test('Gradle submodule with ancestor wrapper → ok (adapters resolve the root)', async () => {
+    // The exact scenario from the bug report: user picks /ws/queue-watcher
+    // which has build.gradle but no gradlew. The workspace root /ws has
+    // gradlew + settings.gradle. The adapters handle this via
+    // findGradleRoot + :<module>:task prefix + cwd=root.
     __writeFs('/ws/gradlew', '#!/bin/bash');
-    __writeFs('/ws/settings.gradle', 'include "data"');
-    __writeFs('/ws/data/build.gradle', '');
-    const r = await validateBuildProjectPath(folder, 'data', 'gradle');
+    __writeFs('/ws/settings.gradle', 'include "queue-watcher"');
+    __writeFs('/ws/queue-watcher/build.gradle', '');
+    const r = await validateBuildProjectPath(folder, 'queue-watcher', 'gradle');
+    expect(r.ok).toBe(true);
+  });
+
+  test('Gradle submodule WITHOUT any ancestor wrapper → fails', async () => {
+    // No gradlew anywhere — genuinely can't run Gradle from here.
+    __writeFs('/ws/orphan/build.gradle', '');
+    const r = await validateBuildProjectPath(folder, 'orphan', 'gradle');
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.suggestion).toBe('');
   });
 
   test('build.gradle.kts with settings.gradle.kts in same dir → ok', async () => {
@@ -71,12 +77,11 @@ describe('validateBuildProjectPath', () => {
     expect((await validateBuildProjectPath(folder, 'c', 'either')).ok).toBe(true);
   });
 
-  test('"either" rejects bare build.gradle without wrapper/settings', async () => {
+  test('"either" accepts Gradle submodule when ancestor has wrapper', async () => {
     __writeFs('/ws/gradlew', '#!/bin/bash');
     __writeFs('/ws/submodule/build.gradle', '');
     const r = await validateBuildProjectPath(folder, 'submodule', 'either');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.suggestion).toBe('');
+    expect(r.ok).toBe(true);
   });
 
   test('maven-only strict: build.gradle at path does NOT satisfy maven', async () => {
@@ -110,11 +115,20 @@ describe('validateBuildProjectPath', () => {
     expect(r.ok).toBe(true);
   });
 
-  test('deep submodule with wrapper several levels up → suggests the wrapper parent', async () => {
+  test('deep subdir with no build.gradle still warns (not a submodule)', async () => {
+    // /ws/modules/a/b/c has no build.gradle at all — it's not a Gradle
+    // submodule; it's a random directory. Warn and suggest the root.
     __writeFs('/ws/gradlew', '#!/bin/bash');
     __writeFs('/ws/modules/a/b/c/.empty', '');
     const r = await validateBuildProjectPath(folder, 'modules/a/b/c', 'gradle');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.suggestion).toBe('');
+  });
+
+  test('deep submodule with build.gradle + ancestor wrapper → ok', async () => {
+    __writeFs('/ws/gradlew', '#!/bin/bash');
+    __writeFs('/ws/modules/a/build.gradle', '');
+    const r = await validateBuildProjectPath(folder, 'modules/a', 'gradle');
+    expect(r.ok).toBe(true);
   });
 });

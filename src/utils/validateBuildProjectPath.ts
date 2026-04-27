@@ -55,8 +55,27 @@ export async function validateBuildProjectPath(
     };
   }
 
-  if (await hasBuildFile(resolved, buildTool)) {
+  // First check: is this a Gradle/Maven root (wrapper + settings) or a
+  // Maven module (pom.xml)? If so → immediately valid.
+  if (await hasBuildFile(resolved, buildTool, false)) {
     return { ok: true };
+  }
+
+  // Second check (Gradle sub-module pattern): does this directory have a
+  // build.gradle[.kts] AND is there an ancestor with the Gradle root
+  // (wrapper / settings)? Adapters handle this by walking up via
+  // findGradleRoot, computing a :<module>:task prefix, and running from the
+  // ancestor's cwd — so the user's choice of a submodule dir is correct
+  // and shouldn't warn.
+  if (buildTool === 'gradle' || buildTool === 'either') {
+    if (await hasBuildFile(resolved, buildTool, true)) {
+      // The dir has a build.gradle but no local wrapper — check if an
+      // ancestor has the root. If so, the adapters can resolve it.
+      const gradleRoot = await findAncestorWithBuildFile(resolved, workspaceRoot, 'gradle');
+      if (gradleRoot !== null) {
+        return { ok: true };
+      }
+    }
   }
 
   // Walk up looking for the nearest ancestor with a build file — stop at
@@ -81,7 +100,15 @@ export async function validateBuildProjectPath(
   };
 }
 
-async function hasBuildFile(dir: string, buildTool: BuildTool): Promise<boolean> {
+// Second parameter: when true, also accept build.gradle[.kts] without a
+// wrapper/settings, because the caller will do a separate ancestor walk
+// that validates the whole multi-module setup. Default false for the
+// ancestor-walk helper itself (it only cares about roots).
+async function hasBuildFile(
+  dir: string,
+  buildTool: BuildTool,
+  acceptGradleSubmodule = false,
+): Promise<boolean> {
   const hasFile = async (name: string) => {
     try {
       await vscode.workspace.fs.stat(vscode.Uri.file(path.join(dir, name)));
@@ -98,17 +125,18 @@ async function hasBuildFile(dir: string, buildTool: BuildTool): Promise<boolean>
     if (await hasFile('pom.xml')) return true;
   }
   if (buildTool === 'gradle' || buildTool === 'either') {
-    // A Gradle directory is "runnable as-is" only when:
-    //   - it has the wrapper script (gradlew), OR
-    //   - it IS the Gradle root (settings.gradle[.kts]).
-    // A bare build.gradle in a submodule doesn't count — without a wrapper
-    // or settings, Gradle has nothing to anchor the project layout to, and
-    // running `./gradlew …` from that dir fails with "gradlew: not found"
-    // (see commit message). That's precisely the case we want to warn on
-    // and suggest the ancestor that DOES have the wrapper.
+    // Gradle root markers: wrapper OR settings.
     if (await hasFile('gradlew')) return true;
     if (await hasFile('settings.gradle')) return true;
     if (await hasFile('settings.gradle.kts')) return true;
+    // Submodule: build.gradle[.kts] without a local wrapper/settings. The
+    // adapters' findGradleRoot + gradleModulePrefix handle this by walking
+    // up and running from the root with a :<module>:task prefix. We accept
+    // it here when the caller explicitly opts in (top-level validation).
+    if (acceptGradleSubmodule) {
+      if (await hasFile('build.gradle')) return true;
+      if (await hasFile('build.gradle.kts')) return true;
+    }
   }
   return false;
 }
