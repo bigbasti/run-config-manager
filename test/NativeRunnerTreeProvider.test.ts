@@ -52,21 +52,44 @@ describe('NativeRunnerTreeProvider', () => {
     (workspace as any).workspaceFolders = [];
   });
 
-  test('root children: launch configs + workspace-sourced tasks only', async () => {
+  test('root children: launches at top level, workspace tasks grouped', async () => {
     __setLaunchConfig(folderA.uri.fsPath, {
       configurations: [{ name: 'Launch A', type: 'node', request: 'launch' }],
     });
     await writeTasksJson([{ label: 'buildA', type: 'shell', command: 'make' }]);
     __setFetchableTasks([
       workspaceTask('buildA'),
-      // Auto-detected task — should NOT appear at root.
+      // Auto-detected task — not in the group; only surfaces as a dep.
       new Task({ type: 'npm' }, folderA, 'start', 'npm', {}),
     ]);
 
     await waitForTasksCache();
     const roots = tree.getChildren();
-    const labels = roots.map(n => n.kind === 'launch' ? `L:${n.launch.name}` : n.kind === 'task' ? `T:${n.task.name}` : '?');
-    expect(labels).toEqual(['L:Launch A', 'T:buildA']);
+    const labels = roots.map(n =>
+      n.kind === 'launch' ? `L:${n.launch.name}` :
+      n.kind === 'tasksGroup' ? `G:Tasks(${n.count})` :
+      '?',
+    );
+    expect(labels).toEqual(['L:Launch A', 'G:Tasks(1)']);
+
+    // The group expands to the workspace-sourced tasks.
+    const group = roots.find(n => n.kind === 'tasksGroup')!;
+    const groupChildren = tree.getChildren(group);
+    expect(groupChildren.map(c => (c as any).task.name)).toEqual(['buildA']);
+
+    // And the group item itself is Collapsed (not Expanded) by default.
+    const item = tree.getTreeItem(group);
+    expect(item.collapsibleState).toBe(1); // Collapsed
+  });
+
+  test('tasks group is omitted when no workspace tasks exist', async () => {
+    __setLaunchConfig(folderA.uri.fsPath, {
+      configurations: [{ name: 'Launch A', type: 'node', request: 'launch' }],
+    });
+    __setFetchableTasks([]);
+    await waitForTasksCache();
+    const roots = tree.getChildren();
+    expect(roots.map(n => n.kind)).toEqual(['launch']);
   });
 
   test('task with dependsOn expands its dependencies as children', async () => {
@@ -82,8 +105,9 @@ describe('NativeRunnerTreeProvider', () => {
     ]);
 
     await waitForTasksCache();
-    const roots = tree.getChildren();
-    const all = roots.find(n => n.kind === 'task' && n.task.name === 'all') as Extract<NativeNode, { kind: 'task' }>;
+    const group = tree.getChildren().find(n => n.kind === 'tasksGroup')!;
+    const tasks = tree.getChildren(group);
+    const all = tasks.find(n => n.kind === 'task' && n.task.name === 'all') as Extract<NativeNode, { kind: 'task' }>;
     expect(all).toBeDefined();
     const children = tree.getChildren(all);
     const names = children.map(c => c.kind === 'depTask' ? c.task.name : c.kind === 'depMissing' ? `MISSING:${c.name}` : '?');
@@ -103,8 +127,9 @@ describe('NativeRunnerTreeProvider', () => {
     ]);
 
     await waitForTasksCache();
-    const roots = tree.getChildren();
-    const all = roots.find(n => n.kind === 'task' && n.task.name === 'all') as Extract<NativeNode, { kind: 'task' }>;
+    const group = tree.getChildren().find(n => n.kind === 'tasksGroup')!;
+    const tasks = tree.getChildren(group);
+    const all = tasks.find(n => n.kind === 'task' && n.task.name === 'all') as Extract<NativeNode, { kind: 'task' }>;
     const level1 = tree.getChildren(all);
     expect(level1.map(n => (n as any).task?.name)).toEqual(['compile']);
     const compile = level1[0];
@@ -122,8 +147,9 @@ describe('NativeRunnerTreeProvider', () => {
     __setFetchableTasks([workspaceTask('all', ['ghost'])]);
 
     await waitForTasksCache();
-    const roots = tree.getChildren();
-    const all = roots[0] as Extract<NativeNode, { kind: 'task' }>;
+    const group = tree.getChildren().find(n => n.kind === 'tasksGroup')!;
+    const tasks = tree.getChildren(group);
+    const all = tasks[0] as Extract<NativeNode, { kind: 'task' }>;
     const children = tree.getChildren(all);
     expect(children).toHaveLength(1);
     expect(children[0].kind).toBe('depMissing');
@@ -168,7 +194,8 @@ describe('NativeRunnerTreeProvider', () => {
     __setFetchableTasks([workspaceTask('a', ['b']), workspaceTask('b', ['a'])]);
 
     await waitForTasksCache();
-    let node: NativeNode | undefined = tree.getChildren()[0];
+    const group = tree.getChildren().find(n => n.kind === 'tasksGroup')!;
+    let node: NativeNode | undefined = tree.getChildren(group)[0];
     // Drill down until we hit the depth cap. Should terminate.
     for (let i = 0; i < 20 && node; i++) {
       const children = tree.getChildren(node);

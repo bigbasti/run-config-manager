@@ -79,6 +79,7 @@ export class NativeRunnerTreeProvider implements vscode.TreeDataProvider<NativeN
 
   getChildren(parent?: NativeNode): NativeNode[] {
     if (!parent) return this.rootChildren();
+    if (parent.kind === 'tasksGroup') return this.tasksGroupChildren();
     if (parent.kind === 'launch' || parent.kind === 'depLaunch') {
       return this.launchChildren(parent);
     }
@@ -171,17 +172,19 @@ export class NativeRunnerTreeProvider implements vscode.TreeDataProvider<NativeN
         .catch(e => { log.warn(`fetchTasks failed: ${(e as Error).message}`); this.tasksCache = []; })
         .finally(() => { this.tasksFetching = false; this.refresh(); });
     }
-    const tasks = this.tasksCache ?? [];
+    const workspaceTasks = (this.tasksCache ?? []).filter(t => t.source === 'Workspace');
     const out: NativeNode[] = [];
     for (const l of launches) out.push({ kind: 'launch', launch: l });
-    // Only surface workspace-defined tasks at the top level — listing every
-    // auto-detected npm/gradle/maven task would overwhelm the sidebar. The
-    // dependencies expand on-demand when a launch or a visible task refers
-    // to them, so auto-detected tasks can still show up via that path.
-    for (const t of tasks) {
-      if (t.source === 'Workspace') out.push({ kind: 'task', task: t });
-    }
+    // One collapsed "Tasks" group keeps the sidebar scannable when the user
+    // has many workspace tasks. Auto-detected tasks (npm/gradle/…) still
+    // surface inline when referenced as dependencies.
+    if (workspaceTasks.length > 0) out.push({ kind: 'tasksGroup', count: workspaceTasks.length });
     return out;
+  }
+
+  private tasksGroupChildren(): NativeNode[] {
+    const workspaceTasks = (this.tasksCache ?? []).filter(t => t.source === 'Workspace');
+    return workspaceTasks.map(t => ({ kind: 'task', task: t }));
   }
 
   private launchChildren(parent: Extract<NativeNode, { kind: 'launch' | 'depLaunch' }>): NativeNode[] {
