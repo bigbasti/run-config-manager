@@ -174,9 +174,34 @@
         "icon": "$(gear)"
       },
       {
-        "command": "runConfig.runBuildAction",
-        "title": "Run Build Action",
-        "icon": "$(play)"
+        "command": "runConfig.buildAction.maven.clean",
+        "title": "Maven: Clean",
+        "icon": { "light": "media/icons/maven.svg", "dark": "media/icons/maven.svg" }
+      },
+      {
+        "command": "runConfig.buildAction.maven.build",
+        "title": "Maven: Build (package -DskipTests)",
+        "icon": { "light": "media/icons/maven.svg", "dark": "media/icons/maven.svg" }
+      },
+      {
+        "command": "runConfig.buildAction.maven.test",
+        "title": "Maven: Test",
+        "icon": { "light": "media/icons/maven.svg", "dark": "media/icons/maven.svg" }
+      },
+      {
+        "command": "runConfig.buildAction.gradle.clean",
+        "title": "Gradle: Clean",
+        "icon": { "light": "media/icons/gradle-light.svg", "dark": "media/icons/gradle.svg" }
+      },
+      {
+        "command": "runConfig.buildAction.gradle.build",
+        "title": "Gradle: Build (assemble)",
+        "icon": { "light": "media/icons/gradle-light.svg", "dark": "media/icons/gradle.svg" }
+      },
+      {
+        "command": "runConfig.buildAction.gradle.test",
+        "title": "Gradle: Test",
+        "icon": { "light": "media/icons/gradle-light.svg", "dark": "media/icons/gradle.svg" }
       }
     ],
     "menus": {
@@ -210,17 +235,17 @@
       "view/item/context": [
         {
           "command": "runConfig.run",
-          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?(:(maven|gradle))?$/",
           "group": "inline@1"
         },
         {
           "command": "runConfig.stop",
-          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle))?$/",
           "group": "inline@1"
         },
         {
           "command": "runConfig.debug",
-          "when": "view == runConfigurations && viewItem == configIdle",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(:(maven|gradle))?$/",
           "group": "inline@2"
         },
         {
@@ -235,18 +260,108 @@
         },
         {
           "command": "runConfig.edit",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle))?$/",
           "group": "inline@3"
         },
         {
           "command": "runConfig.clone",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle))?$/",
           "group": "inline@4"
         },
         {
           "command": "runConfig.delete",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle))?$/",
           "group": "inline@5"
+        },
+        {
+          "command": "runConfig.run",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?(:(maven|gradle))?$/",
+          "group": "1_run@1"
+        },
+        {
+          "command": "runConfig.debug",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(:(maven|gradle))?$/",
+          "group": "1_run@2"
+        },
+        {
+          "command": "runConfig.stop",
+          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle))?$/",
+          "group": "1_run@3"
+        },
+        {
+          "command": "runConfig.buildAction.maven.clean",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:maven$/",
+          "group": "2_build@1"
+        },
+        {
+          "command": "runConfig.buildAction.maven.build",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:maven$/",
+          "group": "2_build@2"
+        },
+        {
+          "command": "runConfig.buildAction.maven.test",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:maven$/",
+          "group": "2_build@3"
+        },
+        {
+          "command": "runConfig.buildAction.gradle.clean",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:gradle$/",
+          "group": "2_build@1"
+        },
+        {
+          "command": "runConfig.buildAction.gradle.build",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:gradle$/",
+          "group": "2_build@2"
+        },
+        {
+          "command": "runConfig.buildAction.gradle.test",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:gradle$/",
+          "group": "2_build@3"
+        },
+        {
+          "command": "runConfig.edit",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle))?$/",
+          "group": "3_edit@1"
+        },
+        {
+          "command": "runConfig.clone",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle))?$/",
+          "group": "3_edit@2"
+        },
+        {
+          "command": "runConfig.delete",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle))?$/",
+          "group": "3_edit@3"
+        },
+        {
+          "command": "runConfig.buildAction.maven.clean",
+          "when": "view == runConfigurations && viewItem =~ /^depRcm(Idle|Running):maven$/",
+          "group": "2_build@1"
+        },
+        {
+          "command": "runConfig.buildAction.maven.build",
+          "when": "view == runConfigurations && viewItem =~ /^depRcm(Idle|Running):maven$/",
+          "group": "2_build@2"
+        },
+        {
+          "command": "runConfig.buildAction.maven.test",
+          "when": "view == runConfigurations && viewItem =~ /^depRcm(Idle|Running):maven$/",
+          "group": "2_build@3"
+        },
+        {
+          "command": "runConfig.buildAction.gradle.clean",
+          "when": "view == runConfigurations && viewItem =~ /^depRcm(Idle|Running):gradle$/",
+          "group": "2_build@1"
+        },
+        {
+          "command": "runConfig.buildAction.gradle.build",
+          "when": "view == runConfigurations && viewItem =~ /^depRcm(Idle|Running):gradle$/",
+          "group": "2_build@2"
+        },
+        {
+          "command": "runConfig.buildAction.gradle.test",
+          "when": "view == runConfigurations && viewItem =~ /^depRcm(Idle|Running):gradle$/",
+          "group": "2_build@3"
         },
         {
           "command": "runConfig.run",
@@ -277,11 +392,6 @@
           "command": "runConfig.delete",
           "when": "view == runConfigurations && viewItem =~ /^docker(Idle|Running)$/",
           "group": "inline@5"
-        },
-        {
-          "command": "runConfig.runBuildAction",
-          "when": "view == runConfigurations && viewItem == buildAction",
-          "group": "inline@1"
         },
         {
           "command": "runConfig.runNativeLaunch",

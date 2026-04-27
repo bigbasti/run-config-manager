@@ -488,43 +488,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       docker.showLogs(to.containerId, arg.config.name);
     }),
 
-    // --- Build-action shortcut (Maven/Gradle clean/build/test) ---
+    // --- Build-action shortcuts (Maven/Gradle clean/build/test) ---
 
-    vscode.commands.registerCommand('runConfig.runBuildAction', async (arg: any) => {
-      if (!arg || arg.kind !== 'buildAction') return;
-      const folder = store.getFolder(arg.folderKey);
-      if (!folder) return;
-      const entry = svc.list().find(r => r.valid && r.config.id === arg.configId);
-      if (!entry?.valid) return;
-      const cfg = entry.config;
-      const ctx = resolveBuildContext(cfg, folder);
-      if (!ctx) {
-        vscode.window.showWarningMessage(
-          `"${cfg.name}" has no resolved Maven/Gradle build tool — check the config's projectPath / buildRoot / buildTool.`,
-        );
-        return;
-      }
-      const taskArgs = buildCommandFor(ctx, arg.action);
-      const execution = new vscode.ShellExecution(ctx.binary, taskArgs, {
-        cwd: ctx.cwd,
-        env: ctx.env,
-      });
-      const taskName = `${cfg.name} · ${buildActionLabel(arg.action)}`;
-      const task = new vscode.Task(
-        { type: 'rcm-build', configId: cfg.id, action: arg.action } as any,
-        folder,
-        taskName,
-        'Run Configurations',
-        execution,
-        [],
-      );
-      log.info(`Build action: ${taskName} (${ctx.binary} ${taskArgs.join(' ')}) cwd=${ctx.cwd}`);
-      try {
-        await vscode.tasks.executeTask(task);
-      } catch (e) {
-        vscode.window.showErrorMessage(`Build action failed to start: ${(e as Error).message}`);
-      }
-    }),
+    // Individual commands per (tool × action) so each can carry the right
+    // brand icon in the right-click menu. They all funnel into the same
+    // internal runner which is type-agnostic — the tool is resolved from
+    // the config itself at invocation time.
+    vscode.commands.registerCommand('runConfig.buildAction.maven.clean', (arg: ConfigNodeArg) => runBuildActionFor(arg, 'clean', store, svc)),
+    vscode.commands.registerCommand('runConfig.buildAction.maven.build', (arg: ConfigNodeArg) => runBuildActionFor(arg, 'build', store, svc)),
+    vscode.commands.registerCommand('runConfig.buildAction.maven.test',  (arg: ConfigNodeArg) => runBuildActionFor(arg, 'test',  store, svc)),
+    vscode.commands.registerCommand('runConfig.buildAction.gradle.clean', (arg: ConfigNodeArg) => runBuildActionFor(arg, 'clean', store, svc)),
+    vscode.commands.registerCommand('runConfig.buildAction.gradle.build', (arg: ConfigNodeArg) => runBuildActionFor(arg, 'build', store, svc)),
+    vscode.commands.registerCommand('runConfig.buildAction.gradle.test',  (arg: ConfigNodeArg) => runBuildActionFor(arg, 'test',  store, svc)),
 
     // --- Cog: open run.json for the current (or picked) workspace folder ---
 
@@ -700,6 +675,59 @@ export function deriveDefaultName(
     ?? 'App';
   const pretty = basename.charAt(0).toUpperCase() + basename.slice(1);
   return `${pretty} ${typeLabel}`;
+}
+
+// Shared runner for the six build-action commands. Accepts whatever the
+// right-click menu arg looks like — a `config` tree node, or a `depRcm`
+// child node, or the full RunConfig when invoked programmatically.
+async function runBuildActionFor(
+  arg: any,
+  action: 'clean' | 'build' | 'test',
+  store: ConfigStore,
+  svc: RunConfigService,
+): Promise<void> {
+  // Unwrap either a `config` tree node or a `depRcm` one.
+  let folderKey: string | undefined;
+  let cfg: RunConfig | undefined;
+  if (arg && arg.kind === 'config') {
+    folderKey = arg.folderKey;
+    cfg = arg.config;
+  } else if (arg && arg.kind === 'depRcm') {
+    // dep-row arg: look up the containing folder by id.
+    cfg = arg.config;
+    const entry = svc.list().find(r => r.valid && r.config.id === cfg!.id);
+    folderKey = entry?.folderKey;
+  }
+  if (!cfg || !folderKey) return;
+  const folder = store.getFolder(folderKey);
+  if (!folder) return;
+  const ctx = resolveBuildContext(cfg, folder);
+  if (!ctx) {
+    vscode.window.showWarningMessage(
+      `"${cfg.name}" has no resolved Maven/Gradle build tool — check the config's projectPath / buildRoot / buildTool.`,
+    );
+    return;
+  }
+  const taskArgs = buildCommandFor(ctx, action);
+  const execution = new vscode.ShellExecution(ctx.binary, taskArgs, {
+    cwd: ctx.cwd,
+    env: ctx.env,
+  });
+  const taskName = `${cfg.name} · ${buildActionLabel(action)}`;
+  const task = new vscode.Task(
+    { type: 'rcm-build', configId: cfg.id, action } as any,
+    folder,
+    taskName,
+    'Run Configurations',
+    execution,
+    [],
+  );
+  log.info(`Build action: ${taskName} (${ctx.binary} ${taskArgs.join(' ')}) cwd=${ctx.cwd}`);
+  try {
+    await vscode.tasks.executeTask(task);
+  } catch (e) {
+    vscode.window.showErrorMessage(`Build action failed to start: ${(e as Error).message}`);
+  }
 }
 
 async function buildEditContext(
