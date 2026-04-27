@@ -13,4 +13,12 @@ declare module 'vscode' {
     del: EventEmitter<Uri>;
   }>;
   export const __resetWatchers: () => void;
+  // NativeRunnerService helpers.
+  export const __setLaunchConfig: (
+    folderKey: string,
+    data: { configurations?: unknown[]; compounds?: unknown[] },
+  ) => void;
+  export const __resetLaunchConfig: () => void;
+  export const __setFetchableTasks: (tasks: unknown[]) => void;
+  export const __resetFetchableTasks: () => void;
 }

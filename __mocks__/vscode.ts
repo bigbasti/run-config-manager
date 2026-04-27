@@ -1,16 +1,28 @@
 // Minimal vscode mock for Jest. Add to it as tests require more surface.
 
 export class Uri {
-  constructor(public readonly scheme: string, public readonly fsPath: string) {}
+  constructor(
+    public readonly scheme: string,
+    public readonly fsPath: string,
+    public readonly path: string = fsPath,
+    public readonly query: string = '',
+  ) {}
   static file(path: string): Uri {
-    return new Uri('file', path);
+    return new Uri('file', path, path);
   }
   static joinPath(base: Uri, ...parts: string[]): Uri {
     const joined = [base.fsPath, ...parts].join('/').replace(/\/+/g, '/');
-    return new Uri(base.scheme, joined);
+    return new Uri(base.scheme, joined, joined);
+  }
+  static parse(raw: string): Uri {
+    const m = /^([a-zA-Z0-9-]+):([^?]*)(?:\?(.*))?$/.exec(raw);
+    if (!m) throw new Error(`Uri.parse failed: ${raw}`);
+    const [, scheme, pathPart, queryPart = ''] = m;
+    const path = pathPart.startsWith('//') ? pathPart.replace(/^\/+/, '/') : pathPart;
+    return new Uri(scheme, path, path, queryPart);
   }
   toString(): string {
-    return `${this.scheme}://${this.fsPath}`;
+    return `${this.scheme}:${this.path}${this.query ? `?${this.query}` : ''}`;
   }
   with(_: any): Uri {
     return this;
@@ -59,6 +71,18 @@ export const __readFs = (path: string): string | undefined => {
   const b = fsStore.get(path);
   return b ? new TextDecoder().decode(b) : undefined;
 };
+
+// In-memory backing for workspace.getConfiguration('launch'). Keyed by folder
+// fsPath; each entry holds configurations + compounds arrays. Tests populate
+// via __setLaunchConfig.
+const launchBySection = new Map<string, { configurations: any[]; compounds: any[] }>();
+export const __setLaunchConfig = (folderKey: string, data: { configurations?: any[]; compounds?: any[] }) => {
+  launchBySection.set(folderKey, {
+    configurations: data.configurations ?? [],
+    compounds: data.compounds ?? [],
+  });
+};
+export const __resetLaunchConfig = () => { launchBySection.clear(); };
 
 export const workspace = {
   fs: {
@@ -116,6 +140,21 @@ export const workspace = {
   },
   workspaceFolders: [] as Array<{ uri: Uri; name: string; index: number }>,
   getWorkspaceFolder: (_: Uri) => undefined,
+  getConfiguration: (section: string, scope?: { fsPath?: string }) => {
+    const folderKey = scope?.fsPath;
+    if (section === 'launch' && folderKey) {
+      const entry = launchBySection.get(folderKey) ?? { configurations: [], compounds: [] };
+      return {
+        get: (key: string) => {
+          if (key === 'configurations') return entry.configurations;
+          if (key === 'compounds') return entry.compounds;
+          return undefined;
+        },
+      };
+    }
+    return { get: () => undefined };
+  },
+  registerTextDocumentContentProvider: jest.fn(() => ({ dispose: () => {} })),
   createFileSystemWatcher: (pattern: any) => {
     const change = new EventEmitter<Uri>();
     const create = new EventEmitter<Uri>();
@@ -155,6 +194,11 @@ export const commands = {
 const endEmitter = new EventEmitter<{ execution: any }>();
 const startEmitter = new EventEmitter<{ execution: any }>();
 
+// fetchTasks() returns whatever the test provisioned. Keeps tests hermetic.
+let fetchableTasks: any[] = [];
+export const __setFetchableTasks = (list: any[]) => { fetchableTasks = list; };
+export const __resetFetchableTasks = () => { fetchableTasks = []; };
+
 export const tasks = {
   executeTask: jest.fn(async (task: any) => {
     const execution = {
@@ -164,6 +208,7 @@ export const tasks = {
     startEmitter.fire({ execution });
     return execution;
   }),
+  fetchTasks: jest.fn(async () => fetchableTasks),
   onDidStartTask: startEmitter.event,
   onDidEndTask: endEmitter.event,
   onDidEndTaskProcess: new EventEmitter<any>().event,
@@ -226,7 +271,18 @@ export class TreeItem {
 }
 
 export class ThemeIcon {
+  constructor(public id: string, public color?: any) {}
+}
+
+export class ThemeColor {
   constructor(public id: string) {}
+}
+
+export class MarkdownString {
+  value: string;
+  constructor(value: string = '') { this.value = value; }
+  appendMarkdown(v: string) { this.value += v; return this; }
+  toString() { return this.value; }
 }
 
 export const RelativePattern = class {

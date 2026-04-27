@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code.",
-  "version": "0.3.6",
+  "version": "0.4.0",
   "publisher": "SebastianGross",
   "license": "MIT",
   "repository": {
@@ -48,6 +48,11 @@
         {
           "id": "runConfigurations",
           "name": "Configurations",
+          "contextualTitle": "Run Configurations"
+        },
+        {
+          "id": "runConfigLaunchTasks",
+          "name": "Launch & Tasks",
           "contextualTitle": "Run Configurations"
         }
       ]
@@ -117,6 +122,46 @@
         "command": "runConfig.openFile",
         "title": "Open run.json",
         "icon": "$(go-to-file)"
+      },
+      {
+        "command": "runConfig.viewNativeLaunch",
+        "title": "View Launch JSON",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "runConfig.viewNativeTask",
+        "title": "View Task JSON",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "runConfig.runNativeLaunch",
+        "title": "Run Launch",
+        "icon": "$(play)"
+      },
+      {
+        "command": "runConfig.stopNativeLaunch",
+        "title": "Stop Launch",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "runConfig.runNativeTask",
+        "title": "Run Task",
+        "icon": "$(play)"
+      },
+      {
+        "command": "runConfig.stopNativeTask",
+        "title": "Stop Task",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "runConfig.editNativeLaunch",
+        "title": "Open launch.json",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "runConfig.editNativeTask",
+        "title": "Open tasks.json",
+        "icon": "$(edit)"
       }
     ],
     "menus": {
@@ -182,6 +227,36 @@
           "command": "runConfig.delete",
           "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?$/",
           "group": "inline@5"
+        },
+        {
+          "command": "runConfig.runNativeLaunch",
+          "when": "view == runConfigLaunchTasks && viewItem == nativeLaunchIdle",
+          "group": "inline@1"
+        },
+        {
+          "command": "runConfig.stopNativeLaunch",
+          "when": "view == runConfigLaunchTasks && viewItem == nativeLaunchRunning",
+          "group": "inline@1"
+        },
+        {
+          "command": "runConfig.editNativeLaunch",
+          "when": "view == runConfigLaunchTasks && viewItem =~ /^nativeLaunch/",
+          "group": "inline@2"
+        },
+        {
+          "command": "runConfig.runNativeTask",
+          "when": "view == runConfigLaunchTasks && viewItem == nativeTaskIdle",
+          "group": "inline@1"
+        },
+        {
+          "command": "runConfig.stopNativeTask",
+          "when": "view == runConfigLaunchTasks && viewItem == nativeTaskRunning",
+          "group": "inline@1"
+        },
+        {
+          "command": "runConfig.editNativeTask",
+          "when": "view == runConfigLaunchTasks && viewItem =~ /^nativeTask/",
+          "group": "inline@2"
         }
       ]
     }

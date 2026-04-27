@@ -14,7 +14,15 @@ import { MavenGoalAdapter } from './adapters/maven-goal/MavenGoalAdapter';
 import { GradleTaskAdapter } from './adapters/gradle-task/GradleTaskAdapter';
 import { CustomCommandAdapter } from './adapters/custom-command/CustomCommandAdapter';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
+import { NativeRunnerTreeProvider } from './ui/NativeRunnerTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
+import { NativeRunnerService, type NativeLaunch, type NativeTask } from './services/NativeRunnerService';
+import {
+  NativeLaunchContentProvider,
+  SCHEME as NATIVE_VIEW_SCHEME,
+  launchViewUri,
+  taskViewUri,
+} from './ui/NativeLaunchContentProvider';
 import { log, initLogger } from './utils/logger';
 import type { RunConfig, RunConfigType } from './shared/types';
 import type { InvalidConfigEntry } from './shared/types';
@@ -45,6 +53,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const scanner = new ProjectScanner(registry);
   const exec = new ExecutionService(registry);
   const dbg = new DebugService(registry, exec);
+  const native = new NativeRunnerService();
+  context.subscriptions.push({ dispose: () => native.dispose() });
 
   const folders = vscode.workspace.workspaceFolders ?? [];
   log.debug(`Workspace folders: ${folders.length ? folders.map(f => f.uri.fsPath).join(', ') : '(none)'}`);
@@ -52,10 +62,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   log.info(`Loaded ${svc.list().length} configuration(s) across ${folders.length} folder(s).`);
 
   const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri);
+  // Separate view for native launch.json / tasks.json — sibling to the
+  // main Configurations view, like VARIABLES / BREAKPOINTS in Run & Debug.
+  const nativeTree = new NativeRunnerTreeProvider(native);
+  // Read-only virtual document provider for "view launch/task JSON" clicks.
+  const nativeContent = new NativeLaunchContentProvider(native);
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(NATIVE_VIEW_SCHEME, nativeContent),
+  );
   const view = vscode.window.createTreeView('runConfigurations', {
     treeDataProvider: tree,
     showCollapseAll: true,
   });
+  const launchTasksView = vscode.window.createTreeView('runConfigLaunchTasks', {
+    treeDataProvider: nativeTree,
+    showCollapseAll: true,
+  });
+  context.subscriptions.push(launchTasksView);
 
   const updateMessage = () => {
     view.message = svc.list().length === 0 ? 'No run configurations. Click + to add one.' : undefined;
@@ -95,6 +118,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('runConfig.refresh', () => {
       log.debug('Command: refresh');
       tree.refresh();
+      // Also invalidate the launch/tasks cache so a fresh fetchTasks runs.
+      nativeTree.invalidate();
     }),
 
     vscode.commands.registerCommand('runConfig.reveal', (arg: ConfigNodeArg) => {
@@ -306,6 +331,77 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!folder) return;
       const uri = vscode.Uri.joinPath(folder.uri, '.vscode', 'run.json');
       log.info(`Open file: ${uri.fsPath}`);
+      await vscode.commands.executeCommand('vscode.open', uri);
+    }),
+
+    // --- Launch & Tasks section (bridges .vscode/launch.json + tasks.json) ---
+
+    vscode.commands.registerCommand('runConfig.viewNativeLaunch', async (arg: any) => {
+      const launch: NativeLaunch | undefined = arg?.launch;
+      if (!launch) return;
+      const uri = launchViewUri(launch.folderKey, launch.name);
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc, { preview: true });
+    }),
+    vscode.commands.registerCommand('runConfig.viewNativeTask', async (arg: any) => {
+      const task: NativeTask | undefined = arg?.task;
+      if (!task) return;
+      const uri = taskViewUri(task.folderKey, task.source, task.name);
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc, { preview: true });
+    }),
+    vscode.commands.registerCommand('runConfig.runNativeLaunch', async (arg: any) => {
+      const launch: NativeLaunch | undefined = arg?.launch;
+      if (!launch) return;
+      await native.runLaunch(launch);
+    }),
+    vscode.commands.registerCommand('runConfig.stopNativeLaunch', async (arg: any) => {
+      const launch: NativeLaunch | undefined = arg?.launch;
+      if (!launch) return;
+      await native.stopLaunch(launch.name);
+    }),
+    vscode.commands.registerCommand('runConfig.runNativeTask', async (arg: any) => {
+      // Args can come from either a nativeTask node (has .task) or a
+      // nativeLaunchDepTask node (has .parentLaunch + .taskName + .folderKey).
+      if (arg?.task) {
+        await native.runTask(arg.task as NativeTask);
+        return;
+      }
+      if (arg?.taskName && arg?.folderKey) {
+        const list = await native.getTasks();
+        const found = list.find(t => t.folderKey === arg.folderKey && t.name === arg.taskName);
+        if (!found) {
+          vscode.window.showWarningMessage(`Task "${arg.taskName}" not found.`);
+          return;
+        }
+        await native.runTask(found);
+      }
+    }),
+    vscode.commands.registerCommand('runConfig.stopNativeTask', async (arg: any) => {
+      if (arg?.task) {
+        await native.stopTask(arg.task.source, arg.task.name);
+        return;
+      }
+      if (arg?.taskName && arg?.folderKey) {
+        const list = await native.getTasks();
+        const found = list.find(t => t.folderKey === arg.folderKey && t.name === arg.taskName);
+        if (found) await native.stopTask(found.source, found.name);
+      }
+    }),
+    vscode.commands.registerCommand('runConfig.editNativeLaunch', async (arg: any) => {
+      const launch: NativeLaunch | undefined = arg?.launch;
+      if (!launch) return;
+      const folder = vscode.workspace.workspaceFolders?.find(f => f.uri.fsPath === launch.folderKey);
+      if (!folder) return;
+      const uri = vscode.Uri.joinPath(folder.uri, '.vscode', 'launch.json');
+      await vscode.commands.executeCommand('vscode.open', uri);
+    }),
+    vscode.commands.registerCommand('runConfig.editNativeTask', async (arg: any) => {
+      const task: NativeTask | undefined = arg?.task;
+      if (!task) return;
+      const folder = vscode.workspace.workspaceFolders?.find(f => f.uri.fsPath === task.folderKey);
+      if (!folder) return;
+      const uri = vscode.Uri.joinPath(folder.uri, '.vscode', 'tasks.json');
       await vscode.commands.executeCommand('vscode.open', uri);
     }),
 
