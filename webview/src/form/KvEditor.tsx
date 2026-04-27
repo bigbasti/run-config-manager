@@ -60,19 +60,29 @@ function sameRecord(a: Record<string, string>, b: Record<string, string>): boole
 }
 
 export function KvEditor({ value, onChange, onFocus, onBlur }: Props) {
-  // Seed rows from the initial value. We deliberately don't re-sync when
-  // `value` changes later — the user is editing in this component, so its
-  // state is the source of truth. If the form reloads (init message), the
-  // parent reconstructs the component, which resets local state.
   const [rows, setRows] = useState<Row[]>(() => rowsFromRecord(value));
+
+  // Track the last record we either emitted upward or seeded from. When the
+  // `value` prop changes to something that isn't the echo of our own last
+  // emission, it came from the outside — init message, config switch (the
+  // singleton panel is reused when the user clicks another config without
+  // closing), configPatch from streaming detection — and local rows must
+  // resync. Previously we only seeded on mount, so env rows from config 1
+  // bled into config 2 because KvEditor never unmounted between edits.
+  const lastSynced = useRef(value);
+  useEffect(() => {
+    if (!sameRecord(value, lastSynced.current)) {
+      lastSynced.current = value;
+      setRows(rowsFromRecord(value));
+    }
+  }, [value]);
 
   // When rows change, emit upward — but only when the projected record
   // differs, so transient empty-key states don't churn the parent.
-  const lastEmitted = useRef(value);
   useEffect(() => {
     const projected = recordFromRows(rows);
-    if (!sameRecord(projected, lastEmitted.current)) {
-      lastEmitted.current = projected;
+    if (!sameRecord(projected, lastSynced.current)) {
+      lastSynced.current = projected;
       onChange(projected);
     }
   }, [rows, onChange]);

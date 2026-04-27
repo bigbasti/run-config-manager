@@ -205,3 +205,60 @@ describe('SpringBootAdapter debug', () => {
     expect(r.vmArgs).toBe('-Dspring.profiles.active=dev,local');
   });
 });
+
+describe('SpringBootAdapter.prepareLaunch — JAVA_TOOL_OPTIONS plumbing', () => {
+  const folder = { uri: Uri.file('/ws'), name: 'ws', index: 0 } as any;
+
+  test('gradle mode: vmArgs injected via JAVA_TOOL_OPTIONS', async () => {
+    // The critical fix — bootRun has no first-class vmArgs channel, so the
+    // JVM env var is our only way to propagate user-declared -D flags.
+    const c = cfg({
+      vmArgs: '-Dspring.config.name=foo -Duser.country=US',
+      typeOptions: { launchMode: 'gradle', buildTool: 'gradle' },
+    });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false });
+    expect(r.env?.JAVA_TOOL_OPTIONS).toContain('-Dspring.config.name=foo');
+    expect(r.env?.JAVA_TOOL_OPTIONS).toContain('-Duser.country=US');
+  });
+
+  test('gradle mode: vmArgs + colorOutput merge into one JAVA_TOOL_OPTIONS', async () => {
+    const c = cfg({
+      vmArgs: '-Xmx2g',
+      typeOptions: { launchMode: 'gradle', buildTool: 'gradle', colorOutput: true },
+    });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false });
+    const opts = r.env?.JAVA_TOOL_OPTIONS ?? '';
+    expect(opts).toContain('-Dspring.output.ansi.enabled=ALWAYS');
+    expect(opts).toContain('-Xmx2g');
+  });
+
+  test('maven mode: vmArgs NOT duplicated in JAVA_TOOL_OPTIONS', async () => {
+    // Maven forwards vmArgs through -Dspring-boot.run.jvmArguments;
+    // setting them again via JAVA_TOOL_OPTIONS would apply them twice.
+    const c = cfg({
+      vmArgs: '-Xmx2g',
+      typeOptions: { launchMode: 'maven', buildTool: 'maven' },
+    });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false });
+    expect(r.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
+  });
+
+  test('java-main mode: vmArgs NOT duplicated in JAVA_TOOL_OPTIONS', async () => {
+    // java-main applies them directly to the `java` command line.
+    const c = cfg({
+      vmArgs: '-Xmx2g',
+      typeOptions: { launchMode: 'java-main', mainClass: 'com.ex.App', classpath: '/a' },
+    });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false });
+    expect(r.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
+  });
+
+  test('gradle mode: empty vmArgs does not set JAVA_TOOL_OPTIONS', async () => {
+    const c = cfg({
+      vmArgs: '   ',
+      typeOptions: { launchMode: 'gradle', buildTool: 'gradle' },
+    });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false });
+    expect(r.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
+  });
+});

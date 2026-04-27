@@ -407,7 +407,12 @@ export class SpringBootAdapter implements RuntimeAdapter {
           kind: 'kv',
           key: 'env',
           label: 'Environment variables',
-          help: 'Merged on top of inherited env. ' + VAR_SYNTAX_HINT,
+          help:
+            'Merged on top of inherited env. ' +
+            'Note: JAVA_OPTS is NOT read by Gradle / Spring Boot bootRun — it\'s a ' +
+            'convention of shell wrappers (catalina.sh, maven) only. Put JVM flags ' +
+            'in the "VM args" field above (they\'re injected via JAVA_TOOL_OPTIONS for ' +
+            'gradle mode). ' + VAR_SYNTAX_HINT,
           examples: ['SPRING_PROFILES_ACTIVE=dev', 'JAVA_HOME=/opt/jdk-21', 'DB_URL=${DB_URL}'],
         },
         {
@@ -426,7 +431,9 @@ export class SpringBootAdapter implements RuntimeAdapter {
           placeholder: '-Xmx1g',
           help:
             'JVM flags. Applied directly in java-main mode; wrapped in ' +
-            '-Dspring-boot.run.jvmArguments for Maven; ignored by Gradle. ' +
+            '-Dspring-boot.run.jvmArguments for Maven; injected via ' +
+            'JAVA_TOOL_OPTIONS for Gradle (bootRun has no first-class ' +
+            'vmArgs channel, but the forked JVM honors JAVA_TOOL_OPTIONS). ' +
             VAR_SYNTAX_HINT,
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC', '-Dapp.home=${workspaceFolder}'],
           inspectable: true,
@@ -453,23 +460,31 @@ export class SpringBootAdapter implements RuntimeAdapter {
   ): Promise<{ env?: Record<string, string> }> {
     if (cfg.type !== 'spring-boot') return {};
     const env: Record<string, string> = {};
+    // JAVA_TOOL_OPTIONS is picked up by every forked JVM — it's the only
+    // channel that reaches `bootRun`'s child process. We compose it from two
+    // inputs that both need to apply:
+    //   1. colorOutput — ansi + log pattern injection
+    //   2. vmArgs (gradle mode only) — user-declared VM args (e.g.
+    //      `-Dspring.config.name=foo`). Maven mode already forwards vmArgs
+    //      via `-Dspring-boot.run.jvmArguments`; java-main applies them
+    //      directly to `java`. Only gradle's `bootRun` had no channel, so we
+    //      bridge via JAVA_TOOL_OPTIONS here.
+    const toolOptParts: string[] = [];
     if (cfg.typeOptions.colorOutput) {
       env.FORCE_COLOR = '1';
       env.CLICOLOR_FORCE = '1';
       env.SPRING_OUTPUT_ANSI_ENABLED = 'ALWAYS';
-      // JAVA_TOOL_OPTIONS is the only knob reliably picked up by ALL forked
-      // JVMs — whether the parent is Gradle, Maven, or `java`. It also
-      // overrides anything in application.properties because system
-      // properties take precedence over property files.
-      //
-      // We inject:
-      //   - spring.output.ansi.enabled=ALWAYS     → enable color markers
-      //   - logging.pattern.console=<with %clr()> → replace any user pattern
-      //                                             that has no color instructions
-      env.JAVA_TOOL_OPTIONS = (
-        `-Dspring.output.ansi.enabled=ALWAYS ` +
-        `-Dlogging.pattern.console=${COLORED_LOG_PATTERN}`
+      toolOptParts.push(
+        `-Dspring.output.ansi.enabled=ALWAYS`,
+        `-Dlogging.pattern.console=${COLORED_LOG_PATTERN}`,
       );
+    }
+    if (cfg.typeOptions.launchMode === 'gradle') {
+      const vm = (cfg.vmArgs ?? '').trim();
+      if (vm) toolOptParts.push(vm);
+    }
+    if (toolOptParts.length) {
+      env.JAVA_TOOL_OPTIONS = toolOptParts.join(' ');
     }
     return { env };
   }
