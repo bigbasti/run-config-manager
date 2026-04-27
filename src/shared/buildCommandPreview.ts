@@ -45,7 +45,14 @@ export function buildCommandPreview(cfg: RunConfig, workspaceFolderPath?: string
     const to = cfg.typeOptions;
     const home = to.tomcatHome || '<TOMCAT_HOME>';
     const ctx = (to.applicationContext || '/').trim();
-    base = `${home}/bin/catalina.sh run  # deploy ${to.artifactPath || '<artifact>'} → ${ctx} on :${to.httpPort}`;
+    // CATALINA_OPTS is set on the env, not passed on the command line — but
+    // showing the user what Tomcat will pick up makes the effect of the
+    // Profiles / VM options fields visible. Mirrors prepareTomcatLaunch.
+    const catalinaOpts: string[] = [];
+    if (to.vmOptions?.trim()) catalinaOpts.push(to.vmOptions.trim());
+    if (to.profiles?.trim()) catalinaOpts.push(`-Dspring.profiles.active=${to.profiles.trim()}`);
+    const optsPrefix = catalinaOpts.length ? `CATALINA_OPTS='${catalinaOpts.join(' ')}' ` : '';
+    base = `${optsPrefix}${home}/bin/catalina.sh run  # deploy ${to.artifactPath || '<artifact>'} → ${ctx} on :${to.httpPort}`;
   } else if (cfg.type === 'quarkus') {
     const to = cfg.typeOptions;
     const port = typeof to.debugPort === 'number' && to.debugPort > 0 ? to.debugPort : 5005;

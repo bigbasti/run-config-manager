@@ -139,3 +139,54 @@ describe('buildCommandPreview — spring-boot', () => {
       .toBe('./gradlew bootRun');
   });
 });
+
+describe('buildCommandPreview — tomcat', () => {
+  const tomcatBase = {
+    id: 'eeeeeeee-1111-2222-3333-444444444444',
+    name: 't',
+    type: 'tomcat' as const,
+    projectPath: '',
+    workspaceFolder: '',
+    env: {},
+    programArgs: '',
+    vmArgs: '',
+    typeOptions: {
+      tomcatHome: '/opt/tc',
+      jdkPath: '',
+      httpPort: 8080,
+      buildProjectPath: '',
+      buildRoot: '',
+      buildTool: 'gradle' as const,
+      gradleCommand: './gradlew' as const,
+      gradlePath: '',
+      mavenPath: '',
+      artifactPath: '/opt/app.war',
+      artifactKind: 'war' as const,
+      applicationContext: '/',
+      profiles: '',
+      vmOptions: '',
+      reloadable: true,
+      rebuildOnSave: false,
+    },
+  };
+
+  test('no profiles / no vmOptions → no CATALINA_OPTS prefix', () => {
+    expect(buildCommandPreview(tomcatBase as any))
+      .toBe('/opt/tc/bin/catalina.sh run  # deploy /opt/app.war → / on :8080');
+  });
+
+  test('selected profiles show up as -Dspring.profiles.active via CATALINA_OPTS', () => {
+    const cfg = { ...tomcatBase, typeOptions: { ...tomcatBase.typeOptions, profiles: 'dev,local' } };
+    expect(buildCommandPreview(cfg as any))
+      .toMatch(/CATALINA_OPTS='-Dspring\.profiles\.active=dev,local' \/opt\/tc\/bin\/catalina\.sh run/);
+  });
+
+  test('vmOptions + profiles combine in CATALINA_OPTS', () => {
+    const cfg = {
+      ...tomcatBase,
+      typeOptions: { ...tomcatBase.typeOptions, profiles: 'prod', vmOptions: '-Xmx2g' },
+    };
+    expect(buildCommandPreview(cfg as any))
+      .toMatch(/CATALINA_OPTS='-Xmx2g -Dspring\.profiles\.active=prod'/);
+  });
+});
