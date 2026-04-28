@@ -21,7 +21,7 @@ import { EditorPanel } from './ui/EditorPanel';
 import { NativeRunnerService, type NativeLaunch, type NativeTask } from './services/NativeRunnerService';
 import { buildDependencyOptions, rcmRef } from './services/dependencyCandidates';
 import { DependencyOrchestrator } from './services/DependencyOrchestrator';
-import { resolveBuildContext, buildCommandFor, buildActionLabel } from './services/buildActions';
+import { resolveBuildContext, buildCommandFor, buildActionLabel, resolveNpmContext, npmCommandFor, npmActionLabel, type NpmAction } from './services/buildActions';
 import {
   NativeLaunchContentProvider,
   SCHEME as NATIVE_VIEW_SCHEME,
@@ -500,6 +500,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('runConfig.buildAction.gradle.clean', (arg: ConfigNodeArg) => runBuildActionFor(arg, 'clean', store, svc)),
     vscode.commands.registerCommand('runConfig.buildAction.gradle.build', (arg: ConfigNodeArg) => runBuildActionFor(arg, 'build', store, svc)),
     vscode.commands.registerCommand('runConfig.buildAction.gradle.test',  (arg: ConfigNodeArg) => runBuildActionFor(arg, 'test',  store, svc)),
+    vscode.commands.registerCommand('runConfig.npmAction.install', (arg: ConfigNodeArg) => runNpmActionFor(arg, 'install', store, svc)),
+    vscode.commands.registerCommand('runConfig.npmAction.update',  (arg: ConfigNodeArg) => runNpmActionFor(arg, 'update',  store, svc)),
+    vscode.commands.registerCommand('runConfig.npmAction.prune',   (arg: ConfigNodeArg) => runNpmActionFor(arg, 'prune',   store, svc)),
 
     // --- Cog: open run.json for the current (or picked) workspace folder ---
 
@@ -727,6 +730,42 @@ async function runBuildActionFor(
     await vscode.tasks.executeTask(task);
   } catch (e) {
     vscode.window.showErrorMessage(`Build action failed to start: ${(e as Error).message}`);
+  }
+}
+
+async function runNpmActionFor(
+  arg: any,
+  action: NpmAction,
+  store: ConfigStore,
+  svc: RunConfigService,
+): Promise<void> {
+  let cfg: RunConfig | undefined;
+  let folderKey: string | undefined;
+  if (arg?.kind === 'config') { folderKey = arg.folderKey; cfg = arg.config; }
+  if (!cfg || !folderKey) return;
+  const folder = store.getFolder(folderKey);
+  if (!folder) return;
+  const ctx = resolveNpmContext(cfg, folder);
+  if (!ctx) {
+    vscode.window.showWarningMessage(`"${cfg.name}" is not an npm-based config.`);
+    return;
+  }
+  const args = npmCommandFor(ctx, action);
+  const execution = new vscode.ShellExecution(ctx.packageManager, args, { cwd: ctx.cwd });
+  const taskName = `${cfg.name} · ${ctx.packageManager} ${npmActionLabel(action).toLowerCase()}`;
+  const task = new vscode.Task(
+    { type: 'rcm-npm', configId: cfg.id, action } as any,
+    folder,
+    taskName,
+    'Run Configurations',
+    execution,
+    [],
+  );
+  log.info(`npm action: ${taskName} (cwd=${ctx.cwd})`);
+  try {
+    await vscode.tasks.executeTask(task);
+  } catch (e) {
+    vscode.window.showErrorMessage(`npm action failed to start: ${(e as Error).message}`);
   }
 }
 

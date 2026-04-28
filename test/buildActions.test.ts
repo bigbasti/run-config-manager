@@ -1,5 +1,5 @@
 import { Uri } from 'vscode';
-import { resolveBuildContext, buildCommandFor } from '../src/services/buildActions';
+import { resolveBuildContext, buildCommandFor, resolveNpmContext, npmCommandFor } from '../src/services/buildActions';
 import type { RunConfig } from '../src/shared/types';
 
 const folder = { uri: Uri.file('/ws'), name: 'ws', index: 0 } as any;
@@ -199,5 +199,41 @@ describe('buildCommandFor', () => {
     expect(buildCommandFor(ctx, 'clean')).toEqual(['--console=plain', ':api:clean']);
     expect(buildCommandFor(ctx, 'build')).toEqual(['--console=plain', ':api:assemble']);
     expect(buildCommandFor(ctx, 'test')).toEqual(['--console=plain', ':api:test']);
+  });
+});
+
+describe('resolveNpmContext', () => {
+  test('returns context for npm configs', () => {
+    const cfg: RunConfig = {
+      ...base,
+      type: 'npm',
+      typeOptions: { scriptName: 'start', packageManager: 'npm' },
+    } as RunConfig;
+    const ctx = resolveNpmContext(cfg, folder);
+    expect(ctx).not.toBeNull();
+    expect(ctx!.packageManager).toBe('npm');
+    expect(ctx!.cwd).toBe('/ws/api');
+  });
+
+  test('respects yarn / pnpm package managers', () => {
+    const cfg: RunConfig = {
+      ...base,
+      type: 'npm',
+      typeOptions: { scriptName: 'dev', packageManager: 'yarn' },
+    } as RunConfig;
+    expect(resolveNpmContext(cfg, folder)!.packageManager).toBe('yarn');
+  });
+
+  test('returns null for non-npm configs', () => {
+    expect(resolveNpmContext(springBootMaven(), folder)).toBeNull();
+  });
+});
+
+describe('npmCommandFor', () => {
+  test('produces correct args for each action', () => {
+    const ctx = { packageManager: 'npm' as const, cwd: '/ws' };
+    expect(npmCommandFor(ctx, 'install')).toEqual(['install']);
+    expect(npmCommandFor(ctx, 'update')).toEqual(['update']);
+    expect(npmCommandFor(ctx, 'prune')).toEqual(['prune']);
   });
 });

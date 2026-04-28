@@ -8,14 +8,24 @@ import { gradleModulePrefix } from '../adapters/spring-boot/findBuildRoot';
 // build work is clean / build / test; power users already have the
 // maven-goal / gradle-task types for anything else.
 export type BuildAction = 'clean' | 'build' | 'test';
+export type NpmAction = 'install' | 'update' | 'prune';
 
 export const BUILD_ACTIONS: BuildAction[] = ['clean', 'build', 'test'];
+export const NPM_ACTIONS: NpmAction[] = ['install', 'update', 'prune'];
 
 export function buildActionLabel(action: BuildAction): string {
   switch (action) {
     case 'clean': return 'Clean';
     case 'build': return 'Build';
     case 'test':  return 'Test';
+  }
+}
+
+export function npmActionLabel(action: NpmAction): string {
+  switch (action) {
+    case 'install': return 'Install';
+    case 'update':  return 'Update';
+    case 'prune':   return 'Prune';
   }
 }
 
@@ -119,6 +129,29 @@ export function buildCommandFor(ctx: BuildContext, action: BuildAction): string[
     case 'build': return ['--console=plain', `${prefix}assemble`];
     case 'test':  return ['--console=plain', `${prefix}test`];
   }
+}
+
+// npm project context — resolved the same way as BuildContext but simpler:
+// just the package manager binary and the project directory.
+export interface NpmContext {
+  packageManager: 'npm' | 'yarn' | 'pnpm';
+  cwd: string;
+}
+
+export function resolveNpmContext(
+  cfg: RunConfig,
+  folder: vscode.WorkspaceFolder,
+): NpmContext | null {
+  if (cfg.type !== 'npm') return null;
+  const pm = cfg.typeOptions.packageManager ?? 'npm';
+  if (pm !== 'npm' && pm !== 'yarn' && pm !== 'pnpm') return null;
+  const cwd = resolveProjectUri(folder, cfg.projectPath).fsPath;
+  return { packageManager: pm, cwd };
+}
+
+export function npmCommandFor(ctx: NpmContext, action: NpmAction): string[] {
+  // All three package managers share the same verb for these operations.
+  return [action];
 }
 
 function toBuildTool(v: string | undefined): 'maven' | 'gradle' | null {

@@ -8,7 +8,7 @@ import type { DockerService } from '../services/DockerService';
 import type { DependencyOrchestrator, OrchestrationStatus } from '../services/DependencyOrchestrator';
 import type { NativeRunnerService } from '../services/NativeRunnerService';
 import { parseDependencyRef, rcmRef } from '../services/dependencyCandidates';
-import { resolveBuildContext } from '../services/buildActions';
+import { resolveBuildContext, resolveNpmContext } from '../services/buildActions';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 import { iconForConfig, brandIconUri } from './iconForConfig';
@@ -225,14 +225,14 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     // clauses key on:
     //   - runtime state: Idle | Running
     //   - debuggability: debuggable adapters omit the NoDebug suffix
-    //   - build tool:    `:maven` or `:gradle` when resolvable (context
-    //                    menu shows Clean/Build/Test for those).
+    //   - tool suffix:   `:maven`, `:gradle`, or `:npm` when resolvable
+    //                    (context menu lights up tool-specific actions).
     const baseContextValue = (preparing || running)
       ? debuggable ? 'configRunning' : 'configRunningNoDebug'
       : debuggable ? 'configIdle' : 'configIdleNoDebug';
-    item.contextValue = buildCtx
-      ? `${baseContextValue}:${buildCtx.tool}`
-      : baseContextValue;
+    const npmCtx = !buildCtx && folder ? resolveNpmContext(n.config, folder) : null;
+    const toolSuffix = buildCtx ? `:${buildCtx.tool}` : npmCtx ? ':npm' : '';
+    item.contextValue = `${baseContextValue}${toolSuffix}`;
     // Click behavior: running/preparing configs reveal the task terminal;
     // idle configs open the editor. The inline Edit button always opens the
     // editor regardless of state.
