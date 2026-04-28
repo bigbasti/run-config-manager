@@ -94,6 +94,12 @@ interface RunConfigBase {
   // time and surfaced to the user — storing a cycle is not rejected at save
   // time so partial edits don't block Save.
   dependsOn?: DependencyEntry[];
+  // Optional group membership. Configs with the same group string are
+  // displayed together under a folder-icon node in the tree. "Group exists"
+  // is derived — a group lives as long as at least one config references
+  // it; deleting a group clears this field on every member (configs
+  // survive). Added via the right-click "Add to Group" menu, not the form.
+  group?: string;
 }
 
 export type ArtifactKind = 'war' | 'exploded';

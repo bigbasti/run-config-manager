@@ -64,6 +64,7 @@ const commonFields = {
   vmArgs: z.string(),
   port: z.number().int().positive().optional(),
   dependsOn: z.array(DependencyEntrySchema).optional(),
+  group: z.string().optional(),
 };
 
 export const JavaLaunchModeSchema = z.enum([

@@ -357,4 +357,31 @@ describe('sanitizeConfig', () => {
     } as RunConfig);
     expect(out.dependsOn).toBeUndefined();
   });
+
+  test('group: trimmed string is preserved', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'custom-command',
+      typeOptions: { command: 'echo', cwd: '', shell: 'default', interactive: false } as any,
+      group: '  Backend  ',
+    } as RunConfig);
+    expect(out.group).toBe('Backend');
+  });
+
+  test('group: empty / whitespace-only omitted from saved config', () => {
+    const outBlank = sanitizeConfig({
+      ...base,
+      type: 'custom-command',
+      typeOptions: { command: 'echo', cwd: '', shell: 'default', interactive: false } as any,
+      group: '',
+    } as RunConfig);
+    expect(outBlank.group).toBeUndefined();
+    const outWhitespace = sanitizeConfig({
+      ...base,
+      type: 'custom-command',
+      typeOptions: { command: 'echo', cwd: '', shell: 'default', interactive: false } as any,
+      group: '   ',
+    } as RunConfig);
+    expect(outWhitespace.group).toBeUndefined();
+  });
 });

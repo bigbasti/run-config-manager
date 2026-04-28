@@ -683,15 +683,22 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
         ? { delaySeconds: Math.min(600, Math.max(0, Math.floor(d.delaySeconds))) }
         : {}),
     }));
+  // Normalise group: trim whitespace and drop the field entirely when
+  // empty (an empty string would treat the config as "in a group named ''"
+  // which the tree provider would then render as a nameless folder).
+  const groupTrimmed = cfg.group?.trim();
   const common = {
     ...cfg,
     env: cfg.env ?? {},
     programArgs: cfg.programArgs ?? '',
     vmArgs: cfg.vmArgs ?? '',
     ...(deps.length > 0 ? { dependsOn: deps } : { dependsOn: undefined }),
+    ...(groupTrimmed ? { group: groupTrimmed } : { group: undefined }),
   };
-  // Remove the explicit undefined so JSON.stringify doesn't leave `"dependsOn": null` artefacts.
+  // Remove explicit undefined slots so JSON.stringify doesn't leave
+  // `"dependsOn": null` / `"group": null` artefacts on disk.
   if (common.dependsOn === undefined) delete (common as any).dependsOn;
+  if (common.group === undefined) delete (common as any).group;
   if (cfg.type === 'tomcat') {
     const to = cfg.typeOptions as Partial<import('../shared/types').TomcatTypeOptions> | undefined;
     return {

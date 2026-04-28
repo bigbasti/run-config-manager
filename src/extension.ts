@@ -22,6 +22,7 @@ import { NativeRunnerService, type NativeLaunch, type NativeTask } from './servi
 import { buildDependencyOptions, rcmRef } from './services/dependencyCandidates';
 import { DependencyOrchestrator } from './services/DependencyOrchestrator';
 import { resolveBuildContext, buildCommandFor, buildActionLabel, resolveNpmContext, npmCommandFor, npmActionLabel, type NpmAction } from './services/buildActions';
+import { GroupService } from './services/GroupService';
 import {
   NativeLaunchContentProvider,
   SCHEME as NATIVE_VIEW_SCHEME,
@@ -73,7 +74,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   log.info(`Loaded ${svc.list().length} configuration(s) across ${folders.length} folder(s).`);
 
   const orchestrator = new DependencyOrchestrator(svc, exec, dbg, docker, native);
-  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri, docker, orchestrator, native);
+  const groups = new GroupService(svc);
+  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri, docker, orchestrator, native, groups);
   // Separate view for native launch.json / tasks.json — sibling to the
   // main Configurations view, like VARIABLES / BREAKPOINTS in Run & Debug.
   const nativeTree = new NativeRunnerTreeProvider(native);
@@ -505,6 +507,106 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('runConfig.npmAction.update',  (arg: ConfigNodeArg) => runNpmActionFor(arg, 'update',  store, svc)),
     vscode.commands.registerCommand('runConfig.npmAction.prune',   (arg: ConfigNodeArg) => runNpmActionFor(arg, 'prune',   store, svc)),
 
+    // --- Groups (user-defined) ---
+
+    vscode.commands.registerCommand('runConfig.addToGroup', async (arg: ConfigNodeArg) => {
+      if (!arg || arg.kind !== 'config') return;
+      const existing = groups.list(arg.folderKey);
+      // QuickPick offers every existing group + a sentinel row for creating
+      // a new one. Picking the sentinel triggers an input box — one-step
+      // flow without a separate command.
+      const NEW_SENTINEL = '$(add) Create new group…';
+      const items: vscode.QuickPickItem[] = [
+        ...existing.map(name => ({ label: name, description: 'existing group' })),
+        ...(existing.length ? [{ label: '', kind: vscode.QuickPickItemKind.Separator } as vscode.QuickPickItem] : []),
+        { label: NEW_SENTINEL, description: 'type a name on the next step' },
+      ];
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: `Add "${arg.config.name}" to which group?`,
+      });
+      if (!pick) return;
+      let targetName: string | undefined;
+      if (pick.label === NEW_SENTINEL) {
+        targetName = await vscode.window.showInputBox({
+          prompt: 'New group name',
+          placeHolder: 'e.g. Backend, Smoke test, Full stack',
+          validateInput: v => {
+            const t = v.trim();
+            if (!t) return 'Group name cannot be empty';
+            if (existing.includes(t)) return `Group "${t}" already exists — pick it from the list instead`;
+            return null;
+          },
+        });
+      } else {
+        targetName = pick.label;
+      }
+      if (!targetName) return;
+      try {
+        await groups.addToGroup(arg.folderKey, arg.config.id, targetName);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Add to group failed: ${(e as Error).message}`);
+      }
+    }),
+
+    vscode.commands.registerCommand('runConfig.removeFromGroup', async (arg: ConfigNodeArg) => {
+      if (!arg || arg.kind !== 'config') return;
+      try {
+        await groups.removeFromGroup(arg.folderKey, arg.config.id);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Remove from group failed: ${(e as Error).message}`);
+      }
+    }),
+
+    // Group-row actions (right-click a group folder):
+    vscode.commands.registerCommand('runConfig.runGroupSequential', async (arg: any) => {
+      if (!arg || arg.kind !== 'group') return;
+      await runGroup(arg.folderKey, arg.name, 'sequential', groups, store, exec, dbg, docker, orchestrator, svc);
+    }),
+    vscode.commands.registerCommand('runConfig.runGroupParallel', async (arg: any) => {
+      if (!arg || arg.kind !== 'group') return;
+      await runGroup(arg.folderKey, arg.name, 'parallel', groups, store, exec, dbg, docker, orchestrator, svc);
+    }),
+    vscode.commands.registerCommand('runConfig.renameGroup', async (arg: any) => {
+      if (!arg || arg.kind !== 'group') return;
+      const existing = groups.list(arg.folderKey).filter(n => n !== arg.name);
+      const next = await vscode.window.showInputBox({
+        prompt: `Rename group "${arg.name}"`,
+        value: arg.name,
+        validateInput: v => {
+          const t = v.trim();
+          if (!t) return 'Group name cannot be empty';
+          if (existing.includes(t)) return `Group "${t}" already exists`;
+          return null;
+        },
+      });
+      if (!next || next.trim() === arg.name) return;
+      try {
+        await groups.renameGroup(arg.folderKey, arg.name, next.trim());
+      } catch (e) {
+        vscode.window.showErrorMessage(`Rename group failed: ${(e as Error).message}`);
+      }
+    }),
+    vscode.commands.registerCommand('runConfig.deleteGroup', async (arg: any) => {
+      if (!arg || arg.kind !== 'group') return;
+      const members = groups.members(arg.folderKey, arg.name);
+      const confirm = await vscode.window.showWarningMessage(
+        `Delete group "${arg.name}"?`,
+        {
+          modal: true,
+          detail: members.length
+            ? `The ${members.length} member config(s) will NOT be deleted — they'll go back to the top level.`
+            : 'The group has no members.',
+        },
+        'Delete',
+      );
+      if (confirm !== 'Delete') return;
+      try {
+        await groups.deleteGroup(arg.folderKey, arg.name);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Delete group failed: ${(e as Error).message}`);
+      }
+    }),
+
     // --- Cog: open run.json for the current (or picked) workspace folder ---
 
     vscode.commands.registerCommand('runConfig.openRunJson', async () => {
@@ -691,6 +793,26 @@ export function deriveDefaultName(
 // Shared runner for the six build-action commands. Accepts whatever the
 // right-click menu arg looks like — a `config` tree node, or a `depRcm`
 // child node, or the full RunConfig when invoked programmatically.
+// Dispatches a group's members through the GroupService (which handles the
+// queued/running/failed status bookkeeping). Kept as a tiny shim so the
+// command registrations stay one-liners.
+async function runGroup(
+  folderKey: string,
+  name: string,
+  mode: 'sequential' | 'parallel',
+  groups: GroupService,
+  store: ConfigStore,
+  exec: ExecutionService,
+  dbg: DebugService,
+  docker: DockerService,
+  _orchestrator: DependencyOrchestrator,
+  _svc: RunConfigService,
+): Promise<void> {
+  const folder = store.getFolder(folderKey);
+  if (!folder) return;
+  await groups.runGroup(folderKey, name, mode, folder, { exec, dbg, docker });
+}
+
 async function runBuildActionFor(
   arg: any,
   action: 'clean' | 'build' | 'test',

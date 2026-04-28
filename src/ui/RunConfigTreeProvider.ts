@@ -5,6 +5,7 @@ import type { ExecutionService } from '../services/ExecutionService';
 import type { DebugService } from '../services/DebugService';
 import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import type { DockerService } from '../services/DockerService';
+import type { GroupService } from '../services/GroupService';
 import type { DependencyOrchestrator, OrchestrationStatus } from '../services/DependencyOrchestrator';
 import type { NativeRunnerService } from '../services/NativeRunnerService';
 import { parseDependencyRef, rcmRef } from '../services/dependencyCandidates';
@@ -18,6 +19,10 @@ import { log } from '../utils/logger';
 export type Node =
   | { kind: 'folder'; folderKey: string; label: string }
   | { kind: 'typeGroup'; folderKey: string; type: RunConfig['type']; label: string; count: number }
+  // User-defined group (configs with the same `group` field). Folder icon,
+  // listed above type-groups. Right-click actions: run sequential/parallel,
+  // rename, delete (deletion only clears the field — configs survive).
+  | { kind: 'group'; folderKey: string; name: string; count: number }
   | { kind: 'config'; folderKey: string; config: RunConfig }
   | { kind: 'invalid'; folderKey: string; entry: InvalidConfigEntry }
   // A dependency child under a config node. Four flavours:
@@ -52,6 +57,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     private readonly docker: DockerService,
     private readonly orchestrator: DependencyOrchestrator,
     private readonly native: NativeRunnerService,
+    private readonly groupSvc: GroupService,
   ) {
     store.onChange(() => this.refresh());
     exec.onRunningChanged(() => this.refresh());
@@ -59,6 +65,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     docker.onChanged(() => this.refresh());
     orchestrator.onChanged(() => this.refresh());
     native.onRunningChanged(() => this.refresh());
+    groupSvc.onChanged(() => this.refresh());
   }
 
   refresh(): void {
@@ -85,6 +92,20 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       // configs that may belong to different frameworks. Use the shared
       // helper so gradle / java pick up their light-theme variants.
       item.iconPath = brandIconUri(iconForGroupType(n.type), this.extensionUri);
+      return item;
+    }
+    if (n.kind === 'group') {
+      const item = new vscode.TreeItem(n.name, vscode.TreeItemCollapsibleState.Expanded);
+      item.description = `(${n.count})`;
+      item.iconPath = new vscode.ThemeIcon('folder');
+      // contextValue drives the right-click menu for group rows —
+      // package.json gates the Run/Rename/Delete actions on this value.
+      item.contextValue = 'userGroup';
+      item.tooltip = new vscode.MarkdownString(
+        `**Group: ${n.name}**\n\n${n.count} configuration${n.count === 1 ? '' : 's'}.\n\n` +
+        'Right-click to run all (sequential / parallel), rename, or delete the group. ' +
+        'Deleting the group keeps the configs — they just go back to the top level.',
+      );
       return item;
     }
     if (n.kind === 'invalid') {
@@ -191,7 +212,21 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     // is a transient in-flight state even if the previous build was red;
     // keeping the icon red while the dev server is actively working would
     // misrepresent the situation.
-    if (preparing) {
+    // Group-run overlay: when a sequential group run has this config
+    // queued ahead, show a clock icon so the user sees the pipeline. Once
+    // the runner actually kicks it off, the per-service running state
+    // (exec/docker) below takes over.
+    const groupStatus = this.groupSvc.statusOfConfig(n.config.id);
+    if (groupStatus === 'queued' && !running && !preparing) {
+      item.iconPath = new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.foreground'));
+      item.description = 'Queued';
+    } else if (groupStatus === 'skipped') {
+      item.iconPath = new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('charts.foreground'));
+      item.description = 'Skipped';
+    } else if (groupStatus === 'failed') {
+      item.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
+      item.description = 'Failed';
+    } else if (preparing) {
       item.iconPath = new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.blue'));
       item.description = 'Preparing…';
     } else if (rebuilding) {
@@ -221,18 +256,21 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       item.iconPath = iconForConfig(n.config, folder, this.extensionUri);
       item.description = undefined;
     }
-    // The contextValue encodes three flags the context menu's `when`
-    // clauses key on:
+    // The contextValue encodes flags the context menu's `when` clauses
+    // key on:
     //   - runtime state: Idle | Running
     //   - debuggability: debuggable adapters omit the NoDebug suffix
     //   - tool suffix:   `:maven`, `:gradle`, or `:npm` when resolvable
-    //                    (context menu lights up tool-specific actions).
+    //                    (context menu lights up tool-specific actions)
+    //   - `:grouped` when the config belongs to a user group — toggles
+    //     the Add-to-Group / Remove-from-Group menu entries.
     const baseContextValue = (preparing || running)
       ? debuggable ? 'configRunning' : 'configRunningNoDebug'
       : debuggable ? 'configIdle' : 'configIdleNoDebug';
     const npmCtx = !buildCtx && folder ? resolveNpmContext(n.config, folder) : null;
     const toolSuffix = buildCtx ? `:${buildCtx.tool}` : npmCtx ? ':npm' : '';
-    item.contextValue = `${baseContextValue}${toolSuffix}`;
+    const groupSuffix = n.config.group ? ':grouped' : '';
+    item.contextValue = `${baseContextValue}${toolSuffix}${groupSuffix}`;
     // Click behavior: running/preparing configs reveal the task terminal;
     // idle configs open the editor. The inline Edit button always opens the
     // editor regardless of state.
@@ -400,6 +438,9 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     if (parent.kind === 'typeGroup') {
       return this.configsOfType(parent.folderKey, parent.type);
     }
+    if (parent.kind === 'group') {
+      return this.configsInGroup(parent.folderKey, parent.name);
+    }
     if (parent.kind === 'config') {
       return this.depChildren(parent.config, parent.config.id, 1, parent.config.workspaceFolder);
     }
@@ -470,19 +511,57 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     return out;
   }
 
-  // Root (or per-folder) nodes: each type with >1 config becomes a group;
-  // single-config types render the config directly; invalid entries always
-  // render at the end (they aren't grouped — they're anomalies).
+  // Root (or per-folder) nodes:
+  //   1. User groups first (alphabetical)
+  //   2. Then type-groups (each type with >1 config)
+  //   3. Single-config types render the config directly
+  //   4. Invalid entries always last — they're anomalies
+  //
+  // Grouped configs are ONLY shown inside their group, never doubled up at
+  // the top level. They also don't count toward type-group buckets so a
+  // type with two configs where one is grouped renders as a single bare
+  // config + the group (not a type-group of 1).
   private rootNodes(folderKey: string): Node[] {
     const file = this.store.getForFolder(folderKey);
     const invalid = this.store.invalidForFolder(folderKey);
-    const byType = new Map<RunConfig['type'], RunConfig[]>();
+
+    // Separate grouped vs ungrouped. Only ungrouped configs participate in
+    // type-group bucketing — a config inside a user group never also shows
+    // up under its type bucket.
+    const groupedByName = new Map<string, RunConfig[]>();
+    const ungrouped: RunConfig[] = [];
     for (const cfg of file.configurations) {
+      const g = cfg.group?.trim();
+      if (g) {
+        const bucket = groupedByName.get(g) ?? [];
+        bucket.push(cfg);
+        groupedByName.set(g, bucket);
+      } else {
+        ungrouped.push(cfg);
+      }
+    }
+
+    const byType = new Map<RunConfig['type'], RunConfig[]>();
+    for (const cfg of ungrouped) {
       const bucket = byType.get(cfg.type) ?? [];
       bucket.push(cfg);
       byType.set(cfg.type, bucket);
     }
+
     const out: Node[] = [];
+
+    // User groups first — alphabetical so the list is stable across
+    // renames.
+    const groupNames = [...groupedByName.keys()].sort((a, b) => a.localeCompare(b));
+    for (const name of groupNames) {
+      out.push({
+        kind: 'group',
+        folderKey,
+        name,
+        count: groupedByName.get(name)!.length,
+      });
+    }
+
     for (const [type, bucket] of byType) {
       if (bucket.length > 1) {
         out.push({
@@ -504,10 +583,17 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     return out;
   }
 
+  private configsInGroup(folderKey: string, groupName: string): Node[] {
+    const file = this.store.getForFolder(folderKey);
+    return file.configurations
+      .filter(c => c.group === groupName)
+      .map(config => ({ kind: 'config', folderKey, config } as const));
+  }
+
   private configsOfType(folderKey: string, type: RunConfig['type']): Node[] {
     const file = this.store.getForFolder(folderKey);
     return file.configurations
-      .filter(c => c.type === type)
+      .filter(c => c.type === type && !c.group)
       .map(config => ({ kind: 'config', folderKey, config } as const));
   }
 }

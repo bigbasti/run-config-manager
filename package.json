@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "SebastianGross",
   "license": "MIT",
   "repository": {
@@ -222,6 +222,36 @@
         "command": "runConfig.findBlockingPorts",
         "title": "Find Blocking Ports",
         "icon": "$(plug)"
+      },
+      {
+        "command": "runConfig.addToGroup",
+        "title": "Add to Group…",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "runConfig.removeFromGroup",
+        "title": "Remove from Group",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "runConfig.runGroupSequential",
+        "title": "Run All Sequentially",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "runConfig.runGroupParallel",
+        "title": "Run All in Parallel",
+        "icon": "$(run-above)"
+      },
+      {
+        "command": "runConfig.renameGroup",
+        "title": "Rename Group…",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "runConfig.deleteGroup",
+        "title": "Delete Group",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -270,17 +300,17 @@
       "view/item/context": [
         {
           "command": "runConfig.run",
-          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "inline@1"
         },
         {
           "command": "runConfig.stop",
-          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "inline@1"
         },
         {
           "command": "runConfig.debug",
-          "when": "view == runConfigurations && viewItem =~ /^configIdle(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "inline@2"
         },
         {
@@ -295,92 +325,92 @@
         },
         {
           "command": "runConfig.edit",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "inline@3"
         },
         {
           "command": "runConfig.clone",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "inline@4"
         },
         {
           "command": "runConfig.delete",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "inline@5"
         },
         {
           "command": "runConfig.run",
-          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "1_run@1"
         },
         {
           "command": "runConfig.debug",
-          "when": "view == runConfigurations && viewItem =~ /^configIdle(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "1_run@2"
         },
         {
           "command": "runConfig.stop",
-          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "1_run@3"
         },
         {
           "command": "runConfig.buildAction.maven.clean",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:maven$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:maven(:grouped)?$/",
           "group": "2_build@1"
         },
         {
           "command": "runConfig.buildAction.maven.build",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:maven$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:maven(:grouped)?$/",
           "group": "2_build@2"
         },
         {
           "command": "runConfig.buildAction.maven.test",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:maven$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:maven(:grouped)?$/",
           "group": "2_build@3"
         },
         {
           "command": "runConfig.buildAction.gradle.clean",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:gradle$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:gradle(:grouped)?$/",
           "group": "2_build@1"
         },
         {
           "command": "runConfig.buildAction.gradle.build",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:gradle$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:gradle(:grouped)?$/",
           "group": "2_build@2"
         },
         {
           "command": "runConfig.buildAction.gradle.test",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:gradle$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:gradle(:grouped)?$/",
           "group": "2_build@3"
         },
         {
           "command": "runConfig.npmAction.install",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:npm$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:npm(:grouped)?$/",
           "group": "2_build@1"
         },
         {
           "command": "runConfig.npmAction.update",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:npm$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:npm(:grouped)?$/",
           "group": "2_build@2"
         },
         {
           "command": "runConfig.npmAction.prune",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:npm$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:npm(:grouped)?$/",
           "group": "2_build@3"
         },
         {
           "command": "runConfig.edit",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "3_edit@1"
         },
         {
           "command": "runConfig.clone",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "3_edit@2"
         },
         {
           "command": "runConfig.delete",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm))?(:grouped)?$/",
           "group": "3_edit@3"
         },
         {
@@ -412,6 +442,41 @@
           "command": "runConfig.buildAction.gradle.test",
           "when": "view == runConfigurations && viewItem =~ /^depRcm(Idle|Running):gradle$/",
           "group": "2_build@3"
+        },
+        {
+          "command": "runConfig.addToGroup",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm))?$/",
+          "group": "4_group@1"
+        },
+        {
+          "command": "runConfig.removeFromGroup",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm))?:grouped$/",
+          "group": "4_group@1"
+        },
+        {
+          "command": "runConfig.runGroupSequential",
+          "when": "view == runConfigurations && viewItem == userGroup",
+          "group": "1_run@1"
+        },
+        {
+          "command": "runConfig.runGroupParallel",
+          "when": "view == runConfigurations && viewItem == userGroup",
+          "group": "1_run@2"
+        },
+        {
+          "command": "runConfig.renameGroup",
+          "when": "view == runConfigurations && viewItem == userGroup",
+          "group": "2_edit@1"
+        },
+        {
+          "command": "runConfig.deleteGroup",
+          "when": "view == runConfigurations && viewItem == userGroup",
+          "group": "2_edit@2"
+        },
+        {
+          "command": "runConfig.runGroupSequential",
+          "when": "view == runConfigurations && viewItem == userGroup",
+          "group": "inline@1"
         },
         {
           "command": "runConfig.run",
