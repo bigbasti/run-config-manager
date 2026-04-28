@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code.",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "publisher": "SebastianGross",
   "license": "MIT",
   "repository": {
@@ -217,6 +217,11 @@
         "command": "runConfig.npmAction.prune",
         "title": "npm: Prune",
         "icon": "media/icons/npm.svg"
+      },
+      {
+        "command": "runConfig.findBlockingPorts",
+        "title": "Find Blocking Ports",
+        "icon": "$(plug)"
       }
     ],
     "menus": {
@@ -245,6 +250,21 @@
           "command": "runConfig.openRunJson",
           "when": "view == runConfigurations",
           "group": "navigation@5"
+        },
+        {
+          "command": "runConfig.add",
+          "when": "view == runConfigurations",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "runConfig.findBlockingPorts",
+          "when": "view == runConfigurations",
+          "group": "2_tools@1"
+        },
+        {
+          "command": "runConfig.stopAll",
+          "when": "view == runConfigurations && rcm.anyRunning",
+          "group": "3_lifecycle@1"
         }
       ],
       "view/item/context": [

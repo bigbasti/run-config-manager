@@ -28,6 +28,7 @@ import {
   launchViewUri,
   taskViewUri,
 } from './ui/NativeLaunchContentProvider';
+import { PortViewerPanel } from './ui/PortViewerPanel';
 import { log, initLogger } from './utils/logger';
 import type { RunConfig, RunConfigType } from './shared/types';
 import type { InvalidConfigEntry } from './shared/types';
@@ -528,6 +529,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       log.info(`Open run.json: ${uri.fsPath}`);
       await vscode.commands.executeCommand('vscode.open', uri);
+    }),
+
+    // --- Find Blocking Ports ---
+
+    vscode.commands.registerCommand('runConfig.findBlockingPorts', () => {
+      log.info('Command: find blocking ports');
+      PortViewerPanel.open(svc, exec, dbg, docker);
     }),
 
     view,
