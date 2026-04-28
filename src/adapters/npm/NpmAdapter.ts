@@ -6,6 +6,7 @@ import { readPackageJsonInfo } from './detectPackageJson';
 import { splitArgs } from './splitArgs';
 import { log } from '../../utils/logger';
 import { dependsOnField } from '../sharedFields';
+import { detectNpmPort } from '../../services/detectProjectPort';
 
 export class NpmAdapter implements RuntimeAdapter {
   readonly type = 'npm' as const;
@@ -23,6 +24,15 @@ export class NpmAdapter implements RuntimeAdapter {
       `npm detect: packageManager=${info.packageManager}, scripts=${info.scripts.length}, ` +
       `defaultScript=${info.defaultScript}`,
     );
+    // Port detection: framework convention default or --port in the picked
+    // script. Null when we can't determine (plain Node scripts).
+    let port: number | undefined;
+    try {
+      const detected = await detectNpmPort(folder, info.defaultScript);
+      if (detected) port = detected;
+    } catch (e) {
+      log.debug(`npm port detect failed: ${(e as Error).message}`);
+    }
     return {
       defaults: {
         type: 'npm',
@@ -30,6 +40,7 @@ export class NpmAdapter implements RuntimeAdapter {
           scriptName: info.defaultScript,
           packageManager: info.packageManager,
         },
+        ...(port ? { port } : {}),
       },
       context: { scripts: info.scripts },
     };

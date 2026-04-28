@@ -41,24 +41,34 @@ export class PortViewerPanel {
     docker: DockerService,
   ): void {
     if (PortViewerPanel.instance) {
+      log.debug('Port viewer: revealing existing panel + refreshing');
       PortViewerPanel.instance.panel.reveal(vscode.ViewColumn.Active);
       PortViewerPanel.instance.refresh();
       return;
     }
+    log.info('Port viewer: opening new panel');
     PortViewerPanel.instance = new PortViewerPanel(svc, exec, dbg, docker);
   }
 
   private async refresh(): Promise<void> {
+    log.debug('Port viewer: refresh starting');
     const ports = await scanPorts();
     const { rows, anyExplicit } = this.enrichRows(ports);
+    const configRows = rows.filter(r => r.group === 'config');
+    log.info(
+      `Port viewer: ${rows.length} total port(s), ${configRows.length} matched to configs, ` +
+      `anyExplicit=${anyExplicit}`,
+    );
     this.panel.webview.html = buildHtml(rows, anyExplicit);
   }
 
   private enrichRows(ports: PortEntry[]): { rows: PortRow[]; anyExplicit: boolean } {
     const configPorts = new Map<number, { name: string; running: boolean }>();
     let anyExplicit = false;
+    let configsScanned = 0;
     for (const ref of this.svc.list()) {
       if (!ref.valid) continue;
+      configsScanned++;
       const cfg = ref.config;
       const { explicit, defaultPorts } = inferConfigPortsDetailed(cfg);
       if (explicit.length > 0) anyExplicit = true;
@@ -66,7 +76,17 @@ export class PortViewerPanel {
       for (const p of [...explicit, ...defaultPorts]) {
         configPorts.set(p, { name: cfg.name, running });
       }
+      if (explicit.length > 0 || defaultPorts.length > 0) {
+        log.debug(
+          `Port viewer: config "${cfg.name}" (${cfg.type}) contributes ports ` +
+          `[${[...explicit, ...defaultPorts].join(', ')}] running=${running}`,
+        );
+      }
     }
+    log.debug(
+      `Port viewer: scanned ${configsScanned} valid config(s); ` +
+      `${configPorts.size} unique port(s) mapped to configs`,
+    );
     const rows = ports.map(pe => {
       const match = configPorts.get(pe.port);
       return {
@@ -84,21 +104,42 @@ export class PortViewerPanel {
     return this.exec.isRunning(cfg.id) || this.exec.isStarted(cfg.id) || this.dbg.isRunning(cfg.id);
   }
 
-  private async handleMessage(msg: { cmd: string; pid?: number }): Promise<void> {
+  private async handleMessage(msg: { cmd: string; pid?: number; processName?: string }): Promise<void> {
+    log.debug(`Port viewer: received message cmd=${msg.cmd} pid=${msg.pid ?? ''}`);
     if (msg.cmd === 'refresh') {
+      log.debug('Port viewer: user-triggered refresh');
       await this.refresh();
       return;
     }
     if (msg.cmd === 'kill' && typeof msg.pid === 'number') {
-      log.info(`Port viewer: killing PID ${msg.pid}`);
+      // Confirmation happens HERE rather than in the webview because
+      // window.confirm() is unavailable in VS Code webviews — it returns
+      // false silently and the click does nothing. Using the native modal
+      // gives us a real prompt + proper styling + works on every platform.
+      const pid = msg.pid;
+      const name = msg.processName?.trim();
+      const label = name ? `${name} (PID ${pid})` : `PID ${pid}`;
+      log.info(`Port viewer: kill requested for ${label} — showing confirmation`);
+      const choice = await vscode.window.showWarningMessage(
+        `Kill process ${label}?`,
+        { modal: true, detail: 'This sends SIGTERM (or taskkill /F on Windows). Unsaved work in that process may be lost.' },
+        'Kill',
+      );
+      if (choice !== 'Kill') {
+        log.debug(`Port viewer: user cancelled kill of ${label}`);
+        return;
+      }
+      log.info(`Port viewer: user confirmed kill of ${label}`);
       try {
-        await killProcess(msg.pid);
-        vscode.window.showInformationMessage(`Process ${msg.pid} terminated.`);
+        await killProcess(pid);
+        log.info(`Port viewer: ${label} terminated, re-scanning`);
+        vscode.window.showInformationMessage(`Process ${label} terminated.`);
         // Brief delay so the OS releases the port before we re-scan.
         await new Promise(r => setTimeout(r, 500));
         await this.refresh();
       } catch (e) {
-        vscode.window.showErrorMessage(`Failed to kill PID ${msg.pid}: ${(e as Error).message}`);
+        log.error(`Port viewer: kill ${label} failed`, e);
+        vscode.window.showErrorMessage(`Failed to kill ${label}: ${(e as Error).message}`);
       }
     }
   }
@@ -276,11 +317,12 @@ function render() {
   });
   root.querySelectorAll('.kill-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      // Confirmation is done by the extension host (native modal) because
+      // window.confirm() is disabled inside VS Code webviews and returns
+      // false silently. We just forward the intent.
       const pid = Number(btn.dataset.pid);
-      const name = btn.dataset.name || pid;
-      if (confirm('Kill process ' + name + ' (PID ' + pid + ')?')) {
-        vscode.postMessage({ cmd: 'kill', pid });
-      }
+      const processName = btn.dataset.name || '';
+      vscode.postMessage({ cmd: 'kill', pid, processName });
     });
   });
 }

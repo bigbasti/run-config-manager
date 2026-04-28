@@ -32,13 +32,13 @@ describe('inferConfigPorts', () => {
     expect(inferConfigPorts(cfg)).toContain(5000);
   });
 
-  test('npm: defaults to 3000 when nothing explicit', () => {
+  test('npm: returns empty when nothing explicit (no assumed default)', () => {
     const cfg: RunConfig = {
       ...base,
       type: 'npm',
       typeOptions: { scriptName: 'start', packageManager: 'npm' },
     } as RunConfig;
-    expect(inferConfigPorts(cfg)).toContain(3000);
+    expect(inferConfigPorts(cfg)).toEqual([]);
   });
 
   test('spring-boot: scans --server.port in programArgs', () => {
@@ -83,7 +83,7 @@ describe('inferConfigPorts', () => {
     expect(inferConfigPorts(cfg)).toContain(7070);
   });
 
-  test('spring-boot: defaults to 8080 when nothing explicit', () => {
+  test('spring-boot: returns empty when nothing explicit (no assumed default)', () => {
     const cfg = {
       ...base,
       type: 'spring-boot' as const,
@@ -93,7 +93,7 @@ describe('inferConfigPorts', () => {
         module: '', gradlePath: '', mavenPath: '', buildRoot: '',
       },
     } as RunConfig;
-    expect(inferConfigPorts(cfg)).toContain(8080);
+    expect(inferConfigPorts(cfg)).toEqual([]);
   });
 
   test('spring-boot: includes debugPort when set', () => {
@@ -156,7 +156,7 @@ describe('inferConfigPorts', () => {
 });
 
 describe('inferConfigPortsDetailed', () => {
-  test('spring-boot with no explicit port: default 8080 marked as default, not explicit', () => {
+  test('spring-boot with no explicit port: both lists empty (no framework default assumed)', () => {
     const cfg = {
       ...base,
       type: 'spring-boot' as const,
@@ -168,7 +168,7 @@ describe('inferConfigPortsDetailed', () => {
     } as RunConfig;
     const r = inferConfigPortsDetailed(cfg);
     expect(r.explicit).toEqual([]);
-    expect(r.defaultPorts).toEqual([8080]);
+    expect(r.defaultPorts).toEqual([]);
   });
 
   test('spring-boot with explicit port field: explicit, no default', () => {
@@ -204,7 +204,7 @@ describe('inferConfigPortsDetailed', () => {
     expect(r.defaultPorts).toEqual([]);
   });
 
-  test('npm with nothing set: default 3000 only', () => {
+  test('npm with nothing set: both lists empty (no assumed default)', () => {
     const cfg: RunConfig = {
       ...base,
       type: 'npm',
@@ -212,6 +212,6 @@ describe('inferConfigPortsDetailed', () => {
     } as RunConfig;
     const r = inferConfigPortsDetailed(cfg);
     expect(r.explicit).toEqual([]);
-    expect(r.defaultPorts).toEqual([3000]);
+    expect(r.defaultPorts).toEqual([]);
   });
 });

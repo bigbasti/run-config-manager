@@ -23,7 +23,13 @@ export type Outbound =
   | { cmd: 'inspectContainer'; containerId: string }
   // "Refresh containers" action on the Docker form — runs `docker ps -a`
   // and replies with a schemaUpdate whose dropdown reflects the latest.
-  | { cmd: 'refreshContainers' };
+  | { cmd: 'refreshContainers' }
+  // Re-run port detection for the current config. The webview fires this
+  // after the user edits a field that changes which file we read
+  // (Spring Boot / Quarkus: profiles). The extension reads the relevant
+  // application-*.properties/yml and replies with a configPatch that
+  // sets the top-level `port` when found.
+  | { cmd: 'detectPort'; config: RunConfig };
 
 // Field keys whose detection is still in flight (spinner rendered in-place).
 export type PendingFields = string[];
@@ -42,7 +48,16 @@ export type Inbound =
       workspaceFolderPath?: string;
     }
   | { cmd: 'schemaUpdate'; schema: FormSchema; pending?: PendingFields }
-  | { cmd: 'configPatch'; patch: Partial<RunConfig> }
+  | {
+      cmd: 'configPatch';
+      patch: Partial<RunConfig>;
+      // When true, values in `patch` overwrite existing values instead of
+      // only filling blanks. Used by the port re-detect flow on profile
+      // changes, where the new value IS authoritative for the current
+      // profile. Defaults to false (blanks-only) for streaming detection
+      // that shouldn't clobber user edits.
+      force?: boolean;
+    }
   | { cmd: 'folderPicked'; path: string }
   | { cmd: 'classpathComputed'; classpath: string }
   | {

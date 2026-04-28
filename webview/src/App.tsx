@@ -125,7 +125,13 @@ export function App() {
         // captured stale props.
         setBusyActionId(prev => (prev === 'recomputeClasspath' ? prev : null));
       } else if (msg.cmd === 'configPatch') {
-        setValues(v => mergeBlanks(v, msg.patch));
+        // Streaming detection uses blanks-only merge so user edits never
+        // get clobbered. Profile-triggered re-detects set `force: true` to
+        // actually update (because the new value IS authoritative for the
+        // newly-picked profile).
+        setValues(v => msg.force
+          ? ({ ...v, ...msg.patch } as Partial<RunConfig>)
+          : mergeBlanks(v, msg.patch));
       } else if (msg.cmd === 'folderPicked') {
         setValues(v => ({ ...v, projectPath: msg.path }));
       } else if (msg.cmd === 'classpathComputed') {
@@ -230,6 +236,20 @@ export function App() {
     if (lastInspectedRef.current === id) return;
     lastInspectedRef.current = id;
     post({ cmd: 'inspectContainer', containerId: id });
+  }, [values]);
+
+  // Spring Boot / Quarkus: re-run port detection whenever the profile(s) the
+  // user selected change. The extension reads the matching
+  // application-<profile>.{properties,yml} and replies with a configPatch
+  // setting `port`. Deduped so we only round-trip on a real change.
+  const lastProfileDetectRef = useRef<string>('');
+  useEffect(() => {
+    if (values.type !== 'spring-boot' && values.type !== 'quarkus') return;
+    const to = values.typeOptions as { profiles?: string; profile?: string } | undefined;
+    const profileKey = to?.profiles ?? to?.profile ?? '';
+    if (lastProfileDetectRef.current === profileKey) return;
+    lastProfileDetectRef.current = profileKey;
+    post({ cmd: 'detectPort', config: values as RunConfig });
   }, [values]);
 
   const onValidatePath = (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', p: string) => {

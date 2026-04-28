@@ -4,6 +4,7 @@ import type { RunConfig } from '../../shared/types';
 import type { FormSchema } from '../../shared/formSchema';
 import { readQuarkusInfo } from './detectQuarkus';
 import { findQuarkusProfiles } from './findQuarkusProfiles';
+import { detectQuarkusPort, safeDetect } from '../../services/detectProjectPort';
 import { detectJdks } from '../spring-boot/detectJdks';
 import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from '../spring-boot/findBuildRoot';
@@ -132,6 +133,17 @@ export class QuarkusAdapter implements RuntimeAdapter {
       log.debug(`Quarkus probe: profiles=${profiles.length}`);
       emit({ contextPatch: { profiles }, resolved: ['typeOptions.profile'] });
     })().catch(e => log.warn(`Quarkus probe (profiles) failed: ${(e as Error).message}`));
+
+    // Port detection — reads application.{properties,yml} for quarkus.http.port.
+    // No profile passed on initial create; detectQuarkusPort returns the
+    // plain-default value. Users can re-run when they pick a profile.
+    (async () => {
+      const port = await safeDetect('quarkus:port', () => detectQuarkusPort(folder, undefined));
+      if (port) {
+        log.debug(`Quarkus probe: port=${port}`);
+        emit({ contextPatch: {}, defaultsPatch: { port } as any, resolved: ['port'] });
+      }
+    })().catch(e => log.warn(`Quarkus probe (port) failed: ${(e as Error).message}`));
 
     (async () => {
       const jdks = await detectJdks();

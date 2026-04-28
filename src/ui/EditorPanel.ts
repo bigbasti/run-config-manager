@@ -7,6 +7,7 @@ import type { RuntimeAdapter, StreamingPatch } from '../adapters/RuntimeAdapter'
 import { log } from '../utils/logger';
 import { relativeFromWorkspace, resolveProjectUri } from '../utils/paths';
 import { recomputeClasspath, RecomputeTimeoutError } from '../adapters/spring-boot/recomputeClasspath';
+import { detectSpringBootPort, detectQuarkusPort, safeDetect } from '../services/detectProjectPort';
 import { makeRunContext, resolveConfig } from '../utils/resolveVars';
 import { discoverGradleTasks } from '../adapters/gradle-task/discoverGradleTasks';
 import { discoverMavenGoals } from '../adapters/maven-goal/discoverMavenGoals';
@@ -436,6 +437,39 @@ export class EditorPanel {
           this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
         } catch (e) {
           log.warn(`inspectContainer failed: ${(e as Error).message}`);
+        }
+        return;
+      }
+      case 'detectPort': {
+        // Fired by the webview when a field that influences port detection
+        // changes (Spring Boot / Quarkus profiles). We re-read the relevant
+        // application file for the new profile and reply with a configPatch
+        // that sets `port` — mergeBlanks on the webview side means we never
+        // overwrite a port the user typed manually.
+        const cfg = msg.config;
+        try {
+          const projectRoot = resolveProjectUri(this.args.folder, cfg.projectPath ?? '');
+          let port: number | null = null;
+          if (cfg.type === 'spring-boot') {
+            port = await safeDetect('spring-boot:port', () =>
+              detectSpringBootPort(projectRoot, cfg.typeOptions.profiles));
+          } else if (cfg.type === 'quarkus') {
+            port = await safeDetect('quarkus:port', () =>
+              detectQuarkusPort(projectRoot, cfg.typeOptions.profile));
+          }
+          if (port) {
+            log.debug(`Port re-detect: ${cfg.type} profile=${(cfg as any).typeOptions.profiles ?? (cfg as any).typeOptions.profile} → ${port}`);
+            this.panel.webview.postMessage({
+              cmd: 'configPatch',
+              patch: { port },
+              // Authoritative — the picked profile declares this port, so
+              // overwrite any previous value (which came from a different
+              // profile, or from an earlier detection).
+              force: true,
+            } satisfies Inbound);
+          }
+        } catch (e) {
+          log.warn(`detectPort failed: ${(e as Error).message}`);
         }
         return;
       }

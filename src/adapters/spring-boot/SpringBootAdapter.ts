@@ -9,6 +9,7 @@ import { suggestClasspath } from './suggestClasspath';
 import { detectBuildTools } from './detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from './findBuildRoot';
 import { findSpringProfiles } from './findProfiles';
+import { detectSpringBootPort, safeDetect } from '../../services/detectProjectPort';
 import { resolveProjectUri } from '../../utils/paths';
 import { log } from '../../utils/logger';
 
@@ -163,6 +164,18 @@ export class SpringBootAdapter implements RuntimeAdapter {
       log.debug(`Spring Boot probe: profiles=${profiles.length}`);
       emit({ contextPatch: { profiles }, resolved: ['typeOptions.profiles'] });
     })().catch(e => log.warn(`Spring Boot probe (profiles) failed: ${(e as Error).message}`));
+
+    // Port detection: read application-<profile>.{properties,yml} for
+    // server.port. Cheap file read, safe to run in parallel with everything
+    // else. Skipped if nothing matches — the port field stays empty rather
+    // than being filled with a guess.
+    (async () => {
+      const port = await safeDetect('spring-boot:port', () => detectSpringBootPort(folder, undefined));
+      if (port) {
+        log.debug(`Spring Boot probe: port=${port}`);
+        emit({ contextPatch: {}, defaultsPatch: { port } as any, resolved: ['port'] });
+      }
+    })().catch(e => log.warn(`Spring Boot probe (port) failed: ${(e as Error).message}`));
 
     // Main classes: file-system walk with regex, can take several seconds.
     (async () => {

@@ -17,17 +17,30 @@ export interface PortEntry {
 //   Windows → netstat -ano + tasklist for PID→name mapping
 export async function scanPorts(): Promise<PortEntry[]> {
   const platform = os.platform();
-  if (platform === 'win32') return scanWindows();
-  if (platform === 'darwin') return scanMacOs();
-  return scanLinux();
+  const started = Date.now();
+  log.debug(`Port scan: starting on ${platform}`);
+  let rows: PortEntry[];
+  if (platform === 'win32') rows = await scanWindows();
+  else if (platform === 'darwin') rows = await scanMacOs();
+  else rows = await scanLinux();
+  log.info(`Port scan: ${rows.length} listening port(s) on ${platform} in ${Date.now() - started}ms`);
+  return rows;
 }
 
 export async function killProcess(pid: number): Promise<void> {
-  if (os.platform() === 'win32') {
-    await run('taskkill', ['/F', '/PID', String(pid)]);
-    return;
+  const platform = os.platform();
+  log.info(`Kill process: PID=${pid} (platform=${platform})`);
+  try {
+    if (platform === 'win32') {
+      await run('taskkill', ['/F', '/PID', String(pid)]);
+    } else {
+      process.kill(pid, 'SIGTERM');
+    }
+    log.debug(`Kill process: PID=${pid} signal sent successfully`);
+  } catch (e) {
+    log.warn(`Kill process failed for PID=${pid}: ${(e as Error).message}`);
+    throw e;
   }
-  process.kill(pid, 'SIGTERM');
 }
 
 // =========================================================================
@@ -36,13 +49,17 @@ export async function killProcess(pid: number): Promise<void> {
 
 async function scanLinux(): Promise<PortEntry[]> {
   try {
-    return await parseFromSs();
+    const rows = await parseFromSs();
+    log.debug(`Port scan (linux/ss): parsed ${rows.length} entries`);
+    return rows;
   } catch (e) {
-    log.debug(`ss failed (${(e as Error).message}), trying netstat`);
+    log.debug(`Port scan: ss failed (${(e as Error).message}), falling back to netstat`);
     try {
-      return await parseFromLinuxNetstat();
+      const rows = await parseFromLinuxNetstat();
+      log.debug(`Port scan (linux/netstat): parsed ${rows.length} entries`);
+      return rows;
     } catch (e2) {
-      log.warn(`Linux port scan failed: ${(e2 as Error).message}`);
+      log.warn(`Port scan: both ss and netstat failed on Linux — ${(e2 as Error).message}`);
       return [];
     }
   }
@@ -91,9 +108,11 @@ async function parseFromLinuxNetstat(): Promise<PortEntry[]> {
 
 async function scanMacOs(): Promise<PortEntry[]> {
   try {
-    return await parseFromLsof();
+    const rows = await parseFromLsof();
+    log.debug(`Port scan (macOS/lsof): parsed ${rows.length} entries`);
+    return rows;
   } catch (e) {
-    log.warn(`macOS port scan failed: ${(e as Error).message}`);
+    log.warn(`Port scan: lsof failed on macOS — ${(e as Error).message}`);
     return [];
   }
 }
@@ -133,9 +152,11 @@ async function parseFromLsof(): Promise<PortEntry[]> {
 
 async function scanWindows(): Promise<PortEntry[]> {
   try {
-    return await parseFromWindowsNetstat();
+    const rows = await parseFromWindowsNetstat();
+    log.debug(`Port scan (windows/netstat): parsed ${rows.length} entries`);
+    return rows;
   } catch (e) {
-    log.warn(`Windows port scan failed: ${(e as Error).message}`);
+    log.warn(`Port scan: netstat failed on Windows — ${(e as Error).message}`);
     return [];
   }
 }
@@ -158,6 +179,7 @@ async function parseFromWindowsNetstat(): Promise<PortEntry[]> {
     if (pid > 0) pids.add(pid);
   }
   // Map PIDs → names via tasklist. Single call, cheaper than per-PID lookup.
+  log.debug(`Port scan (windows): resolving ${pids.size} unique PID(s) via tasklist`);
   const nameMap = await buildPidNameMap(pids);
   return entries.map(e => ({
     ...e,
@@ -188,8 +210,9 @@ async function buildPidNameMap(pids: Set<number>): Promise<Map<number, string>> 
       const pid = parseInt(match[2], 10);
       if (pids.has(pid)) map.set(pid, match[1]);
     }
-  } catch {
-    // tasklist not available — names stay empty.
+    log.debug(`Port scan (windows): resolved ${map.size}/${pids.size} PID(s) to names`);
+  } catch (e) {
+    log.debug(`Port scan (windows): tasklist failed — ${(e as Error).message}; process names will be empty`);
   }
   return map;
 }
@@ -223,25 +246,25 @@ export function inferConfigPorts(cfg: RunConfig): number[] {
   return [...new Set([...explicit, ...defaultPorts])];
 }
 
-// Separates ports the user actually declared (explicit `port` field,
-// scanned programArgs / vmArgs / env, or type-specific fields like
-// tomcat.httpPort / debugPort) from framework-default guesses (8080 for
-// Spring Boot, 3000 for npm, …). The port viewer uses this split to decide
-// whether to nudge the user into setting the `port` field — if NO config
-// contributed an explicit port, the "Configuration Ports" group is
-// populated by defaults only, which is unreliable, and we should say so.
+// Collects ports the user actually declared — explicit `port` field,
+// tomcat.httpPort / debugPort / spring-boot debugPort from the form, plus
+// literal port values scanned out of programArgs / vmArgs / env. We
+// deliberately DO NOT fall back to framework defaults (8080 / 3000 / …) —
+// users rename ports all the time and a wrong guess would colour unrelated
+// processes as "belonging to your config" in the port viewer. `defaultPorts`
+// is kept in the return type for API shape compatibility but is always
+// empty now; the viewer keys its "set the port field" hint off an empty
+// `explicit` list.
 export function inferConfigPortsDetailed(cfg: RunConfig): {
   explicit: number[];
   defaultPorts: number[];
 } {
   const explicit: number[] = [];
-  const defaultPorts: number[] = [];
   if (typeof cfg.port === 'number' && cfg.port > 0) explicit.push(cfg.port);
 
   if (cfg.type === 'npm') {
     const found = scanForPort(cfg.programArgs, '--port');
     if (found) explicit.push(found);
-    if (explicit.length === 0) defaultPorts.push(3000);
   } else if (cfg.type === 'spring-boot') {
     const from = scanForPort(cfg.programArgs, '--server.port')
       ?? scanForPort(cfg.vmArgs, '-Dserver.port')
@@ -252,10 +275,8 @@ export function inferConfigPortsDetailed(cfg: RunConfig): {
       const debugPort = cfg.typeOptions.debugPort;
       if (typeof debugPort === 'number' && debugPort > 0) explicit.push(debugPort);
     }
-    if (explicit.length === 0) defaultPorts.push(8080);
   } else if (cfg.type === 'tomcat') {
-    // Tomcat httpPort is always a user-configured field (it lives on the
-    // form with a sensible default), so treat it as explicit.
+    // Tomcat httpPort is always a user-configured field, so treat it as explicit.
     explicit.push(cfg.typeOptions.httpPort);
     if (cfg.typeOptions.debugPort) explicit.push(cfg.typeOptions.debugPort);
   } else if (cfg.type === 'quarkus') {
@@ -263,14 +284,12 @@ export function inferConfigPortsDetailed(cfg: RunConfig): {
       ?? scanForPort(cfg.vmArgs, '-Dquarkus.http.port');
     if (from) explicit.push(from);
     if (cfg.typeOptions.debugPort) explicit.push(cfg.typeOptions.debugPort);
-    if (explicit.length === 0) defaultPorts.push(8080);
   } else if (cfg.type === 'java') {
     if (cfg.typeOptions.debugPort) explicit.push(cfg.typeOptions.debugPort);
-    if (explicit.length === 0) defaultPorts.push(8080);
   }
   return {
     explicit: [...new Set(explicit)],
-    defaultPorts: [...new Set(defaultPorts)],
+    defaultPorts: [],
   };
 }
 
