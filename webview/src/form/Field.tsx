@@ -120,6 +120,29 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
           ✖ {errorMessage}
         </div>
       )}
+      {/* Non-blocking advisory warning. Differs from errorMessage (red,
+          save-blocking) — this renders yellow and is informational only.
+          Adapter-driven: e.g. "DevTools not on the classpath" under
+          Rebuild on save. Suppressed when an error is already shown on
+          the same field to avoid piling on.
+          Also respects `warningDependsOn` — the adapter can defer the
+          warning until the feature it's advising about is actually on
+          (e.g. don't mention DevTools until the user ticks the box). */}
+      {!errorMessage && field.warning && warningDependencyMatches(field, values) && (
+        <div
+          style={{
+            marginTop: 4,
+            padding: '4px 8px',
+            borderRadius: 2,
+            color: 'var(--vscode-inputValidation-warningForeground, inherit)',
+            background: 'var(--vscode-inputValidation-warningBackground, rgba(200,150,0,0.1))',
+            border: '1px solid var(--vscode-inputValidation-warningBorder, rgba(200,150,0,0.4))',
+            fontSize: '0.9em',
+          }}
+        >
+          ⚠ {field.warning}
+        </div>
+      )}
       {action && (
         <div style={{ marginTop: 4 }}>
           <button
@@ -142,6 +165,20 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
       )}
     </div>
   );
+}
+
+// `field.warning` alone would always render. `warningDependsOn` gates it:
+// only show the warning when the value at another field matches. Lets the
+// Spring Boot adapter defer the DevTools-missing hint until the user
+// actually enables Rebuild on save — a silent default-off checkbox has no
+// business flashing a yellow banner at load time.
+function warningDependencyMatches(field: FormField, values: Record<string, unknown>): boolean {
+  const wd = field.warningDependsOn;
+  if (!wd) return true;
+  const dep = getPath(values, wd.key);
+  const equals = wd.equals;
+  if (Array.isArray(equals)) return equals.includes(dep as string);
+  return dep === equals;
 }
 
 interface RenderHandlers {

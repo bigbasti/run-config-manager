@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "publisher": "SebastianGross",
   "license": "MIT",
   "repository": {
@@ -445,12 +445,12 @@
         },
         {
           "command": "runConfig.addToGroup",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm))?$/",
+          "when": "view == runConfigurations && viewItem =~ /^(config(Idle|Running)(NoDebug)?(:(maven|gradle|npm))?|docker(Idle|Running))$/",
           "group": "4_group@1"
         },
         {
           "command": "runConfig.removeFromGroup",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm))?:grouped$/",
+          "when": "view == runConfigurations && viewItem =~ /^(config(Idle|Running)(NoDebug)?(:(maven|gradle|npm))?|docker(Idle|Running)):grouped$/",
           "group": "4_group@1"
         },
         {
@@ -480,32 +480,32 @@
         },
         {
           "command": "runConfig.run",
-          "when": "view == runConfigurations && viewItem == dockerIdle",
+          "when": "view == runConfigurations && viewItem =~ /^dockerIdle(:grouped)?$/",
           "group": "inline@1"
         },
         {
           "command": "runConfig.stop",
-          "when": "view == runConfigurations && viewItem == dockerRunning",
+          "when": "view == runConfigurations && viewItem =~ /^dockerRunning(:grouped)?$/",
           "group": "inline@1"
         },
         {
           "command": "runConfig.viewDockerLogs",
-          "when": "view == runConfigurations && viewItem =~ /^docker(Idle|Running)$/",
+          "when": "view == runConfigurations && viewItem =~ /^docker(Idle|Running)(:grouped)?$/",
           "group": "inline@2"
         },
         {
           "command": "runConfig.edit",
-          "when": "view == runConfigurations && viewItem =~ /^docker(Idle|Running)$/",
+          "when": "view == runConfigurations && viewItem =~ /^docker(Idle|Running)(:grouped)?$/",
           "group": "inline@3"
         },
         {
           "command": "runConfig.clone",
-          "when": "view == runConfigurations && viewItem =~ /^docker(Idle|Running)$/",
+          "when": "view == runConfigurations && viewItem =~ /^docker(Idle|Running)(:grouped)?$/",
           "group": "inline@4"
         },
         {
           "command": "runConfig.delete",
-          "when": "view == runConfigurations && viewItem =~ /^docker(Idle|Running)$/",
+          "when": "view == runConfigurations && viewItem =~ /^docker(Idle|Running)(:grouped)?$/",
           "group": "inline@5"
         },
         {

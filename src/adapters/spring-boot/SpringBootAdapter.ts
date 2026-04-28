@@ -10,6 +10,7 @@ import { detectBuildTools } from './detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from './findBuildRoot';
 import { findSpringProfiles } from './findProfiles';
 import { detectSpringBootPort, safeDetect } from '../../services/detectProjectPort';
+import { hasSpringBootDevTools } from './detectDevTools';
 import { resolveProjectUri } from '../../utils/paths';
 import { log } from '../../utils/logger';
 
@@ -49,7 +50,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
       return null;
     }
 
-    const [mainClasses, gradleCommand, jdks, classpath, buildTools, gradleRoot, mavenRoot, profiles] =
+    const [mainClasses, gradleCommand, jdks, classpath, buildTools, gradleRoot, mavenRoot, profiles, devToolsInProject] =
       await Promise.all([
         findMainClasses(folder),
         detectGradleCommand(folder),
@@ -59,7 +60,16 @@ export class SpringBootAdapter implements RuntimeAdapter {
         info.buildTool === 'gradle' ? findGradleRoot(folder) : Promise.resolve(folder),
         info.buildTool === 'maven' ? findMavenRoot(folder) : Promise.resolve(folder),
         findSpringProfiles(folder),
+        hasSpringBootDevTools(folder),
       ]);
+    // Also check the build root — multi-module projects often declare
+    // devtools once at the reactor level rather than per module.
+    const devToolsInRoot = info.buildTool === 'gradle'
+      ? await hasSpringBootDevTools(gradleRoot)
+      : info.buildTool === 'maven'
+      ? await hasSpringBootDevTools(mavenRoot)
+      : false;
+    const hasDevTools = devToolsInProject || devToolsInRoot;
 
     // If the user selected a sub-module, the build root might be a parent dir.
     // Store it so recompute / run can cd to the right place.
@@ -101,6 +111,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
         mavenInstalls: buildTools.mavenInstalls,
         buildRoot,
         profiles,
+        hasDevTools,
       },
     };
   }
@@ -177,6 +188,30 @@ export class SpringBootAdapter implements RuntimeAdapter {
       }
     })().catch(e => log.warn(`Spring Boot probe (port) failed: ${(e as Error).message}`));
 
+    // DevTools presence — drives the warning shown under the "Rebuild on
+    // save" checkbox. If DevTools isn't on the classpath, rebuildOnSave
+    // won't actually hot-reload regardless of whether Gradle keeps
+    // compiling. Check both the chosen folder (per-module declaration)
+    // and its build root (reactor-level declaration) — multi-module
+    // projects often put devtools in the root build.gradle.
+    (async () => {
+      const inProject = await hasSpringBootDevTools(folder);
+      if (inProject) {
+        log.debug('Spring Boot probe: devtools found in project');
+        emit({ contextPatch: { hasDevTools: true } });
+        return;
+      }
+      // Fall back to the build-root probe. Only fires for gradle buildTool
+      // where we can determine the root cheaply; for maven the same walk
+      // would require the full findMavenRoot pass which is more expensive —
+      // we accept the false positive (warning shown for a multi-module
+      // Maven project that declares devtools only at the reactor root).
+      const gradleRoot = info.buildTool === 'gradle' ? await findGradleRoot(folder) : null;
+      const inRoot = gradleRoot ? await hasSpringBootDevTools(gradleRoot) : false;
+      log.debug(`Spring Boot probe: devtools project=false, root=${inRoot}`);
+      emit({ contextPatch: { hasDevTools: inRoot } });
+    })().catch(e => log.warn(`Spring Boot probe (devtools) failed: ${(e as Error).message}`));
+
     // Main classes: file-system walk with regex, can take several seconds.
     (async () => {
       const mainClasses = await findMainClasses(folder);
@@ -248,6 +283,12 @@ export class SpringBootAdapter implements RuntimeAdapter {
     const mavenInstallOptions = mavenInstalls.map(p => ({ value: p, label: p }));
     const detectedProfiles = (context.profiles as string[] | undefined) ?? [];
     const profileOptions = detectedProfiles.map(p => ({ value: p, label: p }));
+    // hasDevTools is tri-state:
+    //   true  — found the dependency in build.gradle / pom.xml
+    //   false — probed and didn't find it (warn the user)
+    //   undefined — probe hasn't run yet (no warning — prevents a
+    //               flash of yellow while streaming detect catches up)
+    const hasDevTools = context.hasDevTools as boolean | undefined;
 
     return {
       common: [
@@ -407,10 +448,36 @@ export class SpringBootAdapter implements RuntimeAdapter {
           key: 'typeOptions.rebuildOnSave',
           label: 'Rebuild on save (hot reload)',
           help:
-            'When enabled, starting this config also runs `./gradlew -t :<module>:classes` in the background so edits recompile automatically. ' +
-            'For hot reload to take effect the app must have `spring-boot-devtools` on its classpath — DevTools watches build/classes/java/main ' +
-            'and triggers a fast warm-restart of the Spring context. ' +
-            'Requires Gradle (Maven mode has no built-in watch task). Uses the Gradle command / installation you selected above.',
+            'Launches a second Gradle task in continuous mode alongside the app: ' +
+            '`./gradlew -t :<module>:classes :<module>:processResources`. Edits to ' +
+            'Java sources and resource files (application*.properties, templates, ' +
+            'static/) trigger a recompile → DevTools picks up the classpath change ' +
+            'and warm-restarts the Spring context.\n\n' +
+            'REQUIREMENTS (all three must hold for hot reload to actually fire):\n' +
+            '1) `org.springframework.boot:spring-boot-devtools` on the classpath. ' +
+            'Best declared as `developmentOnly` in build.gradle so it\'s excluded from production artifacts.\n' +
+            '2) bootRun must fork a separate JVM (the Spring Boot plugin\'s default) ' +
+            'so DevTools can restart the app without bringing down Gradle.\n' +
+            '3) For multi-module projects: edits to SIBLING modules the app depends on ' +
+            'won\'t be picked up by `:<module>:classes` alone. If you need cross-module ' +
+            'hot-reload, replace this shortcut with a manually-authored Gradle Task config ' +
+            'that runs `-t build -x test -x check` from the build root.\n\n' +
+            'If hot reload isn\'t working, open the "(watch)" terminal and verify Gradle ' +
+            'is actually rebuilding on your save — if it is but the app doesn\'t reload, ' +
+            'the issue is DevTools on the classpath, not the watcher.\n\n' +
+            'Requires Gradle — Maven mode has no built-in watch task.',
+          // Warn only when we've definitely probed and didn't find DevTools
+          // (hasDevTools === false). The undefined case means detection
+          // is still in flight — stay quiet until we know.
+          warning: hasDevTools === false
+            ? 'spring-boot-devtools not found in build.gradle / pom.xml — hot reload will NOT work. '
+              + 'Add `developmentOnly "org.springframework.boot:spring-boot-devtools"` (Gradle) or the '
+              + '<dependency> block (Maven) to enable it. The watcher will still rebuild on save, but the running app won\'t pick up the changes.'
+            : undefined,
+          // Gate the warning on the checkbox being ticked — a user who
+          // never enables Rebuild on save doesn't need the DevTools hint
+          // pushed at them. It only matters when they actually opt in.
+          warningDependsOn: { key: 'typeOptions.rebuildOnSave', equals: true },
           dependsOn: { key: 'typeOptions.launchMode', equals: ['gradle', 'java-main'] },
         },
         {

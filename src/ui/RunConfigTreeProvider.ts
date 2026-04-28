@@ -313,18 +313,23 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     // the one exception — the warning icon is more informative than the
     // brand icon when the saved id no longer exists on this machine.
     const folder = this.store.getFolder(n.folderKey);
+    // `:grouped` suffix mirrors the config-row logic so the Add/Remove-to-
+    // Group menu entries toggle correctly for docker configs too. Menu
+    // `when` clauses in package.json accept both `dockerIdle` and
+    // `dockerIdle:grouped` via an optional-tail regex.
+    const groupSuffix = n.config.group ? ':grouped' : '';
     if (running) {
       item.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
       item.description = summary?.image ?? 'running';
-      item.contextValue = 'dockerRunning';
+      item.contextValue = `dockerRunning${groupSuffix}`;
     } else if (!summary && to.containerId) {
       item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
       item.description = 'not found';
-      item.contextValue = 'dockerIdle';
+      item.contextValue = `dockerIdle${groupSuffix}`;
     } else {
       item.iconPath = iconForConfig(n.config, folder, this.extensionUri);
       item.description = summary?.status || (summary?.state ?? 'stopped');
-      item.contextValue = 'dockerIdle';
+      item.contextValue = `dockerIdle${groupSuffix}`;
     }
 
     // Single click → open the log tail. Edit is available via the inline

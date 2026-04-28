@@ -387,8 +387,9 @@ function shouldStartWatcher(cfg: RunConfig): boolean {
   const to = cfg.typeOptions;
   if (!to.rebuildOnSave) return false;
   // Gradle is required for the watcher (no equivalent in Maven without extra
-  // plugins). gradle launchMode runs bootRun's own reload; we still start the
-  // watcher for devtools coverage of resources.
+  // plugins). Applies to gradle launchMode (bootRun inherits the classpath
+  // directories Gradle rebuilds) and java-main (classpath also points at
+  // build/classes/java/main directly).
   return to.launchMode === 'gradle' || to.launchMode === 'java-main';
 }
 
@@ -400,7 +401,20 @@ async function startRebuildWatcher(
   const buildRoot = to.buildRoot || resolveProjectUri(folder, cfg.projectPath).fsPath;
   const projectPath = resolveProjectUri(folder, cfg.projectPath).fsPath;
   const modulePrefix = gradleModulePrefix(buildRoot, projectPath);
-  const task = modulePrefix ? `${modulePrefix}:classes` : 'classes';
+  // Run BOTH `classes` and `processResources` under -t. Reasons:
+  //   1. `classes` alone misses resource files (application.properties,
+  //      templates, static assets) — DevTools then never sees those
+  //      changes because Gradle never re-copies them to
+  //      build/resources/main.
+  //   2. In multi-module projects, adding `:mod:classes` only recompiles
+  //      THIS module; when the app depends on sibling modules the user
+  //      may need to broaden further. Point that out in the help text,
+  //      but keep the default narrow to avoid slow rebuilds.
+  //
+  // Gradle accepts multiple tasks in a single -t invocation — it runs them
+  // both in continuous mode and re-runs whichever one has dirty inputs.
+  const classesTask = modulePrefix ? `${modulePrefix}:classes` : 'classes';
+  const resourcesTask = modulePrefix ? `${modulePrefix}:processResources` : 'processResources';
 
   const gradleBinary =
     to.gradleCommand === './gradlew'
@@ -409,7 +423,12 @@ async function startRebuildWatcher(
       ? `${to.gradlePath.replace(/[/\\]$/, '')}/bin/gradle`
       : 'gradle';
 
-  const shell = new vscode.ShellExecution(gradleBinary, ['-t', '--console=plain', task], {
+  // `-t` = --continuous; Gradle re-runs the named tasks whenever their
+  // inputs change. --console=plain keeps the watcher's output readable
+  // in the integrated terminal (no progress bars competing with the
+  // app's stdout in the adjacent terminal).
+  const args = ['-t', '--console=plain', classesTask, resourcesTask];
+  const shell = new vscode.ShellExecution(gradleBinary, args, {
     cwd: buildRoot,
     env: to.jdkPath ? { JAVA_HOME: to.jdkPath } : undefined,
   });
@@ -422,6 +441,6 @@ async function startRebuildWatcher(
     shell,
     [],
   );
-  log.info(`Started rebuild watcher: ${gradleBinary} -t ${task} (cwd ${buildRoot})`);
+  log.info(`Started rebuild watcher: ${gradleBinary} ${args.join(' ')} (cwd ${buildRoot})`);
   return vscode.tasks.executeTask(vsTask);
 }
