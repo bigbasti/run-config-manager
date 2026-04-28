@@ -11,6 +11,7 @@ import { findGradleRoot, findMavenRoot, gradleModulePrefix } from './findBuildRo
 import { findSpringProfiles } from './findProfiles';
 import { detectSpringBootPort, safeDetect } from '../../services/detectProjectPort';
 import { hasSpringBootDevTools } from './detectDevTools';
+import { hasCustomLogback } from './detectCustomLogback';
 import { resolveProjectUri } from '../../utils/paths';
 import { log } from '../../utils/logger';
 
@@ -70,6 +71,10 @@ export class SpringBootAdapter implements RuntimeAdapter {
       ? await hasSpringBootDevTools(mavenRoot)
       : false;
     const hasDevTools = devToolsInProject || devToolsInRoot;
+    // Custom logging config in the chosen module — overrides our
+    // colorOutput injection. Only probe the module itself; logback files
+    // aren't typically declared at the reactor level.
+    const hasCustomLoggingConfig = await hasCustomLogback(folder);
 
     // If the user selected a sub-module, the build root might be a parent dir.
     // Store it so recompute / run can cd to the right place.
@@ -112,6 +117,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
         buildRoot,
         profiles,
         hasDevTools,
+        hasCustomLogback: hasCustomLoggingConfig,
       },
     };
   }
@@ -212,6 +218,16 @@ export class SpringBootAdapter implements RuntimeAdapter {
       emit({ contextPatch: { hasDevTools: inRoot } });
     })().catch(e => log.warn(`Spring Boot probe (devtools) failed: ${(e as Error).message}`));
 
+    // Custom Logback / Log4j2 config — if present, our colorOutput
+    // injection (-Dlogging.pattern.console=…) is overridden by the
+    // project's own pattern declaration. The warning on the colorOutput
+    // checkbox keys on this flag.
+    (async () => {
+      const customLogback = await hasCustomLogback(folder);
+      log.debug(`Spring Boot probe: custom logback/log4j2 config present=${customLogback}`);
+      emit({ contextPatch: { hasCustomLogback: customLogback } });
+    })().catch(e => log.warn(`Spring Boot probe (logback) failed: ${(e as Error).message}`));
+
     // Main classes: file-system walk with regex, can take several seconds.
     (async () => {
       const mainClasses = await findMainClasses(folder);
@@ -289,6 +305,9 @@ export class SpringBootAdapter implements RuntimeAdapter {
     //   undefined — probe hasn't run yet (no warning — prevents a
     //               flash of yellow while streaming detect catches up)
     const hasDevTools = context.hasDevTools as boolean | undefined;
+    // Tri-state like hasDevTools. Only triggers the colorOutput warning
+    // when definitely true; undefined (probe pending) stays quiet.
+    const hasCustomLogbackCfg = context.hasCustomLogback as boolean | undefined;
 
     return {
       common: [
@@ -487,7 +506,18 @@ export class SpringBootAdapter implements RuntimeAdapter {
           help:
             'Forces ANSI colors in the terminal by setting spring.output.ansi.enabled=ALWAYS plus ' +
             'FORCE_COLOR=1 / CLICOLOR_FORCE=1 env vars. Libraries that auto-detect TTY will stop ' +
-            'stripping color codes.',
+            'stripping color codes. Also injects -Dlogging.pattern.console=… via JAVA_TOOL_OPTIONS ' +
+            'so Spring Boot\'s default Logback console appender emits %clr(…) ANSI wrappers.',
+          warning: hasCustomLogbackCfg === true
+            ? 'A custom logback / log4j2 config was found in src/main/resources with its own '
+              + '<pattern>. Our colored-output pattern is injected via -Dlogging.pattern.console, '
+              + 'which the project\'s file overrides. The FORCE_COLOR env vars are still set (so '
+              + 'libraries like Spring Boot banner / child processes still colour their output), '
+              + 'but the main log line format comes from your logback file. Either reference '
+              + '${LOG_PATTERN} in your custom pattern, or delete the custom logback file to '
+              + 'fall back to Spring Boot\'s default.'
+            : undefined,
+          warningDependsOn: { key: 'typeOptions.colorOutput', equals: true },
         },
       ],
       advanced: [

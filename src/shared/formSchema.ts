@@ -24,13 +24,17 @@ type BaseFieldMeta = {
   // carries advisory text like "DevTools not found in build.gradle". The
   // adapter sets it during getFormSchema based on context probes.
   warning?: string;
-  // When set, the warning is suppressed unless the value at `key` matches
-  // `equals`. Lets the adapter defer the warning until the feature it's
-  // advising about is actually turned on — e.g. the DevTools-missing
-  // warning on Rebuild on save only appears once the user ticks the box,
-  // not on every form open. Same shape as `dependsOn` except with an
-  // added boolean so it can gate on checkbox state.
-  warningDependsOn?: { key: string; equals: string | string[] | boolean };
+  // Gates when the warning renders. Two forms:
+  //   - Single condition (same shape as `dependsOn` plus boolean support):
+  //         { key: 'foo', equals: true }
+  //   - AND-of-many — every entry must match before the warning shows:
+  //         { all: [{ key: 'foo', equals: true }, { key: 'bar', equals: 'war' }] }
+  // Used by Tomcat's reloadable-vs-war cross-field check where neither
+  // condition alone is problematic — only the combination of
+  // reloadable=true AND artifactKind='war' is worth flagging.
+  warningDependsOn?:
+    | { key: string; equals: string | string[] | boolean }
+    | { all: Array<{ key: string; equals: string | string[] | boolean }> };
 };
 
 export type FormField =

@@ -172,11 +172,23 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
 // Spring Boot adapter defer the DevTools-missing hint until the user
 // actually enables Rebuild on save — a silent default-off checkbox has no
 // business flashing a yellow banner at load time.
+//
+// Two shapes supported — single key/equals, or an `all:` list that
+// requires every condition to match (AND). Used for cross-field warnings
+// like Tomcat's reloadable+war trap.
 function warningDependencyMatches(field: FormField, values: Record<string, unknown>): boolean {
   const wd = field.warningDependsOn;
   if (!wd) return true;
-  const dep = getPath(values, wd.key);
-  const equals = wd.equals;
+  if ('all' in wd) return wd.all.every(c => singleConditionMatches(c, values));
+  return singleConditionMatches(wd, values);
+}
+
+function singleConditionMatches(
+  cond: { key: string; equals: string | string[] | boolean },
+  values: Record<string, unknown>,
+): boolean {
+  const dep = getPath(values, cond.key);
+  const equals = cond.equals;
   if (Array.isArray(equals)) return equals.includes(dep as string);
   return dep === equals;
 }

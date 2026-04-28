@@ -136,12 +136,11 @@ export class NpmAdapter implements RuntimeAdapter {
           examples: ['--port 5000', '--open --host 0.0.0.0', '--config=${workspaceFolder}/cfg'],
           inspectable: true,
         },
-        {
-          kind: 'text',
-          key: 'vmArgs',
-          label: 'VM args (unused for npm)',
-          help: 'Reserved for future runtime types (e.g., Java -Xmx flags). Ignored for npm configurations.',
-        },
+        // vmArgs used to be rendered here with a "(unused for npm)" label —
+        // removed because an input that can never take effect just wastes
+        // screen space. The underlying field still exists on RunConfigBase
+        // for schema compatibility with Java/Spring Boot configs; npm
+        // configs simply leave it blank.
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
       ],
     };

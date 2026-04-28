@@ -404,6 +404,10 @@ export class JavaAdapter implements RuntimeAdapter {
           help: 'Passed to the Java app. ' + VAR_SYNTAX_HINT,
           examples: ['--config=app.yml', '-v -n 100'],
           inspectable: true,
+          // programArgs are IGNORED in maven-custom / gradle-custom — those
+          // modes use the `customArgs` field instead. Hiding the field here
+          // prevents users from typing into a slot that won't take effect.
+          dependsOn: { key: 'typeOptions.launchMode', equals: ['maven', 'gradle', 'java-main'] },
         },
         {
           kind: 'text',
@@ -411,12 +415,17 @@ export class JavaAdapter implements RuntimeAdapter {
           label: 'VM args',
           placeholder: '-Xmx1g',
           help:
-            'JVM flags. Applied directly in java-main mode. ' +
-            'IGNORED in Maven (`exec:java` runs in the Maven JVM) and in Gradle (the `run` task reads JVM args from `applicationDefaultJvmArgs` in build.gradle, not the CLI). ' +
-            'Use java-main mode for full VM-arg control. ' +
+            'JVM flags applied directly to the `java` command line. ' +
             VAR_SYNTAX_HINT,
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC', '-Dapp.home=${workspaceFolder}'],
           inspectable: true,
+          // vmArgs are ONLY honored in java-main mode. Maven's exec:java
+          // runs inside the Maven JVM itself; Gradle's `run` task reads
+          // JVM args from `applicationDefaultJvmArgs` in build.gradle, not
+          // the CLI. The -custom modes drive the tool directly from
+          // `customArgs`. Hide the field everywhere else so the input
+          // simply isn't available when it wouldn't do anything.
+          dependsOn: { key: 'typeOptions.launchMode', equals: 'java-main' },
         },
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
       ],

@@ -9,6 +9,8 @@ import { prepareTomcatLaunch, catalinaExecutable } from './tomcatRuntime';
 import { resolveProjectUri } from '../../utils/paths';
 import { findGradleRoot } from '../spring-boot/findBuildRoot';
 import { findSpringProfiles } from '../spring-boot/findProfiles';
+import { hasSpringBootDevTools } from '../spring-boot/detectDevTools';
+import { hasCustomLogback } from '../spring-boot/detectCustomLogback';
 import { dependsOnField } from '../sharedFields';
 import type { PrepareContext, PrepareResult } from '../RuntimeAdapter';
 import { log } from '../../utils/logger';
@@ -31,13 +33,15 @@ export class TomcatAdapter implements RuntimeAdapter {
     // Tomcat has no auto-detect from project files alone — any web project
     // could be deployed. We consider any folder a valid Tomcat target and
     // defer the "is this project buildable?" decision to the user.
-    const [tomcatInstalls, jdks, buildTools, artifacts, gradleRoot, profiles] = await Promise.all([
+    const [tomcatInstalls, jdks, buildTools, artifacts, gradleRoot, profiles, devTools, customLogback] = await Promise.all([
       detectTomcatInstalls(),
       detectJdks(),
       detectBuildTools(),
       findTomcatArtifacts(folder),
       findGradleRoot(folder),
       findSpringProfiles(folder),
+      hasSpringBootDevTools(folder),
+      hasCustomLogback(folder),
     ]);
     log.info(
       `Tomcat detect: tomcatInstalls=${tomcatInstalls.length}, jdks=${jdks.length}, ` +
@@ -79,6 +83,8 @@ export class TomcatAdapter implements RuntimeAdapter {
         artifacts,
         buildRoot: gradleRoot.fsPath,
         profiles,
+        hasDevTools: devTools,
+        hasCustomLogback: customLogback,
       },
     };
   }
@@ -187,6 +193,24 @@ export class TomcatAdapter implements RuntimeAdapter {
       log.debug(`Tomcat probe: springProfiles=${profiles.length}`);
       emit({ contextPatch: { profiles }, resolved: ['typeOptions.profiles'] });
     })().catch(e => log.warn(`Tomcat probe (profiles) failed: ${(e as Error).message}`));
+
+    // DevTools presence — same rationale as Spring Boot. Tomcat's
+    // rebuildOnSave is a gradle-only watcher that only yields a hot
+    // reload when DevTools is on the deployed webapp's classpath.
+    (async () => {
+      const devTools = await hasSpringBootDevTools(folder);
+      log.debug(`Tomcat probe: devtools=${devTools}`);
+      emit({ contextPatch: { hasDevTools: devTools } });
+    })().catch(e => log.warn(`Tomcat probe (devtools) failed: ${(e as Error).message}`));
+
+    // Custom Logback / Log4j2 — same rationale: overrides the
+    // -Dlogging.pattern.console we inject via CATALINA_OPTS when
+    // colorOutput is on.
+    (async () => {
+      const customLogback = await hasCustomLogback(folder);
+      log.debug(`Tomcat probe: customLogback=${customLogback}`);
+      emit({ contextPatch: { hasCustomLogback: customLogback } });
+    })().catch(e => log.warn(`Tomcat probe (logback) failed: ${(e as Error).message}`));
   }
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
@@ -197,6 +221,11 @@ export class TomcatAdapter implements RuntimeAdapter {
     const artifacts = (context.artifacts as Array<{ path: string; kind: string; label: string }> | undefined) ?? [];
     const detectedProfiles = (context.profiles as string[] | undefined) ?? [];
     const profileOptions = detectedProfiles.map(p => ({ value: p, label: p }));
+    // Tri-state: undefined while probing, true/false once resolved. We
+    // only fire the warning when definitively false to avoid flashing
+    // yellow while streaming detect catches up.
+    const hasDevTools = context.hasDevTools as boolean | undefined;
+    const hasCustomLogbackCfg = context.hasCustomLogback as boolean | undefined;
 
     return {
       common: [
@@ -401,6 +430,22 @@ export class TomcatAdapter implements RuntimeAdapter {
           help:
             'Sets <Context reloadable="true"/> so Tomcat reloads the webapp when WEB-INF/classes changes. ' +
             'Best paired with an exploded deployment and "Rebuild on save".',
+          // Reloadable only applies to exploded deployments — Tomcat watches
+          // WEB-INF/classes directories, and a packaged WAR's classes live
+          // inside the archive until it's re-exploded on the next (re)deploy.
+          // Warn when both flags disagree so the user knows why saves don't
+          // trigger reloads.
+          warning:
+            'Reloadable contexts only apply to exploded deployments — Tomcat watches ' +
+            'WEB-INF/classes as a directory, and a packaged WAR stays as an archive until ' +
+            'it\'s redeployed. Switch "Artifact kind" below to "Exploded directory", or ' +
+            'disable this checkbox.',
+          warningDependsOn: {
+            all: [
+              { key: 'typeOptions.reloadable', equals: true },
+              { key: 'typeOptions.artifactKind', equals: 'war' },
+            ],
+          },
         },
         {
           kind: 'boolean',
@@ -411,6 +456,16 @@ export class TomcatAdapter implements RuntimeAdapter {
             'Combined with "Reloadable context" this gives a fast iteration loop. ' +
             'Requires Gradle (Maven has no built-in watch task).',
           dependsOn: { key: 'typeOptions.buildTool', equals: 'gradle' },
+          // For Spring-Boot-on-Tomcat the Gradle watcher recompiles classes,
+          // but hot reload in the deployed webapp still comes from DevTools.
+          // Without DevTools on the webapp's classpath the rebuild just
+          // touches class files that Tomcat doesn't redeploy on its own
+          // (unless Reloadable is also true + artifact is exploded — but
+          // even then the reload is context-level, not DevTools-fast).
+          warning: hasDevTools === false
+            ? 'spring-boot-devtools not found in the deployed webapp\'s build file. Rebuilds will still run, but hot reload needs DevTools on the classpath. Add `developmentOnly "org.springframework.boot:spring-boot-devtools"` (Gradle) or the <dependency> block (Maven) to the webapp module. Without DevTools, you\'re relying on Tomcat\'s context-level reload — which requires Reloadable + an exploded artifact.'
+            : undefined,
+          warningDependsOn: { key: 'typeOptions.rebuildOnSave', equals: true },
         },
         {
           kind: 'boolean',
@@ -418,8 +473,13 @@ export class TomcatAdapter implements RuntimeAdapter {
           label: 'Colored log output',
           help:
             'Forces ANSI colors in the terminal by setting FORCE_COLOR=1 / CLICOLOR_FORCE=1 ' +
-            'and, for Spring Boot apps, spring.output.ansi.enabled=ALWAYS. Useful when your ' +
-            'app auto-detects TTY and otherwise strips color codes.',
+            'and, for Spring Boot apps, spring.output.ansi.enabled=ALWAYS. Also injects ' +
+            '-Dlogging.pattern.console=… via CATALINA_OPTS so Spring Boot\'s default Logback ' +
+            'console appender emits %clr(…) ANSI wrappers.',
+          warning: hasCustomLogbackCfg === true
+            ? 'A custom logback / log4j2 config was found in src/main/resources with its own <pattern>. Our colored-output pattern is injected via -Dlogging.pattern.console, which the project\'s file overrides. FORCE_COLOR still takes effect for child processes, but the main log line format comes from your logback file. Either reference ${LOG_PATTERN} in your custom pattern, or delete the custom logback file to fall back to Spring Boot\'s default.'
+            : undefined,
+          warningDependsOn: { key: 'typeOptions.colorOutput', equals: true },
         },
       ],
       advanced: [
