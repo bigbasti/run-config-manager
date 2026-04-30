@@ -5,6 +5,7 @@ import { getPath } from './state';
 import type { Inbound, Outbound } from '../../src/shared/protocol';
 import { ConfigForm } from './ConfigForm';
 import { HelpPanel } from './HelpPanel';
+import { BuildToolSettingsPanel, buildToolForConfig } from './BuildToolSettingsPanel';
 
 declare function acquireVsCodeApi(): { postMessage(msg: Outbound): void; getState<T>(): T; setState<T>(s: T): void };
 
@@ -79,6 +80,11 @@ export function App() {
   // and cleared on the next successful save or when the user edits the
   // offending field — see onChange wrapper below.
   const [fieldErrors, setFieldErrors] = useState<Map<string, string>>(new Map());
+  // Build-tool settings panel state. `settings` holds the most recent reply
+  // from the extension; `settingsLoading` indicates a fetch is in flight so
+  // we can show a brief "Reading…" placeholder on first render.
+  const [settings, setSettings] = useState<Extract<Inbound, { cmd: 'buildToolSettings' }> | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(false);
   // When non-null, a save is queued waiting for an async precondition (e.g.,
   // classpath recompute). We fire it after the precondition resolves.
   const pendingSaveRef = useRef<boolean>(false);
@@ -192,6 +198,9 @@ export function App() {
           }
           return next;
         });
+      } else if (msg.cmd === 'buildToolSettings') {
+        setSettings(msg);
+        setSettingsLoading(false);
       } else if (msg.cmd === 'error') {
         setError(msg.message);
         setBusyActionId(null);
@@ -237,6 +246,39 @@ export function App() {
     lastInspectedRef.current = id;
     post({ cmd: 'inspectContainer', containerId: id });
   }, [values]);
+
+  // Re-fetch the Maven/Gradle settings panel data whenever the effective
+  // build tool changes (the project path for Gradle, since a project-root
+  // gradle.properties may exist even without a user-home one), or the
+  // selected install path (Maven: $mavenPath/conf/settings.xml is the
+  // global fallback; Gradle: $gradlePath/gradle.properties is a lowest-
+  // precedence fallback). Clear any stale data the moment the panel is no
+  // longer applicable so we don't flash last-edit's Maven info when the
+  // user switches to a Gradle project.
+  const lastSettingsKeyRef = useRef<string>('');
+  useEffect(() => {
+    const buildTool = buildToolForConfig(values);
+    if (!buildTool) {
+      if (settings !== null) setSettings(null);
+      lastSettingsKeyRef.current = '';
+      return;
+    }
+    const projectPath = (values.projectPath as string | undefined) ?? '';
+    const to = (values.typeOptions as { mavenPath?: string; gradlePath?: string } | undefined) ?? {};
+    const mavenPath = buildTool === 'maven' ? (to.mavenPath ?? '') : '';
+    const gradlePath = buildTool === 'gradle' ? (to.gradlePath ?? '') : '';
+    const key = `${buildTool}::${projectPath}::${mavenPath}::${gradlePath}`;
+    if (lastSettingsKeyRef.current === key) return;
+    lastSettingsKeyRef.current = key;
+    setSettingsLoading(true);
+    post({
+      cmd: 'loadBuildToolSettings',
+      buildTool,
+      projectPath,
+      ...(mavenPath ? { mavenPath } : {}),
+      ...(gradlePath ? { gradlePath } : {}),
+    });
+  }, [values, settings]);
 
   // Spring Boot / Quarkus: re-run port detection whenever the profile(s) the
   // user selected change. The extension reads the matching
@@ -371,6 +413,18 @@ export function App() {
               {busyActionId === 'recomputeClasspath' && pendingSaveRef.current ? 'Saving…' : 'Save'}
             </button>
           </div>
+          {(() => {
+            const bt = buildToolForConfig(values);
+            if (!bt) return null;
+            return (
+              <BuildToolSettingsPanel
+                buildTool={bt}
+                data={settings && settings.buildTool === bt ? settings : null}
+                loading={settingsLoading}
+                onOpenFile={filePath => post({ cmd: 'openSettingsFile', filePath })}
+              />
+            );
+          })()}
         </div>
       </div>
     </>

@@ -14,6 +14,7 @@ import { discoverMavenGoals } from '../adapters/maven-goal/discoverMavenGoals';
 import { validateBuildProjectPath } from '../utils/validateBuildProjectPath';
 import { RunConfigSchema } from '../shared/schema';
 import type { DockerService } from '../services/DockerService';
+import { BuildToolSettingsService } from '../services/BuildToolSettingsService';
 
 interface OpenArgs {
   mode: 'create' | 'edit';
@@ -54,6 +55,9 @@ export class EditorPanel {
 
   private panel: vscode.WebviewPanel;
   private args: OpenArgs;
+  // Shared across loadBuildToolSettings calls. Stateless, but hang on to
+  // one instance to avoid allocating per message.
+  private readonly settingsSvc = new BuildToolSettingsService();
   // Cumulative detection context for the currently-open form. Starts from
   // args.streaming?.initialContext, grows as streaming patches arrive, and
   // is mutated by action handlers (loadTasks / loadGoals) so subsequent
@@ -470,6 +474,60 @@ export class EditorPanel {
           }
         } catch (e) {
           log.warn(`detectPort failed: ${(e as Error).message}`);
+        }
+        return;
+      }
+      case 'loadBuildToolSettings': {
+        // Fired by the webview whenever the form's buildTool (or the
+        // project path, for Gradle's project-root fallback) changes. We
+        // read the active settings file and reply with proxy host/port so
+        // the panel at the bottom of the form stays in sync.
+        log.debug(`loadBuildToolSettings: ${msg.buildTool} projectPath="${msg.projectPath}"`);
+        try {
+          const projectRoot = resolveProjectUri(this.args.folder, msg.projectPath ?? '');
+          const info = await this.settingsSvc.load(msg.buildTool, projectRoot, {
+            mavenPath: msg.mavenPath,
+            gradlePath: msg.gradlePath,
+          });
+          this.panel.webview.postMessage({
+            cmd: 'buildToolSettings',
+            buildTool: info.buildTool,
+            activeFilePath: info.activeFilePath,
+            ...(info.sourceLabel ? { sourceLabel: info.sourceLabel } : {}),
+            proxyHost: info.proxyHost,
+            proxyPort: info.proxyPort,
+            nonProxyHosts: info.nonProxyHosts,
+            overriddenFiles: info.overriddenFiles,
+            ...(info.note ? { note: info.note } : {}),
+            searchedPaths: info.searchedPaths,
+          } satisfies Inbound);
+        } catch (e) {
+          // Informational panel — don't surface errors as banners; just log.
+          log.warn(`loadBuildToolSettings failed: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'buildToolSettings',
+            buildTool: msg.buildTool,
+            proxyHost: null,
+            proxyPort: null,
+            nonProxyHosts: null,
+            overriddenFiles: [],
+            searchedPaths: [],
+            note: `Could not read settings file: ${(e as Error).message}`,
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'openSettingsFile': {
+        // Open the file in a side-by-side editor so the form panel stays
+        // visible. Use showTextDocument with ViewColumn.Beside — matches
+        // how the launch/task content provider opens read-only JSON.
+        log.debug(`openSettingsFile: ${msg.filePath}`);
+        try {
+          const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(msg.filePath));
+          await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+        } catch (e) {
+          vscode.window.showErrorMessage(`Could not open ${msg.filePath}: ${(e as Error).message}`);
+          log.warn(`openSettingsFile failed: ${(e as Error).message}`);
         }
         return;
       }
