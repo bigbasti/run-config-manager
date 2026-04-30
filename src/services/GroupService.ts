@@ -4,6 +4,7 @@ import type { RunConfig } from '../shared/types';
 import type { ExecutionService } from './ExecutionService';
 import type { DebugService } from './DebugService';
 import type { DockerService } from './DockerService';
+import type { DependencyOrchestrator } from './DependencyOrchestrator';
 import { log } from '../utils/logger';
 
 // Per-config state during a sequential group run. The tree reads these via
@@ -119,6 +120,12 @@ export class GroupService {
       exec: ExecutionService;
       dbg: DebugService;
       docker: DockerService;
+      // When a group member has a `dependsOn` chain, we route through the
+      // orchestrator so its deps get started first (matching what happens
+      // when the user clicks Run on the member individually). Without
+      // this, group runs would skip dependency resolution entirely and
+      // members silently fail to reach running state.
+      orchestrator: DependencyOrchestrator;
     },
   ): Promise<void> {
     const members = this.members(folderKey, groupName);
@@ -193,8 +200,21 @@ export class GroupService {
   private async startOne(
     cfg: RunConfig,
     folder: vscode.WorkspaceFolder,
-    deps: { exec: ExecutionService; dbg: DebugService; docker: DockerService },
+    deps: { exec: ExecutionService; dbg: DebugService; docker: DockerService; orchestrator: DependencyOrchestrator },
   ): Promise<void> {
+    // Route through the orchestrator when the member has declared
+    // dependencies — mirrors what `runConfig.run` does for individual
+    // clicks. This ensures deps are started (and waited on) before the
+    // member itself is kicked off, even during a group run.
+    if ((cfg.dependsOn?.length ?? 0) > 0) {
+      // Short-circuit: if already running, the orchestrator's
+      // startRcmConfig would no-op, but avoid the plan walk too.
+      if (cfg.type === 'docker' && deps.docker.isRunning(cfg.typeOptions.containerId)) return;
+      if (cfg.type !== 'docker' && (deps.exec.isRunning(cfg.id) || deps.dbg.isRunning(cfg.id))) return;
+      await deps.orchestrator.run(cfg, folder);
+      return;
+    }
+
     if (cfg.type === 'docker') {
       if (deps.docker.isRunning(cfg.typeOptions.containerId)) return;
       await deps.docker.startContainer(cfg.typeOptions.containerId);
@@ -206,7 +226,7 @@ export class GroupService {
 
   private async waitUntilRunning(
     cfg: RunConfig,
-    deps: { exec: ExecutionService; dbg: DebugService; docker: DockerService },
+    deps: { exec: ExecutionService; dbg: DebugService; docker: DockerService; orchestrator: DependencyOrchestrator },
   ): Promise<void> {
     // 120s cap — same budget as DependencyOrchestrator. Polling is cheap
     // (in-memory Set lookups); 250ms gives near-instant progress.

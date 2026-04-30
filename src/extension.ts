@@ -805,12 +805,12 @@ async function runGroup(
   exec: ExecutionService,
   dbg: DebugService,
   docker: DockerService,
-  _orchestrator: DependencyOrchestrator,
+  orchestrator: DependencyOrchestrator,
   _svc: RunConfigService,
 ): Promise<void> {
   const folder = store.getFolder(folderKey);
   if (!folder) return;
-  await groups.runGroup(folderKey, name, mode, folder, { exec, dbg, docker });
+  await groups.runGroup(folderKey, name, mode, folder, { exec, dbg, docker, orchestrator });
 }
 
 async function runBuildActionFor(

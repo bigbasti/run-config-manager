@@ -1,3 +1,4 @@
+import { Uri } from 'vscode';
 import { GroupService } from '../src/services/GroupService';
 import type { RunConfig } from '../src/shared/types';
 
@@ -115,5 +116,62 @@ describe('GroupService', () => {
   test('statusOfConfig() is undefined by default', () => {
     fake.seed('/ws', [cfg('a', 'A', 'G')]);
     expect(groups.statusOfConfig('a')).toBeUndefined();
+  });
+
+  test('runGroup sequential: member with dependsOn routes through orchestrator (not direct exec.run)', async () => {
+    // Regression test: running a group used to bypass DependencyOrchestrator,
+    // so members' `dependsOn` chains were silently ignored — the member
+    // would try to start without its deps and either stall or fail.
+    const withDep = {
+      ...cfg('a', 'A', 'G'),
+      dependsOn: [{ ref: 'rcm:dep1' }],
+    } as RunConfig;
+    const plain = cfg('b', 'B', 'G');
+    fake.seed('/ws', [withDep, plain]);
+
+    const execRunCalls: string[] = [];
+    const orchRunCalls: string[] = [];
+    const exec = {
+      isRunning: () => false,
+      isStarted: () => true, // short-circuits waitUntilRunning
+      run: (c: RunConfig) => { execRunCalls.push(c.id); return Promise.resolve(); },
+    } as any;
+    const dbg = { isRunning: () => false } as any;
+    const docker = { isRunning: () => false } as any;
+    const orchestrator = {
+      run: (c: RunConfig) => { orchRunCalls.push(c.id); return Promise.resolve(); },
+    } as any;
+    const folder = { uri: Uri.file('/ws'), name: 'ws', index: 0 } as any;
+
+    await groups.runGroup('/ws', 'G', 'sequential', folder, { exec, dbg, docker, orchestrator });
+
+    // Member 'a' has dependsOn → orchestrator.run called; exec.run NOT called for it.
+    expect(orchRunCalls).toContain('a');
+    expect(execRunCalls).not.toContain('a');
+    // Member 'b' has no deps → falls through to exec.run directly.
+    expect(execRunCalls).toContain('b');
+    expect(orchRunCalls).not.toContain('b');
+  });
+
+  test('runGroup parallel: member with dependsOn also routes through orchestrator', async () => {
+    const withDep = {
+      ...cfg('a', 'A', 'G'),
+      dependsOn: [{ ref: 'rcm:dep1' }],
+    } as RunConfig;
+    fake.seed('/ws', [withDep]);
+
+    const orchRunCalls: string[] = [];
+    const exec = { isRunning: () => false, run: jest.fn() } as any;
+    const dbg = { isRunning: () => false } as any;
+    const docker = { isRunning: () => false } as any;
+    const orchestrator = {
+      run: (c: RunConfig) => { orchRunCalls.push(c.id); return Promise.resolve(); },
+    } as any;
+    const folder = { uri: Uri.file('/ws'), name: 'ws', index: 0 } as any;
+
+    await groups.runGroup('/ws', 'G', 'parallel', folder, { exec, dbg, docker, orchestrator });
+
+    expect(orchRunCalls).toEqual(['a']);
+    expect(exec.run).not.toHaveBeenCalled();
   });
 });
