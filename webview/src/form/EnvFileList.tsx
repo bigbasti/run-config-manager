@@ -22,17 +22,35 @@ interface Props {
   status: Map<string, EnvFileStatus>;
   onAdd: () => void;
   onRemove: (index: number) => void;
+  // Wired to Field's focus/blur callbacks so this composite control can
+  // drive the help panel the same way the regular text inputs do —
+  // clicking inside the list (or the Add button) surfaces the
+  // envFileList field's help text. Without these, focus lived on
+  // <button>s the help panel ignored.
+  onFocus?: () => void;
+  onBlur?: () => void;
 }
 
 // Render block that lives directly above the env-vars KV editor. Each
 // added file shows up as a pill: [.env] [path] [N vars] [👁] [🗑].
 // Missing files render orange with a hint instead of a count, so the user
 // can see at a glance which files would silently be skipped at run time.
-export function EnvFileList({ files, status, onAdd, onRemove }: Props) {
+export function EnvFileList({ files, status, onAdd, onRemove, onFocus, onBlur }: Props) {
   const [previewIdx, setPreviewIdx] = useState<number | null>(null);
 
   return (
-    <div style={{ marginBottom: 8 }}>
+    // onFocus/onBlur on the wrapper catch focus from any child button —
+    // they bubble in React. That covers Add, trash, eye, and any other
+    // future affordance without per-element wiring.
+    <div
+      style={{ marginBottom: 8 }}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      // Clicking on the row strip (e.g. the path text) doesn't move
+      // browser focus; nudge the help panel so users see docs even when
+      // they only click rather than tab.
+      onClick={onFocus}
+    >
       {files.map((p, idx) => {
         const s = status.get(p);
         const missing = s?.error === 'missing';

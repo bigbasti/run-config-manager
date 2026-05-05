@@ -353,6 +353,8 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
           status={h.envFileStatus ?? new Map()}
           onAdd={() => h.onAddEnvFile?.()}
           onRemove={idx => set(list.filter((_, i) => i !== idx))}
+          onFocus={h.focus}
+          onBlur={h.blur}
         />
       );
     }
