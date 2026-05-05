@@ -1,40 +1,79 @@
 import { Uri, __resetFs, __writeFs } from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { detectTomcatInstalls, findTomcatArtifacts } from '../src/adapters/tomcat/detectTomcat';
+
+// detectTomcatInstalls uses the real filesystem (mirrors detectJdks) so
+// we can resolve symlinks for shim-based installs (sdkman, asdf, brew).
+// The tests work with real temp dirs and point env vars at them, leaving
+// the host's actual installs untouched.
 
 describe('detectTomcatInstalls', () => {
   const origEnv = { ...process.env };
-  beforeEach(() => {
-    __resetFs();
+  let tmp: string;
+  beforeEach(async () => {
     process.env = { ...origEnv };
     delete process.env.CATALINA_HOME;
     delete process.env.TOMCAT_HOME;
+    tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'rcm-tomcat-'));
+  });
+  afterEach(async () => {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
   });
   afterAll(() => { process.env = origEnv; });
 
-  test('returns empty when nothing detected', async () => {
+  // Helper: lay out a minimal Tomcat install at <root>/<name>.
+  async function makeTomcat(parent: string, name: string): Promise<string> {
+    const root = path.join(parent, name);
+    await fs.promises.mkdir(path.join(root, 'bin'), { recursive: true });
+    await fs.promises.mkdir(path.join(root, 'conf'), { recursive: true });
+    await fs.promises.writeFile(path.join(root, 'bin', 'catalina.sh'), '#!/bin/sh');
+    await fs.promises.writeFile(path.join(root, 'conf', 'server.xml'), '<Server/>');
+    return root;
+  }
+
+  test('CATALINA_HOME pointing at a valid install is detected', async () => {
+    const root = await makeTomcat(tmp, 'apache-tomcat-10.1.35');
+    process.env.CATALINA_HOME = root;
     const out = await detectTomcatInstalls();
-    expect(out).toEqual([]);
+    expect(out).toContain(root);
   });
 
-  test('picks up CATALINA_HOME when it looks like Tomcat', async () => {
-    process.env.CATALINA_HOME = '/opt/apache-tomcat-10';
-    __writeFs('/opt/apache-tomcat-10/conf/server.xml', '');
-    __writeFs('/opt/apache-tomcat-10/bin/catalina.sh', '');
+  test('CATALINA_HOME with no server.xml is rejected', async () => {
+    const fake = path.join(tmp, 'fake-tomcat');
+    await fs.promises.mkdir(path.join(fake, 'bin'), { recursive: true });
+    await fs.promises.writeFile(path.join(fake, 'bin', 'catalina.sh'), '#!/bin/sh');
+    process.env.CATALINA_HOME = fake;
     const out = await detectTomcatInstalls();
-    expect(out).toContain('/opt/apache-tomcat-10');
+    expect(out).not.toContain(fake);
   });
 
-  test('finds /opt/apache-tomcat-* installs', async () => {
-    __writeFs('/opt/apache-tomcat-9/conf/server.xml', '');
-    __writeFs('/opt/apache-tomcat-9/bin/catalina.sh', '');
+  test('TOMCAT_HOME alongside CATALINA_HOME — both kept when distinct', async () => {
+    const a = await makeTomcat(tmp, 'a-tomcat');
+    const b = await makeTomcat(tmp, 'b-tomcat');
+    process.env.CATALINA_HOME = a;
+    process.env.TOMCAT_HOME = b;
     const out = await detectTomcatInstalls();
-    expect(out).toContain('/opt/apache-tomcat-9');
+    expect(out).toContain(a);
+    expect(out).toContain(b);
   });
 
-  test('ignores non-Tomcat /opt entries', async () => {
-    __writeFs('/opt/random/readme.txt', '');
+  test('symlinked install dedupes against its real path', async () => {
+    const real = await makeTomcat(tmp, 'real-tomcat');
+    const link = path.join(tmp, 'shim-tomcat');
+    await fs.promises.symlink(real, link, 'dir');
+    process.env.CATALINA_HOME = real;
+    process.env.TOMCAT_HOME = link;
     const out = await detectTomcatInstalls();
-    expect(out).toEqual([]);
+    // Real path appears once; the symlinked alias is collapsed onto it
+    // by the realpath dedupe.
+    const reals = await Promise.all(out.map(p => fs.promises.realpath(p).catch(() => p)));
+    const distinctReals = new Set(reals);
+    expect(distinctReals.has(real)).toBe(true);
+    // The two env entries reduce to one canonical install.
+    const matchingEntries = out.filter((_, i) => reals[i] === real);
+    expect(matchingEntries.length).toBe(1);
   });
 });
 
