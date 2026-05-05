@@ -6,6 +6,8 @@ import type { Inbound, Outbound } from '../../src/shared/protocol';
 import { ConfigForm } from './ConfigForm';
 import { HelpPanel } from './HelpPanel';
 import { BuildToolSettingsPanel, buildToolForConfig } from './BuildToolSettingsPanel';
+import { JdkDownloadDialog } from './JdkDownloadDialog';
+import type { JdkPackageDto } from '../../src/shared/protocol';
 
 declare function acquireVsCodeApi(): { postMessage(msg: Outbound): void; getState<T>(): T; setState<T>(s: T): void };
 
@@ -80,6 +82,19 @@ export function App() {
   // and cleared on the next successful save or when the user edits the
   // offending field — see onChange wrapper below.
   const [fieldErrors, setFieldErrors] = useState<Map<string, string>>(new Map());
+  // JDK download dialog state. `payload` is non-null while the dialog is
+  // open; it carries the initial distro list + first distro's packages so
+  // the dialog can render without an empty intermediate state.
+  const [jdkDialog, setJdkDialog] = useState<{
+    distros: Array<{ apiName: string; label: string }>;
+    initialPackages: Record<string, JdkPackageDto[]>;
+    installRoot: string;
+  } | null>(null);
+  // Subscriber list for the dialog's stream view of inbound messages.
+  // App.tsx forwards anything it doesn't handle locally so the dialog can
+  // listen without us re-dispatching every message kind.
+  const dialogSubscribersRef = useRef<Set<(m: Inbound) => void>>(new Set());
+
   // Build-tool settings panel state. `settings` holds the most recent reply
   // from the extension; `settingsLoading` indicates a fetch is in flight so
   // we can show a brief "Reading…" placeholder on first render.
@@ -198,6 +213,26 @@ export function App() {
           }
           return next;
         });
+      } else if (msg.cmd === 'jdkDownloadList') {
+        // Server replied to our `listJdkDownloads` — open the dialog. The
+        // dialog will later post messages directly via `post()` and listen
+        // through the dialog subscribers ref below.
+        setJdkDialog({
+          distros: msg.distros,
+          initialPackages: msg.packagesByDistro,
+          installRoot: msg.installRoot,
+        });
+      } else if (
+        msg.cmd === 'jdkPackageList'
+        || msg.cmd === 'jdkDownloadProgress'
+        || msg.cmd === 'jdkDownloadComplete'
+        || msg.cmd === 'jdkDownloadError'
+        || msg.cmd === 'jdkDownloadNeedsConfirmation'
+      ) {
+        // Forward to dialog subscribers (the open dialog). Nothing in App
+        // itself needs these messages; the configPatch/schemaUpdate that
+        // arrive alongside `jdkDownloadComplete` already update the form.
+        for (const sub of dialogSubscribersRef.current) sub(msg);
       } else if (msg.cmd === 'buildToolSettings') {
         setSettings(msg);
         setSettingsLoading(false);
@@ -318,6 +353,13 @@ export function App() {
       post({ cmd: 'loadTasks', config: values as RunConfig });
       return;
     }
+    if (actionId === 'openJdkDownload') {
+      // Open the download dialog — the server replies with
+      // jdkDownloadList; our message listener flips jdkDialog to non-null
+      // and the dialog mounts.
+      post({ cmd: 'listJdkDownloads' });
+      return;
+    }
   };
 
   const runTestVariables = () => {
@@ -427,6 +469,19 @@ export function App() {
           })()}
         </div>
       </div>
+      {jdkDialog && (
+        <JdkDownloadDialog
+          distros={jdkDialog.distros}
+          initialPackages={jdkDialog.initialPackages}
+          installRoot={jdkDialog.installRoot}
+          post={post}
+          onMessage={handler => {
+            dialogSubscribersRef.current.add(handler);
+            return () => { dialogSubscribersRef.current.delete(handler); };
+          }}
+          onClose={() => setJdkDialog(null)}
+        />
+      )}
     </>
   );
 }

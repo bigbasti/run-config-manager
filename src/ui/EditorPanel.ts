@@ -15,6 +15,8 @@ import { validateBuildProjectPath } from '../utils/validateBuildProjectPath';
 import { RunConfigSchema } from '../shared/schema';
 import type { DockerService } from '../services/DockerService';
 import { BuildToolSettingsService } from '../services/BuildToolSettingsService';
+import { JdkInstallerService, type JdkPackage, CancelledError, ChecksumUnavailableError, jdkInstallDirName } from '../services/JdkInstallerService';
+import { probeJdkVersion } from '../adapters/spring-boot/detectJdks';
 
 interface OpenArgs {
   mode: 'create' | 'edit';
@@ -58,6 +60,13 @@ export class EditorPanel {
   // Shared across loadBuildToolSettings calls. Stateless, but hang on to
   // one instance to avoid allocating per message.
   private readonly settingsSvc = new BuildToolSettingsService();
+  // JDK installer — used by the download-jdk dialog. Stateless across
+  // panels in practice, but kept per-panel so a cancel from one editor
+  // can't accidentally abort another's install.
+  private readonly jdkInstaller = new JdkInstallerService();
+  // Cached package lists for the download dialog so flipping the vendor
+  // dropdown doesn't re-hit the network. Cleared on dispose.
+  private readonly jdkPackages = new Map<string, JdkPackage[]>();
   // Cumulative detection context for the currently-open form. Starts from
   // args.streaming?.initialContext, grows as streaming patches arrive, and
   // is mutated by action handlers (loadTasks / loadGoals) so subsequent
@@ -531,6 +540,142 @@ export class EditorPanel {
         }
         return;
       }
+      case 'listJdkDownloads': {
+        // Initial dialog open. Return distro list immediately and load the
+        // first distro's packages so the version dropdown is populated on
+        // first paint.
+        log.debug('listJdkDownloads');
+        try {
+          const distros = this.jdkInstaller.listDistributions();
+          const first = distros[0]?.apiName;
+          const packagesByDistro: Record<string, ReturnType<JdkInstallerService['listPackages']> extends Promise<infer T> ? T : never> = {};
+          if (first) {
+            const pkgs = await this.jdkInstaller.listPackages(first);
+            this.jdkPackages.set(first, pkgs);
+            packagesByDistro[first] = pkgs;
+          }
+          this.panel.webview.postMessage({
+            cmd: 'jdkDownloadList',
+            distros: distros.map(d => ({ apiName: d.apiName, label: d.label })),
+            packagesByDistro: Object.fromEntries(
+              Object.entries(packagesByDistro).map(([k, v]) => [k, v.map(toPackageDto)]),
+            ),
+            installRoot: this.jdkInstaller.getInstallRoot(),
+          } satisfies Inbound);
+        } catch (e) {
+          log.warn(`listJdkDownloads failed: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'jdkDownloadError',
+            message: `Could not load JDK distributions: ${(e as Error).message}`,
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'listJdkPackages': {
+        // Vendor switched — fetch (or reuse cached) packages for the new
+        // distro. Caching avoids repeat network hits when the user flips
+        // back and forth.
+        log.debug(`listJdkPackages: ${msg.distro}`);
+        try {
+          let pkgs = this.jdkPackages.get(msg.distro);
+          if (!pkgs) {
+            pkgs = await this.jdkInstaller.listPackages(msg.distro);
+            this.jdkPackages.set(msg.distro, pkgs);
+          }
+          this.panel.webview.postMessage({
+            cmd: 'jdkPackageList',
+            distro: msg.distro,
+            packages: pkgs.map(toPackageDto),
+          } satisfies Inbound);
+        } catch (e) {
+          log.warn(`listJdkPackages failed: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'jdkDownloadError',
+            message: `Could not load packages for ${msg.distro}: ${(e as Error).message}`,
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'downloadJdk': {
+        // Find the cached package, then run install with progress streaming
+        // back to the webview. On success we add the new JDK to context.jdks
+        // and re-emit the schema so the dropdown shows it; the dialog
+        // selects it via the `jdkDownloadComplete` message.
+        log.info(`downloadJdk: ${msg.distro}/${msg.packageId}`);
+        const pkgs = this.jdkPackages.get(msg.distro) ?? [];
+        const pkg = pkgs.find(p => p.id === msg.packageId);
+        if (!pkg) {
+          this.panel.webview.postMessage({
+            cmd: 'jdkDownloadError',
+            message: 'Package not found — please refresh the dialog.',
+          } satisfies Inbound);
+          return;
+        }
+        try {
+          const result = await this.jdkInstaller.install(pkg, p => {
+            this.panel.webview.postMessage({
+              cmd: 'jdkDownloadProgress',
+              state: p.state,
+              fraction: p.fraction,
+              ...(p.detail ? { detail: p.detail } : {}),
+            } satisfies Inbound);
+          }, { allowUnverified: msg.allowUnverified });
+          // Probe version of the freshly-installed JDK so the dropdown
+          // shows "Java 21.0.2 (Temurin)" right away. Best-effort.
+          const probed = await probeJdkVersion(result.jdkHome).catch(() => ({}));
+          // Push the new JDK into the persistent context and re-emit schema
+          // so the form's dropdown picks it up. We append to existing entries
+          // and dedupe by path.
+          const existing = (this.context.jdks as Array<{ path: string; version?: string; vendor?: string }> | undefined) ?? [];
+          const merged = existing.some(j => j.path === result.jdkHome)
+            ? existing
+            : [...existing, { path: result.jdkHome, ...probed }];
+          this.context.jdks = merged;
+          if (this.args.adapter) {
+            const schema = this.args.adapter.getFormSchema(this.context);
+            this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+          }
+          this.panel.webview.postMessage({
+            cmd: 'jdkDownloadComplete',
+            jdkHome: result.jdkHome,
+            versionLabel: result.versionLabel,
+            distro: result.distro,
+          } satisfies Inbound);
+          // Patch the form so the new JDK is preselected, regardless of
+          // whether the user already typed something in the field.
+          this.panel.webview.postMessage({
+            cmd: 'configPatch',
+            patch: { typeOptions: { jdkPath: result.jdkHome } } as any,
+            force: true,
+          } satisfies Inbound);
+        } catch (e) {
+          const cancelled = e instanceof CancelledError;
+          // Foojay didn't ship a SHA-256 for this package — bounce a
+          // dedicated message so the dialog can surface a "Install anyway"
+          // confirmation instead of a generic error. The user re-clicks
+          // download with allowUnverified=true to proceed.
+          if (e instanceof ChecksumUnavailableError) {
+            log.warn(`downloadJdk: ${e.message} — awaiting user confirmation`);
+            this.panel.webview.postMessage({
+              cmd: 'jdkDownloadNeedsConfirmation',
+              message: e.message,
+            } satisfies Inbound);
+            return;
+          }
+          log.warn(`downloadJdk: ${cancelled ? 'cancelled' : 'failed'}: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'jdkDownloadError',
+            message: cancelled ? 'Download cancelled.' : (e as Error).message,
+            ...(cancelled ? { cancelled: true } : {}),
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'cancelJdkDownload': {
+        log.debug('cancelJdkDownload');
+        this.jdkInstaller.cancel();
+        return;
+      }
       case 'refreshContainers': {
         if (!this.args.docker) return;
         log.debug('Docker refresh containers');
@@ -715,6 +860,24 @@ export class EditorPanel {
 </body>
 </html>`;
   }
+}
+
+// Project a JdkPackage down to the DTO the webview consumes. Strips
+// internal fields (sha256, directUrl) we don't want flowing into the
+// webview's state — they're only needed server-side during install.
+function toPackageDto(p: JdkPackage) {
+  return {
+    id: p.id,
+    distro: p.distro,
+    versionLabel: p.versionLabel,
+    majorVersion: p.majorVersion,
+    filename: p.filename,
+    size: p.size,
+    lts: p.lts,
+    // Same name the installer will create on disk — keeps the dialog's
+    // "Will be installed to:" preview honest.
+    installDirName: jdkInstallDirName(p),
+  };
 }
 
 function makeNonce(): string {

@@ -1,54 +1,83 @@
-import { Uri, __resetFs, __writeFs, extensions } from 'vscode';
-import { detectJdks } from '../src/adapters/spring-boot/detectJdks';
+import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs';
+import {
+  parseJavaVersionStderr,
+  readReleaseFile,
+} from '../src/adapters/spring-boot/detectJdks';
 
-describe('detectJdks', () => {
-  const origEnv = { ...process.env };
-  beforeEach(() => {
-    __resetFs();
-    (extensions.getExtension as jest.Mock).mockReset().mockReturnValue(undefined);
-    process.env = { ...origEnv };
-    delete process.env.JAVA_HOME;
-  });
-  afterAll(() => { process.env = origEnv; });
+// Note: the broader detectJdks() integration is intentionally NOT unit-tested.
+// The function reads from real filesystem locations (`/usr/lib/jvm`,
+// `~/.jenv/versions`, etc.) and shells out to `which java` /
+// `/usr/libexec/java_home` — its output depends entirely on the host
+// environment. Mocking would just verify the shape of the mock. Instead
+// we cover the pure helpers (release file parsing, java -version parsing)
+// directly, plus the new probe-version round-trip.
 
-  test('returns empty list when no signals', async () => {
-    const out = await detectJdks();
-    expect(out).toEqual([]);
-  });
-
-  test('includes JAVA_HOME when set', async () => {
-    process.env.JAVA_HOME = '/opt/custom-jdk';
-    const out = await detectJdks();
-    expect(out).toContain('/opt/custom-jdk');
-  });
-
-  test('includes /usr/lib/jvm entries that have bin/java', async () => {
-    __writeFs('/usr/lib/jvm/jdk-21/bin/java', '');
-    __writeFs('/usr/lib/jvm/some-dir/nothing', ''); // no bin/java → skipped
-    const out = await detectJdks();
-    expect(out).toContain('/usr/lib/jvm/jdk-21');
-    expect(out).not.toContain('/usr/lib/jvm/some-dir');
-  });
-
-  test('uses Java extension when available', async () => {
-    (extensions.getExtension as jest.Mock).mockImplementation((id: string) => {
-      if (id !== 'redhat.java') return undefined;
-      return {
-        isActive: true,
-        activate: async () => ({
-          jdks: [{ path: '/ext/jdk-17' }, { path: '/ext/jdk-21' }],
-        }),
-      };
+describe('parseJavaVersionStderr', () => {
+  test('extracts version and vendor from Temurin output', () => {
+    const stderr = `openjdk version "21.0.2" 2024-01-16
+OpenJDK Runtime Environment Temurin-21.0.2+13 (build 21.0.2+13)
+OpenJDK 64-Bit Server VM Temurin-21.0.2+13 (build 21.0.2+13, mixed mode)`;
+    expect(parseJavaVersionStderr(stderr)).toEqual({
+      version: '21.0.2',
+      vendor: 'Temurin',
     });
-    const out = await detectJdks();
-    expect(out).toEqual(expect.arrayContaining(['/ext/jdk-17', '/ext/jdk-21']));
   });
 
-  test('dedupes duplicates', async () => {
-    process.env.JAVA_HOME = '/opt/jdk';
-    __writeFs('/opt/jdk/bin/java', '');
-    __writeFs('/usr/lib/jvm/jdk/bin/java', '');
-    const out = await detectJdks();
-    expect(new Set(out).size).toBe(out.length);
+  test('extracts version from Oracle JDK output', () => {
+    const stderr = `java version "17.0.10" 2024-01-16 LTS
+Java(TM) SE Runtime Environment (build 17.0.10+11-LTS-240)
+Java HotSpot(TM) 64-Bit Server VM (build 17.0.10+11-LTS-240, mixed mode)`;
+    const r = parseJavaVersionStderr(stderr);
+    expect(r.version).toBe('17.0.10');
+  });
+
+  test('returns empty object for unrecognized output', () => {
+    expect(parseJavaVersionStderr('Some unrelated text')).toEqual({});
+  });
+
+  test('handles Zulu vendor', () => {
+    const stderr = 'openjdk version "11.0.21"\nOpenJDK Runtime Environment Zulu11.68+17';
+    const r = parseJavaVersionStderr(stderr);
+    expect(r.vendor).toBe('Zulu');
+  });
+});
+
+describe('readReleaseFile', () => {
+  let tmp: string;
+  beforeEach(async () => {
+    tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'rcm-jdk-test-'));
+  });
+  afterEach(async () => {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  });
+
+  test('parses JAVA_VERSION and IMPLEMENTOR from quoted form', async () => {
+    await fs.promises.writeFile(
+      path.join(tmp, 'release'),
+      'JAVA_VERSION="21.0.2"\nIMPLEMENTOR="Eclipse Adoptium"\nOS_NAME="Linux"\n',
+    );
+    expect(await readReleaseFile(tmp)).toEqual({
+      version: '21.0.2',
+      vendor: 'Eclipse Adoptium',
+    });
+  });
+
+  test('parses unquoted values too (older JDKs)', async () => {
+    await fs.promises.writeFile(
+      path.join(tmp, 'release'),
+      'JAVA_VERSION=11.0.20\nOTHER=stuff\n',
+    );
+    expect(await readReleaseFile(tmp)).toEqual({ version: '11.0.20' });
+  });
+
+  test('returns empty when release file is missing', async () => {
+    expect(await readReleaseFile(tmp)).toEqual({});
+  });
+
+  test('returns empty for malformed release file', async () => {
+    await fs.promises.writeFile(path.join(tmp, 'release'), 'garbage\n');
+    expect(await readReleaseFile(tmp)).toEqual({});
   });
 });

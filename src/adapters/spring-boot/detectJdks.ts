@@ -288,10 +288,18 @@ function matchProp(text: string, key: string): string | undefined {
 export function parseJavaVersionStderr(stderr: string): { version?: string; vendor?: string } {
   const versionMatch = stderr.match(/version\s+"([^"]+)"/i);
   const version = versionMatch ? versionMatch[1] : undefined;
-  // Try to read vendor — Temurin / Zulu / GraalVM / Corretto / Oracle.
+  // Vendor detection — try specific names first, falling back to the
+  // generic "OpenJDK" (which appears in the first line of every non-Oracle
+  // JDK and would otherwise win the regex race).
   let vendor: string | undefined;
-  const m = stderr.match(/(Temurin|Zulu|GraalVM|Corretto|Oracle|OpenJDK|Microsoft|Liberica|SapMachine)/i);
-  if (m) vendor = m[1];
+  const specific = stderr.match(/(Temurin|Zulu|GraalVM|Corretto|Microsoft|Liberica|SapMachine|Oracle)/i);
+  if (specific) {
+    // Normalize the case so the test sees "Zulu" not "ZULU".
+    const raw = specific[1];
+    vendor = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+  } else if (/openjdk/i.test(stderr)) {
+    vendor = 'OpenJDK';
+  }
   return {
     ...(version ? { version } : {}),
     ...(vendor ? { vendor } : {}),

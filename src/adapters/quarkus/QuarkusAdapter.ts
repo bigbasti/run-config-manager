@@ -269,6 +269,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
           placeholder: '/path/to/jdk',
           help: 'Java installation. Sets JAVA_HOME before launching the build tool. Leave blank to use the build tool\'s default.',
           examples: ['/usr/lib/jvm/jdk-21', '/opt/jdk-17'],
+          action: { id: 'openJdkDownload', label: '☁', title: 'Download and install a JDK', inline: true },
         },
         {
           kind: 'text',

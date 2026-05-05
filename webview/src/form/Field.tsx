@@ -106,6 +106,18 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
             👁
           </button>
         )}
+        {action?.inline && (
+          <button
+            type="button"
+            className="secondary icon-button"
+            title={action.title ?? action.label}
+            aria-label={action.title ?? action.label}
+            disabled={actionBusy}
+            onClick={() => onFieldAction?.(action.id)}
+          >
+            {actionBusy ? '⏳' : action.label}
+          </button>
+        )}
       </div>
       {errorMessage && (
         <div
@@ -143,14 +155,14 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
           ⚠ {field.warning}
         </div>
       )}
-      {action && (
+      {action && !action.inline && (
         <div style={{ marginTop: 4 }}>
           <button
             type="button"
             className="secondary"
             disabled={actionBusy}
             onClick={() => onFieldAction?.(action.id)}
-            title={actionBusy ? 'See Output → Run Configurations for progress' : undefined}
+            title={action.title ?? (actionBusy ? 'See Output → Run Configurations for progress' : undefined)}
           >
             {actionBusy ? `⏳ ${action.busyLabel ?? 'Working…'}` : action.label}
           </button>

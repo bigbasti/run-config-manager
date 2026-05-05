@@ -261,6 +261,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           placeholder: '/usr/lib/jvm/zulu-17-amd64',
           help: 'JDK to run Tomcat with. Leave blank for `java` from PATH.',
           examples: ['/usr/lib/jvm/zulu-17-amd64', '/opt/jdk-21'],
+          action: { id: 'openJdkDownload', label: '☁', title: 'Download and install a JDK', inline: true },
         },
       ],
       typeSpecific: [

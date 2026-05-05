@@ -48,7 +48,25 @@ export type Outbound =
   // Open the active settings file in a new editor tab. The path comes from
   // the preceding `buildToolSettings` reply so the webview doesn't need to
   // know about the filesystem at all.
-  | { cmd: 'openSettingsFile'; filePath: string };
+  | { cmd: 'openSettingsFile'; filePath: string }
+  // Open the JDK download dialog: webview asks for the list of distros +
+  // packages so it can render the vendor/version selects. The reply comes
+  // back as `jdkDownloadList`.
+  | { cmd: 'listJdkDownloads' }
+  // Refresh packages for one distro (when the user switches the vendor
+  // dropdown) — keeps the initial list call cheap.
+  | { cmd: 'listJdkPackages'; distro: string }
+  // Kick off download + extract. Replies arrive as a stream of
+  // `jdkDownloadProgress` messages followed by `jdkDownloadComplete`,
+  // `jdkDownloadError`, or `jdkDownloadNeedsConfirmation` (when the
+  // package didn't carry a checksum and the dialog should prompt the
+  // user before continuing).
+  // `allowUnverified` is set on the second attempt after the user has
+  // explicitly clicked "Install anyway".
+  | { cmd: 'downloadJdk'; packageId: string; distro: string; allowUnverified?: boolean }
+  // Cancels the in-flight install. Server emits `jdkDownloadError` with a
+  // cancelled message when complete.
+  | { cmd: 'cancelJdkDownload' };
 
 // Field keys whose detection is still in flight (spinner rendered in-place).
 export type PendingFields = string[];
@@ -132,4 +150,55 @@ export type Inbound =
       note?: string;
       searchedPaths: string[];
     }
+  // Distros + initial packages for the JDK download dialog. Sent in
+  // response to `listJdkDownloads`. `packagesByDistro` carries the
+  // first-loaded distro's package list so the dialog can render right away.
+  | {
+      cmd: 'jdkDownloadList';
+      distros: Array<{ apiName: string; label: string }>;
+      packagesByDistro: Record<string, JdkPackageDto[]>;
+      // Absolute path of the directory the installer will extract into.
+      // Shown in the dialog so the user knows where the new JDK will land
+      // before they click Download.
+      installRoot: string;
+    }
+  // Reply to `listJdkPackages` for one distro at a time.
+  | { cmd: 'jdkPackageList'; distro: string; packages: JdkPackageDto[] }
+  | {
+      cmd: 'jdkDownloadProgress';
+      state: 'downloading' | 'verifying' | 'extracting';
+      // 0..1; null when state has no measurable progress.
+      fraction: number | null;
+      detail?: string;
+    }
+  | {
+      cmd: 'jdkDownloadComplete';
+      jdkHome: string;
+      versionLabel: string;
+      distro: string;
+    }
+  | { cmd: 'jdkDownloadError'; message: string; cancelled?: boolean }
+  // The package didn't carry a SHA-256. The dialog renders a confirmation
+  // panel and, if the user clicks "Install anyway", re-issues `downloadJdk`
+  // with `allowUnverified: true`. The archive has already been downloaded
+  // at this point — extraction is what's gated on the user's answer.
+  | { cmd: 'jdkDownloadNeedsConfirmation'; message: string }
   | { cmd: 'error'; message: string };
+
+// DTO mirrors JdkPackage but only the fields the UI uses, so we don't ship
+// internal foojay metadata (sha256, directUrl) over the postMessage channel.
+export interface JdkPackageDto {
+  id: string;
+  distro: string;
+  versionLabel: string;
+  majorVersion: number;
+  // Display filename (informational; user sees "amazon-corretto-21.tar.gz").
+  filename: string;
+  size: number;
+  lts: boolean;
+  // Pre-computed friendly directory name (e.g. "azul-zulu-25"). Kept in
+  // the DTO so the dialog can render the full target path next to the
+  // current selection without duplicating the slug logic on the webview
+  // side. Composed with `installRoot` to form the full preview path.
+  installDirName: string;
+}

@@ -11,9 +11,20 @@ type BaseFieldMeta = {
   // When set, the webview hides this field unless the value at `key` in the
   // current form state equals `equals` (or is contained in `equals` when an array).
   dependsOn?: { key: string; equals: string | string[] };
-  // Renders an inline action button beside the input. The id is passed back
+  // Renders an action button alongside the input. The id is passed back
   // to the App via the `onFieldAction` prop so App can map it to a postMessage.
-  action?: { id: string; label: string; busyLabel?: string };
+  // `inline: true` places the button on the same row as the input (the JDK
+  // download button works this way so it lives next to the dropdown rather
+  // than hanging below); the input shrinks to make room. Without `inline`
+  // the button renders on its own line under the field.
+  // `title` is the button's hover tooltip.
+  action?: {
+    id: string;
+    label: string;
+    busyLabel?: string;
+    inline?: boolean;
+    title?: string;
+  };
   // Adds a small "Inspect" eye-icon button next to the field. When clicked,
   // the webview opens a dialog that splits the current value by whitespace
   // (honouring simple quoting) and displays each token on its own row.

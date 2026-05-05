@@ -412,6 +412,10 @@ export class SpringBootAdapter implements RuntimeAdapter {
             'compilation, bootRun, tests, classpath recompute). ' +
             'Leave blank to inherit JAVA_HOME from the shell that launched VS Code.',
           examples: ['/usr/lib/jvm/jdk-21', '/opt/jdk-17'],
+          // Surfaces a ⬇ icon next to the field. The webview intercepts
+          // this actionId to open the JDK download dialog (it doesn't
+          // round-trip to the extension as a regular load action).
+          action: { id: 'openJdkDownload', label: '☁', title: 'Download and install a JDK', inline: true },
         },
         {
           kind: 'selectOrCustom',

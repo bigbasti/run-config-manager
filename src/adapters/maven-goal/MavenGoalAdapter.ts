@@ -202,6 +202,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
           placeholder: '/path/to/jdk',
           help: 'Java installation. Sets JAVA_HOME for mvn.',
           examples: ['/usr/lib/jvm/jdk-21', '/opt/jdk-17'],
+          action: { id: 'openJdkDownload', label: '☁', title: 'Download and install a JDK', inline: true },
         },
         {
           kind: 'boolean',

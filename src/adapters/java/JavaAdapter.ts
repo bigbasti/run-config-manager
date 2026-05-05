@@ -323,6 +323,7 @@ export class JavaAdapter implements RuntimeAdapter {
           placeholder: '/path/to/jdk',
           help: 'Java installation. In java-main mode we run `<jdkPath>/bin/java`; in maven/gradle modes we set JAVA_HOME. Leave blank to use `java` from PATH.',
           examples: ['/usr/lib/jvm/jdk-21', '/opt/jdk-17'],
+          action: { id: 'openJdkDownload', label: '☁', title: 'Download and install a JDK', inline: true },
         },
         {
           kind: 'selectOrCustom',
