@@ -70,6 +70,13 @@ export type Outbound =
   // File picker scoped for .env files. Reply comes back as `envFilePicked`
   // with the workspace-relative path so the form's envFiles list can be
   // appended to.
+  // Open the Tomcat download dialog. Reply: tomcatDownloadList carrying
+  // the discovered major lines (and the first major's versions for
+  // immediate render).
+  | { cmd: 'listTomcatDownloads' }
+  | { cmd: 'listTomcatVersions'; major: number }
+  | { cmd: 'downloadTomcat'; major: number; version: string }
+  | { cmd: 'cancelTomcatDownload' }
   | { cmd: 'pickEnvFile' }
   // Loads (or reloads) the listed .env files and reports per-file status
   // + parsed variables. Fired on init/edit/add/remove so the form pills
@@ -193,6 +200,26 @@ export type Inbound =
   | { cmd: 'jdkDownloadNeedsConfirmation'; message: string }
   // Reply to `pickEnvFile`. Path is workspace-relative when the picked
   // file lives under the workspace folder, absolute otherwise.
+  | {
+      cmd: 'tomcatDownloadList';
+      majors: Array<{ major: number; label: string }>;
+      versionsByMajor: Record<number, TomcatVersionDto[]>;
+      installRoot: string;
+    }
+  | { cmd: 'tomcatVersionList'; major: number; versions: TomcatVersionDto[] }
+  | {
+      cmd: 'tomcatDownloadProgress';
+      state: 'downloading' | 'verifying' | 'extracting';
+      fraction: number | null;
+      detail?: string;
+    }
+  | {
+      cmd: 'tomcatDownloadComplete';
+      tomcatHome: string;
+      version: string;
+      major: number;
+    }
+  | { cmd: 'tomcatDownloadError'; message: string; cancelled?: boolean }
   | { cmd: 'envFilePicked'; path: string }
   // Reply to `loadEnvFiles`. Per-file status with variables so the UI can
   // render orange "missing" rows and feed the eye-icon dialog.
@@ -212,6 +239,15 @@ export type Inbound =
       }>;
     }
   | { cmd: 'error'; message: string };
+
+// DTO mirrors TomcatPackage; install dir name is computed server-side
+// for parity with the JDK dialog's preview.
+export interface TomcatVersionDto {
+  major: number;
+  version: string;
+  versionLabel: string;
+  installDirName: string;
+}
 
 // DTO mirrors JdkPackage but only the fields the UI uses, so we don't ship
 // internal foojay metadata (sha256, directUrl) over the postMessage channel.

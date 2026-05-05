@@ -7,7 +7,9 @@ import { ConfigForm } from './ConfigForm';
 import { HelpPanel } from './HelpPanel';
 import { BuildToolSettingsPanel, buildToolForConfig } from './BuildToolSettingsPanel';
 import { JdkDownloadDialog } from './JdkDownloadDialog';
+import { TomcatDownloadDialog } from './TomcatDownloadDialog';
 import type { EnvFileStatus } from './form/EnvFileList';
+import type { TomcatVersionDto } from '../../src/shared/protocol';
 import type { JdkPackageDto } from '../../src/shared/protocol';
 
 declare function acquireVsCodeApi(): { postMessage(msg: Outbound): void; getState<T>(): T; setState<T>(s: T): void };
@@ -89,6 +91,12 @@ export function App() {
   const [jdkDialog, setJdkDialog] = useState<{
     distros: Array<{ apiName: string; label: string }>;
     initialPackages: Record<string, JdkPackageDto[]>;
+    installRoot: string;
+  } | null>(null);
+  // Tomcat download dialog state — same pattern as JDK.
+  const [tomcatDialog, setTomcatDialog] = useState<{
+    majors: Array<{ major: number; label: string }>;
+    initialVersions: Record<number, TomcatVersionDto[]>;
     installRoot: string;
   } | null>(null);
   // Subscriber list for the dialog's stream view of inbound messages.
@@ -257,12 +265,22 @@ export function App() {
           initialPackages: msg.packagesByDistro,
           installRoot: msg.installRoot,
         });
+      } else if (msg.cmd === 'tomcatDownloadList') {
+        setTomcatDialog({
+          majors: msg.majors,
+          initialVersions: msg.versionsByMajor,
+          installRoot: msg.installRoot,
+        });
       } else if (
         msg.cmd === 'jdkPackageList'
         || msg.cmd === 'jdkDownloadProgress'
         || msg.cmd === 'jdkDownloadComplete'
         || msg.cmd === 'jdkDownloadError'
         || msg.cmd === 'jdkDownloadNeedsConfirmation'
+        || msg.cmd === 'tomcatVersionList'
+        || msg.cmd === 'tomcatDownloadProgress'
+        || msg.cmd === 'tomcatDownloadComplete'
+        || msg.cmd === 'tomcatDownloadError'
       ) {
         // Forward to dialog subscribers (the open dialog). Nothing in App
         // itself needs these messages; the configPatch/schemaUpdate that
@@ -411,6 +429,10 @@ export function App() {
       post({ cmd: 'listJdkDownloads' });
       return;
     }
+    if (actionId === 'openTomcatDownload') {
+      post({ cmd: 'listTomcatDownloads' });
+      return;
+    }
   };
 
   const runTestVariables = () => {
@@ -533,6 +555,19 @@ export function App() {
             return () => { dialogSubscribersRef.current.delete(handler); };
           }}
           onClose={() => setJdkDialog(null)}
+        />
+      )}
+      {tomcatDialog && (
+        <TomcatDownloadDialog
+          majors={tomcatDialog.majors}
+          initialVersions={tomcatDialog.initialVersions}
+          installRoot={tomcatDialog.installRoot}
+          post={post}
+          onMessage={handler => {
+            dialogSubscribersRef.current.add(handler);
+            return () => { dialogSubscribersRef.current.delete(handler); };
+          }}
+          onClose={() => setTomcatDialog(null)}
         />
       )}
     </>

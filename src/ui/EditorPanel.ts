@@ -17,6 +17,7 @@ import type { DockerService } from '../services/DockerService';
 import { BuildToolSettingsService } from '../services/BuildToolSettingsService';
 import { loadEnvFiles } from '../services/EnvFileLoader';
 import { JdkInstallerService, type JdkPackage, CancelledError, ChecksumUnavailableError, jdkInstallDirName } from '../services/JdkInstallerService';
+import { TomcatInstallerService, type TomcatPackage } from '../services/TomcatInstallerService';
 import { probeJdkVersion } from '../adapters/spring-boot/detectJdks';
 
 interface OpenArgs {
@@ -68,6 +69,9 @@ export class EditorPanel {
   // Cached package lists for the download dialog so flipping the vendor
   // dropdown doesn't re-hit the network. Cleared on dispose.
   private readonly jdkPackages = new Map<string, JdkPackage[]>();
+  // Tomcat installer + per-major cache (same lifetime model as JDK).
+  private readonly tomcatInstaller = new TomcatInstallerService();
+  private readonly tomcatPackages = new Map<number, TomcatPackage[]>();
   // Cumulative detection context for the currently-open form. Starts from
   // args.streaming?.initialContext, grows as streaming patches arrive, and
   // is mutated by action handlers (loadTasks / loadGoals) so subsequent
@@ -716,6 +720,114 @@ export class EditorPanel {
         this.jdkInstaller.cancel();
         return;
       }
+      case 'listTomcatDownloads': {
+        log.debug('listTomcatDownloads');
+        try {
+          const majors = await this.tomcatInstaller.listMajors();
+          const first = majors[0]?.major;
+          const versionsByMajor: Record<number, TomcatPackage[]> = {};
+          if (first !== undefined) {
+            const versions = await this.tomcatInstaller.listVersions(first);
+            this.tomcatPackages.set(first, versions);
+            versionsByMajor[first] = versions;
+          }
+          this.panel.webview.postMessage({
+            cmd: 'tomcatDownloadList',
+            majors,
+            versionsByMajor: Object.fromEntries(
+              Object.entries(versionsByMajor).map(([k, v]) => [k, v.map(toTomcatDto)]),
+            ) as Record<number, ReturnType<typeof toTomcatDto>[]>,
+            installRoot: this.tomcatInstaller.getInstallRoot(),
+          } satisfies Inbound);
+        } catch (e) {
+          log.warn(`listTomcatDownloads failed: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'tomcatDownloadError',
+            message: `Could not load Tomcat versions from Apache: ${(e as Error).message}`,
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'listTomcatVersions': {
+        log.debug(`listTomcatVersions: ${msg.major}`);
+        try {
+          let versions = this.tomcatPackages.get(msg.major);
+          if (!versions) {
+            versions = await this.tomcatInstaller.listVersions(msg.major);
+            this.tomcatPackages.set(msg.major, versions);
+          }
+          this.panel.webview.postMessage({
+            cmd: 'tomcatVersionList',
+            major: msg.major,
+            versions: versions.map(toTomcatDto),
+          } satisfies Inbound);
+        } catch (e) {
+          log.warn(`listTomcatVersions failed: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'tomcatDownloadError',
+            message: `Could not list Tomcat ${msg.major} versions: ${(e as Error).message}`,
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'downloadTomcat': {
+        log.info(`downloadTomcat: tomcat-${msg.major} v${msg.version}`);
+        const versions = this.tomcatPackages.get(msg.major) ?? [];
+        const pkg = versions.find(v => v.version === msg.version);
+        if (!pkg) {
+          this.panel.webview.postMessage({
+            cmd: 'tomcatDownloadError',
+            message: 'Tomcat version not found — please refresh the dialog.',
+          } satisfies Inbound);
+          return;
+        }
+        try {
+          const result = await this.tomcatInstaller.install(pkg, p => {
+            this.panel.webview.postMessage({
+              cmd: 'tomcatDownloadProgress',
+              state: p.state,
+              fraction: p.fraction,
+              ...(p.detail ? { detail: p.detail } : {}),
+            } satisfies Inbound);
+          });
+          // Add the new install to context so the tomcatHome dropdown
+          // picks it up, then preselect it on the form. Same dance as
+          // the JDK install completion flow.
+          const existing = (this.context.tomcatInstalls as string[] | undefined) ?? [];
+          if (!existing.includes(result.tomcatHome)) {
+            this.context.tomcatInstalls = [...existing, result.tomcatHome];
+            if (this.args.adapter) {
+              const schema = this.args.adapter.getFormSchema(this.context);
+              this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+            }
+          }
+          this.panel.webview.postMessage({
+            cmd: 'tomcatDownloadComplete',
+            tomcatHome: result.tomcatHome,
+            version: result.version,
+            major: result.major,
+          } satisfies Inbound);
+          this.panel.webview.postMessage({
+            cmd: 'configPatch',
+            patch: { typeOptions: { tomcatHome: result.tomcatHome } } as any,
+            force: true,
+          } satisfies Inbound);
+        } catch (e) {
+          const cancelled = e instanceof CancelledError;
+          log.warn(`downloadTomcat: ${cancelled ? 'cancelled' : 'failed'}: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'tomcatDownloadError',
+            message: cancelled ? 'Download cancelled.' : (e as Error).message,
+            ...(cancelled ? { cancelled: true } : {}),
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'cancelTomcatDownload': {
+        log.debug('cancelTomcatDownload');
+        this.tomcatInstaller.cancel();
+        return;
+      }
       case 'refreshContainers': {
         if (!this.args.docker) return;
         log.debug('Docker refresh containers');
@@ -917,6 +1029,15 @@ function toPackageDto(p: JdkPackage) {
     // Same name the installer will create on disk — keeps the dialog's
     // "Will be installed to:" preview honest.
     installDirName: jdkInstallDirName(p),
+  };
+}
+
+function toTomcatDto(p: TomcatPackage) {
+  return {
+    major: p.major,
+    version: p.version,
+    versionLabel: p.versionLabel,
+    installDirName: `apache-tomcat-${p.version}`,
   };
 }
 

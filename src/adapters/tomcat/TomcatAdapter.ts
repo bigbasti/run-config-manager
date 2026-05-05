@@ -250,8 +250,14 @@ export class TomcatAdapter implements RuntimeAdapter {
           placeholder: '/opt/apache-tomcat-10.1.18',
           help:
             'Absolute path to the Tomcat install (CATALINA_HOME). Must contain bin/catalina.sh and conf/server.xml. ' +
-            'Auto-detected from CATALINA_HOME / TOMCAT_HOME / /opt/apache-tomcat-*.',
+            'Auto-detected from CATALINA_HOME / TOMCAT_HOME / /opt/apache-tomcat-*. ' +
+            'Click the cloud icon to download a fresh Tomcat from Apache directly into your home directory.',
           examples: ['/opt/apache-tomcat-10.1.18', '/usr/share/tomcat10'],
+          // Mirrors the JDK download button — clicking opens the Tomcat
+          // download dialog, which fetches the Apache release listing live
+          // (no hard-coded major versions: when Tomcat 12 is published it
+          // appears in the dropdown without a code change).
+          action: { id: 'openTomcatDownload', label: '☁', title: 'Download and install a Tomcat from Apache', inline: true },
         },
         {
           kind: 'selectOrCustom',

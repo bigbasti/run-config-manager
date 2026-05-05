@@ -1,10 +1,28 @@
-import * as https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
-import * as crypto from 'crypto';
-import { spawn } from 'child_process';
 import { log } from '../utils/logger';
+import {
+  CancelledError,
+  makeCancellation,
+  httpGet,
+  httpGetJson,
+  httpGetWithRedirects,
+  downloadFile,
+  hashOfFile,
+  extractArchive,
+  flattenSingleNestedDir,
+  fileSize,
+  pathExists,
+  userInstallRoot,
+  currentPlatform,
+  currentArch,
+  humanSize,
+  type CancellationSignal,
+} from './archiveInstall';
+
+// Re-export so existing call sites (EditorPanel imports CancelledError
+// from this module) keep working without an extra import.
+export { CancelledError };
 
 // JDK installer driven by the foojay Disco API (api.foojay.io). Disco is the
 // de-facto JDK metadata service used by IntelliJ, Gradle toolchains and
@@ -79,10 +97,6 @@ export interface InstallResult {
   distro: string;
 }
 
-export class CancelledError extends Error {
-  constructor() { super('Cancelled'); }
-}
-
 // Thrown when the metadata we got back from foojay didn't include a
 // SHA-256 for the chosen package. Distinct from a real checksum-mismatch:
 // the caller (EditorPanel → dialog) intercepts this to ask the user
@@ -109,7 +123,7 @@ export class JdkInstallerService {
   // Where freshly downloaded JDKs land. Surfaced to the UI so the dialog
   // can tell the user "we'll install to <path>" before they click.
   getInstallRoot(): string {
-    return jdkInstallRoot();
+    return userInstallRoot('jdks');
   }
 
   // Lists JDK packages for a distro on the current platform. Filters
@@ -156,7 +170,7 @@ export class JdkInstallerService {
   ): Promise<InstallResult> {
     if (this.active) throw new Error('Another JDK install is already running.');
 
-    const installRoot = jdkInstallRoot();
+    const installRoot = userInstallRoot('jdks');
     await fs.promises.mkdir(installRoot, { recursive: true });
 
     // Friendly directory name: "<distro>-<major>" (e.g. azul-zulu-25,
@@ -230,7 +244,7 @@ export class JdkInstallerService {
       //       leave the user dead-ended.
       if (pkg.sha256) {
         onProgress({ state: 'verifying', fraction: null });
-        const actual = await sha256OfFile(archivePath);
+        const actual = await hashOfFile(archivePath, 'sha256');
         if (actual.toLowerCase() !== pkg.sha256.toLowerCase()) {
           throw new Error(
             `Checksum mismatch — expected ${pkg.sha256}, got ${actual}. Archive deleted.`,
@@ -256,7 +270,10 @@ export class JdkInstallerService {
       // by hoisting the inner directory's contents up one level. macOS
       // bundles get a `Contents/Home` wrapper preserved (those structures
       // must stay intact for the OS to treat them as JDKs).
-      await flattenSingleNestedJdk(targetDir);
+      // Most JDK archives extract into a single nested folder. macOS
+      // bundle layouts (Contents/Home) must stay intact for the OS to
+      // treat them as JDKs — `skipIfChildHas` handles that.
+      await flattenSingleNestedDir(targetDir, { skipIfChildHas: ['Contents'] });
       const jdkHome = await locateJdkHome(targetDir);
       if (!jdkHome) {
         throw new Error('Extracted archive did not contain bin/java — install aborted.');
@@ -390,51 +407,9 @@ export function parseDiscoPackages(
 }
 
 // ---------------------------------------------------------------------------
-// HTTP helpers (no external deps).
+// Disco-specific helpers — generic HTTP/download/extract/hash now live in
+// archiveInstall.ts and are imported at the top of this file.
 // ---------------------------------------------------------------------------
-
-interface Cancellation {
-  signal: { aborted: boolean; onAbort: (cb: () => void) => void };
-  abort: () => void;
-}
-
-function makeCancellation(): Cancellation {
-  let aborted = false;
-  const callbacks: Array<() => void> = [];
-  return {
-    signal: {
-      get aborted() { return aborted; },
-      onAbort(cb) {
-        if (aborted) cb();
-        else callbacks.push(cb);
-      },
-    },
-    abort() {
-      if (aborted) return;
-      aborted = true;
-      for (const cb of callbacks) try { cb(); } catch { /* ignore */ }
-    },
-  };
-}
-
-function httpGetJson(url: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    httpGetWithRedirects(url, res => {
-      if (res.statusCode !== 200) {
-        reject(new Error(`Disco request failed: HTTP ${res.statusCode}`));
-        res.resume();
-        return;
-      }
-      let body = '';
-      res.setEncoding('utf8');
-      res.on('data', chunk => { body += chunk; });
-      res.on('end', () => {
-        try { resolve(JSON.parse(body)); }
-        catch (e) { reject(new Error(`Could not parse Disco response: ${(e as Error).message}`)); }
-      });
-    }, reject);
-  });
-}
 
 // /packages?... returns metadata; the actual download lives behind a
 // per-package /ids/<id>/redirect endpoint that issues a 302 to the vendor.
@@ -468,180 +443,6 @@ async function resolveDownloadUrl(packageId: string): Promise<string | undefined
   });
 }
 
-function httpGet(
-  url: string,
-  onResponse: (res: import('http').IncomingMessage) => void,
-  onError: (err: Error) => void,
-): void {
-  const req = https.request(url, { method: 'GET', headers: { 'User-Agent': USER_AGENT } }, onResponse);
-  req.on('error', onError);
-  req.end();
-}
-
-function httpGetWithRedirects(
-  url: string,
-  onResponse: (res: import('http').IncomingMessage) => void,
-  onError: (err: Error) => void,
-  maxRedirects = 5,
-): void {
-  httpGet(url, res => {
-    if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308)
-        && res.headers.location && maxRedirects > 0) {
-      const next = new URL(res.headers.location, url).toString();
-      res.resume();
-      httpGetWithRedirects(next, onResponse, onError, maxRedirects - 1);
-      return;
-    }
-    onResponse(res);
-  }, onError);
-}
-
-// Streams a URL to disk while reporting progress. Total length comes from
-// Content-Length when present; otherwise the caller's `expected` is used as
-// the denominator. Cancellable via the signal — aborts the request and
-// removes the partial file.
-function downloadFile(
-  url: string,
-  destPath: string,
-  expected: number,
-  onProgress: (loaded: number, total: number) => void,
-  signal: Cancellation['signal'],
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destPath);
-    let aborted = false;
-    let req: import('http').ClientRequest | undefined;
-    const cleanupAndReject = (e: Error) => {
-      try { file.close(); } catch { /* ignore */ }
-      fs.promises.rm(destPath, { force: true }).catch(() => {}).finally(() => reject(e));
-    };
-    signal.onAbort(() => {
-      aborted = true;
-      try { req?.destroy(new CancelledError()); } catch { /* ignore */ }
-      cleanupAndReject(new CancelledError());
-    });
-    httpGetWithRedirects(url, res => {
-      if (res.statusCode !== 200) {
-        cleanupAndReject(new Error(`Download failed: HTTP ${res.statusCode}`));
-        res.resume();
-        return;
-      }
-      const total = Number(res.headers['content-length']) || expected || 0;
-      let loaded = 0;
-      res.on('data', chunk => {
-        loaded += chunk.length;
-        onProgress(loaded, total);
-      });
-      res.pipe(file);
-      file.on('finish', () => {
-        file.close(err => err ? cleanupAndReject(err) : resolve());
-      });
-      file.on('error', cleanupAndReject);
-      res.on('error', cleanupAndReject);
-    }, e => { if (!aborted) cleanupAndReject(e); });
-  });
-}
-
-function sha256OfFile(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
-    const stream = fs.createReadStream(filePath);
-    stream.on('data', d => hash.update(d));
-    stream.on('end', () => resolve(hash.digest('hex')));
-    stream.on('error', reject);
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Extraction — shells out to platform tools so we don't depend on a
-// JS tar/zip lib. `tar -xzf` is present on macOS, Linux, and modern
-// Windows 10+; for older Windows .zip we fall back to PowerShell
-// Expand-Archive (also built-in).
-// ---------------------------------------------------------------------------
-
-async function extractArchive(
-  archivePath: string,
-  targetDir: string,
-  archiveType: 'tar.gz' | 'zip',
-  signal: Cancellation['signal'],
-): Promise<void> {
-  await fs.promises.mkdir(targetDir, { recursive: true });
-  if (archiveType === 'tar.gz') {
-    await runTool('tar', ['-xzf', archivePath, '-C', targetDir], signal);
-    return;
-  }
-  // .zip on Windows: prefer tar (10+ ships it), fall back to PowerShell.
-  if (process.platform === 'win32') {
-    try {
-      await runTool('tar', ['-xf', archivePath, '-C', targetDir], signal);
-      return;
-    } catch (_e) {
-      await runTool('powershell', [
-        '-NoProfile',
-        '-Command',
-        `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${targetDir.replace(/'/g, "''")}' -Force`,
-      ], signal);
-      return;
-    }
-  }
-  // .zip on Unix: try unzip, fall back to tar (BSD tar handles zip).
-  try {
-    await runTool('unzip', ['-q', '-o', archivePath, '-d', targetDir], signal);
-  } catch {
-    await runTool('tar', ['-xf', archivePath, '-C', targetDir], signal);
-  }
-}
-
-function runTool(cmd: string, args: string[], signal: Cancellation['signal']): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { windowsHide: true });
-    signal.onAbort(() => { try { child.kill(); } catch { /* ignore */ } });
-    let stderr = '';
-    child.stderr.on('data', b => { stderr += b.toString('utf8'); });
-    child.on('error', reject);
-    child.on('close', code => {
-      if (signal.aborted) return reject(new CancelledError());
-      if (code === 0) resolve();
-      else reject(new Error(`${cmd} exited with code ${code}: ${stderr.trim()}`));
-    });
-  });
-}
-
-// If extraction produced a single child directory under `targetDir`
-// (the common JDK archive layout), hoist its contents up one level so
-// `targetDir` itself becomes the JDK home. macOS .app bundles keep their
-// `Contents/Home` wrapper — that's the format the OS expects, so we
-// preserve it when the inner dir already looks like a bundle.
-async function flattenSingleNestedJdk(targetDir: string): Promise<void> {
-  const entries = await fs.promises.readdir(targetDir, { withFileTypes: true });
-  // Skip if there's already a bin/ at top level — already flat.
-  if (entries.some(e => e.name === 'bin' && e.isDirectory())) return;
-  // Look for exactly one child directory; otherwise this isn't the
-  // single-nested layout and we leave well enough alone.
-  const dirs = entries.filter(e => e.isDirectory());
-  const files = entries.filter(e => e.isFile());
-  if (dirs.length !== 1 || files.length > 0) return;
-  const inner = path.join(targetDir, dirs[0].name);
-  // macOS bundle: `Contents/Home/bin/java` is the JDK home. Don't unpack
-  // — Apple expects the wrapper.
-  try {
-    const innerEntries = await fs.promises.readdir(inner, { withFileTypes: true });
-    const isMacBundle = innerEntries.some(e => e.name === 'Contents' && e.isDirectory());
-    if (isMacBundle) return;
-  } catch { return; }
-
-  // Move every child of `inner` up to `targetDir`. We rename rather than
-  // copy to keep the operation cheap on large JDKs (~300MB). On Windows,
-  // moving across volumes can fail; this is on the same volume so a
-  // simple rename works.
-  const childNames = await fs.promises.readdir(inner);
-  for (const name of childNames) {
-    await fs.promises.rename(path.join(inner, name), path.join(targetDir, name));
-  }
-  await fs.promises.rmdir(inner);
-  log.debug(`flattened nested JDK directory: ${inner} → ${targetDir}`);
-}
-
 // Friendly install-dir name for a foojay package: `<distro>-<major>`,
 // lowercased and slug-safe. Exported so the dialog can compute the same
 // path (for the "Will be installed to:" preview) without the server having
@@ -650,20 +451,9 @@ async function flattenSingleNestedJdk(targetDir: string): Promise<void> {
 // stripped so we don't end up with `graalvm-ce17-17`.
 export function jdkInstallDirName(pkg: { distro: string; majorVersion: number }): string {
   let base = pkg.distro.toLowerCase().replace(/_/g, '-');
-  // Strip a trailing version number from the slug, with or without a
-  // separator (e.g. "graalvm-ce17" → "graalvm-ce", "openjdk22" → "openjdk").
   base = base.replace(/[-_]?\d+$/, '');
   if (!base) base = pkg.distro.toLowerCase().replace(/_/g, '-');
   return `${base}-${pkg.majorVersion}`;
-}
-
-async function fileSize(p: string): Promise<number | null> {
-  try {
-    const s = await fs.promises.stat(p);
-    return s.isFile() ? s.size : null;
-  } catch {
-    return null;
-  }
 }
 
 // Walk the extracted directory to find the JDK home (the dir with bin/java).
@@ -689,50 +479,8 @@ async function locateJdkHome(root: string): Promise<string | null> {
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function jdkInstallRoot(): string {
-  if (process.platform === 'win32') {
-    const base = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-    return path.join(base, 'rcm', 'jdks');
-  }
-  return path.join(os.homedir(), '.rcm', 'jdks');
-}
-
-function currentPlatform(): 'linux' | 'mac' | 'windows' {
-  if (process.platform === 'darwin') return 'mac';
-  if (process.platform === 'win32') return 'windows';
-  return 'linux';
-}
-
-function currentArch(): 'x64' | 'aarch64' | 'x86' {
-  // foojay's allowed values: x64, x86, aarch64 (and a few others we don't need).
-  switch (process.arch) {
-    case 'arm64': return 'aarch64';
-    case 'x64': return 'x64';
-    case 'ia32': return 'x86';
-    default: return 'x64'; // best guess
-  }
-}
-
 function formatVersionLabel(p: any): string {
   const v = p.distribution_version ?? p.java_version ?? p.jdk_version ?? '?';
   const lts = p.term_of_support === 'lts' ? ' (LTS)' : '';
   return `${v}${lts}`;
-}
-
-async function pathExists(p: string): Promise<boolean> {
-  try { await fs.promises.stat(p); return true; }
-  catch { return false; }
-}
-
-function humanSize(loaded: number, total: number): string {
-  const fmt = (n: number) => {
-    if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-    if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
-    return `${n} B`;
-  };
-  return total > 0 ? `${fmt(loaded)} / ${fmt(total)}` : fmt(loaded);
 }
