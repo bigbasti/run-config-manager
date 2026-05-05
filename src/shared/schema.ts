@@ -60,6 +60,10 @@ const commonFields = {
   projectPath: z.string(),
   workspaceFolder: z.string(),
   env: z.record(z.string(), z.string()),
+  // Paths to .env files. Variables are loaded fresh on every run rather
+  // than baked into the saved config, so editing the file is enough to
+  // change behaviour.
+  envFiles: z.array(z.string().min(1)).optional(),
   programArgs: z.string(),
   vmArgs: z.string(),
   port: z.number().int().positive().optional(),

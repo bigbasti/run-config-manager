@@ -12,7 +12,7 @@ import { findGradleRoot } from '../spring-boot/findBuildRoot';
 import { findSpringProfiles } from '../spring-boot/findProfiles';
 import { hasSpringBootDevTools } from '../spring-boot/detectDevTools';
 import { hasCustomLogback } from '../spring-boot/detectCustomLogback';
-import { dependsOnField } from '../sharedFields';
+import { dependsOnField, envFilesField } from '../sharedFields';
 import type { PrepareContext, PrepareResult } from '../RuntimeAdapter';
 import { log } from '../../utils/logger';
 
@@ -479,6 +479,7 @@ export class TomcatAdapter implements RuntimeAdapter {
         },
       ],
       advanced: [
+        envFilesField(),
         {
           kind: 'kv',
           key: 'env',

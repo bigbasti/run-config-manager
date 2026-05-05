@@ -66,7 +66,15 @@ export type Outbound =
   | { cmd: 'downloadJdk'; packageId: string; distro: string; allowUnverified?: boolean }
   // Cancels the in-flight install. Server emits `jdkDownloadError` with a
   // cancelled message when complete.
-  | { cmd: 'cancelJdkDownload' };
+  | { cmd: 'cancelJdkDownload' }
+  // File picker scoped for .env files. Reply comes back as `envFilePicked`
+  // with the workspace-relative path so the form's envFiles list can be
+  // appended to.
+  | { cmd: 'pickEnvFile' }
+  // Loads (or reloads) the listed .env files and reports per-file status
+  // + parsed variables. Fired on init/edit/add/remove so the form pills
+  // always reflect the current files-on-disk.
+  | { cmd: 'loadEnvFiles'; paths: string[] };
 
 // Field keys whose detection is still in flight (spinner rendered in-place).
 export type PendingFields = string[];
@@ -183,6 +191,26 @@ export type Inbound =
   // with `allowUnverified: true`. The archive has already been downloaded
   // at this point — extraction is what's gated on the user's answer.
   | { cmd: 'jdkDownloadNeedsConfirmation'; message: string }
+  // Reply to `pickEnvFile`. Path is workspace-relative when the picked
+  // file lives under the workspace folder, absolute otherwise.
+  | { cmd: 'envFilePicked'; path: string }
+  // Reply to `loadEnvFiles`. Per-file status with variables so the UI can
+  // render orange "missing" rows and feed the eye-icon dialog.
+  | {
+      cmd: 'envFilesLoaded';
+      files: Array<{
+        path: string;
+        loaded: boolean;
+        // Number of vars parsed; convenience for the file pill so the
+        // webview doesn't have to count.
+        count: number;
+        // Map of vars when loaded. Sent so the eye-icon dialog can render
+        // without an extra round-trip per click.
+        variables: Record<string, string>;
+        error?: 'missing' | 'parse-error' | 'read-error';
+        errorDetail?: string;
+      }>;
+    }
   | { cmd: 'error'; message: string };
 
 // DTO mirrors JdkPackage but only the fields the UI uses, so we don't ship

@@ -79,12 +79,13 @@ describe('NpmAdapter.getFormSchema', () => {
     expect(schema.common.map(f => f.key)).toEqual(['name', 'projectPath']);
   });
 
-  test('advanced fields include env, programArgs, dependsOn — NOT vmArgs', () => {
+  test('advanced fields include envFiles, env, programArgs, dependsOn — NOT vmArgs', () => {
     // vmArgs was removed in favour of hiding rather than labelling it
     // "(unused for npm)". The field on RunConfigBase still exists for
     // schema compatibility; npm configs just never render an input.
+    // envFiles renders directly above the env table on every adapter.
     const schema = adapter.getFormSchema({ scripts: [] });
-    expect(schema.advanced.map(f => f.key)).toEqual(['env', 'programArgs', 'dependsOn']);
+    expect(schema.advanced.map(f => f.key)).toEqual(['envFiles', 'env', 'programArgs', 'dependsOn']);
   });
 });
 

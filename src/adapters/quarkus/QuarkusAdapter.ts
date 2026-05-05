@@ -10,7 +10,7 @@ import { probeJdksStreaming, readJdks, jdkOption } from '../spring-boot/probeJdk
 import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from '../spring-boot/findBuildRoot';
 import { resolveProjectUri } from '../../utils/paths';
-import { dependsOnField } from '../sharedFields';
+import { dependsOnField, envFilesField } from '../sharedFields';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
 
@@ -307,6 +307,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
         },
       ],
       advanced: [
+        envFilesField(),
         {
           kind: 'kv',
           key: 'env',

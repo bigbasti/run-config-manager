@@ -3,6 +3,7 @@ import type { FormSchema } from '../../src/shared/formSchema';
 import type { RunConfig } from '../../src/shared/types';
 import { buildCommandPreview } from '../../src/shared/buildCommandPreview';
 import { Field } from './form/Field';
+import type { EnvFileStatus } from './form/EnvFileList';
 
 interface Props {
   schema: FormSchema;
@@ -17,9 +18,11 @@ interface Props {
   onValidatePath?: (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', path: string) => void;
   fieldErrors?: Map<string, string>;
   workspaceFolderPath?: string;
+  envFileStatus?: Map<string, EnvFileStatus>;
+  onAddEnvFile?: () => void;
 }
 
-export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath, fieldErrors, workspaceFolderPath }: Props) {
+export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath, fieldErrors, workspaceFolderPath, envFileStatus, onAddEnvFile }: Props) {
   const preview = useMemo(() => {
     try { return buildCommandPreview(values as RunConfig, workspaceFolderPath); } catch { return ''; }
   }, [values, workspaceFolderPath]);
@@ -28,6 +31,7 @@ export function ConfigForm({ schema, values, onChange, onPickFolder, onFocusFiel
   const shared = {
     values: values as any, onChange: change, onFocusField, onFieldAction,
     busyActionId, pending, pathWarnings, onValidatePath, fieldErrors,
+    envFileStatus, onAddEnvFile,
   };
 
   return (

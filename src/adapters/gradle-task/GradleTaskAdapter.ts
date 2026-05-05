@@ -9,7 +9,7 @@ import { findGradleRoot } from '../spring-boot/findBuildRoot';
 import { resolveProjectUri } from '../../utils/paths';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
-import { dependsOnField } from '../sharedFields';
+import { dependsOnField, envFilesField } from '../sharedFields';
 import type { GradleTaskEntry } from './discoverGradleTasks';
 
 const VAR_SYNTAX_HINT =
@@ -227,6 +227,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
         },
       ],
       advanced: [
+        envFilesField(),
         {
           kind: 'kv',
           key: 'env',

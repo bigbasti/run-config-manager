@@ -7,6 +7,7 @@ import { ConfigForm } from './ConfigForm';
 import { HelpPanel } from './HelpPanel';
 import { BuildToolSettingsPanel, buildToolForConfig } from './BuildToolSettingsPanel';
 import { JdkDownloadDialog } from './JdkDownloadDialog';
+import type { EnvFileStatus } from './form/EnvFileList';
 import type { JdkPackageDto } from '../../src/shared/protocol';
 
 declare function acquireVsCodeApi(): { postMessage(msg: Outbound): void; getState<T>(): T; setState<T>(s: T): void };
@@ -94,6 +95,17 @@ export function App() {
   // App.tsx forwards anything it doesn't handle locally so the dialog can
   // listen without us re-dispatching every message kind.
   const dialogSubscribersRef = useRef<Set<(m: Inbound) => void>>(new Set());
+
+  // Env file load status, keyed by path. Refreshed every time the
+  // envFiles array on the config changes (init, configPatch, add/remove)
+  // so the list pills always reflect the current files-on-disk state —
+  // including the "missing" red flag the user gets when they edit a
+  // saved config whose .env file moved or was deleted.
+  const [envFileStatus, setEnvFileStatus] = useState<Map<string, EnvFileStatus>>(new Map());
+  // Track the last envFiles list we asked the extension to load. Lets us
+  // dedupe so a re-render that doesn't change the list doesn't trigger
+  // another round-trip.
+  const lastEnvFilesKeyRef = useRef<string>('');
 
   // Build-tool settings panel state. `settings` holds the most recent reply
   // from the extension; `settingsLoading` indicates a fetch is in flight so
@@ -213,6 +225,29 @@ export function App() {
           }
           return next;
         });
+      } else if (msg.cmd === 'envFilePicked') {
+        // User picked a file in the OS dialog. Append to the current
+        // envFiles array on the config; the auto-load effect picks it up.
+        setValues(prev => {
+          const existing = ((prev as any).envFiles as string[] | undefined) ?? [];
+          // De-dupe: clicking Add twice with the same file shouldn't add
+          // it twice.
+          if (existing.includes(msg.path)) return prev;
+          return { ...(prev as any), envFiles: [...existing, msg.path] };
+        });
+      } else if (msg.cmd === 'envFilesLoaded') {
+        const next = new Map<string, EnvFileStatus>();
+        for (const f of msg.files) {
+          next.set(f.path, {
+            path: f.path,
+            loaded: f.loaded,
+            count: f.count,
+            variables: f.variables,
+            ...(f.error ? { error: f.error } : {}),
+            ...(f.errorDetail ? { errorDetail: f.errorDetail } : {}),
+          });
+        }
+        setEnvFileStatus(next);
       } else if (msg.cmd === 'jdkDownloadList') {
         // Server replied to our `listJdkDownloads` — open the dialog. The
         // dialog will later post messages directly via `post()` and listen
@@ -280,6 +315,22 @@ export function App() {
     if (lastInspectedRef.current === id) return;
     lastInspectedRef.current = id;
     post({ cmd: 'inspectContainer', containerId: id });
+  }, [values]);
+
+  // Reload .env file status whenever the envFiles array changes. Fires on
+  // init (so editing a saved config shows accurate counts and a red row
+  // for any file that's gone missing on disk), on configPatch streaming,
+  // and on every add/remove. Cheap — a few KB of disk per file.
+  useEffect(() => {
+    const list = ((values as any).envFiles as string[] | undefined) ?? [];
+    const key = list.join('');
+    if (lastEnvFilesKeyRef.current === key) return;
+    lastEnvFilesKeyRef.current = key;
+    if (list.length === 0) {
+      setEnvFileStatus(new Map());
+      return;
+    }
+    post({ cmd: 'loadEnvFiles', paths: list });
   }, [values]);
 
   // Re-fetch the Maven/Gradle settings panel data whenever the effective
@@ -433,6 +484,8 @@ export function App() {
           pathWarnings={pathWarnings}
           onValidatePath={onValidatePath}
           fieldErrors={fieldErrors}
+          envFileStatus={envFileStatus}
+          onAddEnvFile={() => post({ cmd: 'pickEnvFile' })}
         />
         <div className="side-column">
           <HelpPanel schema={schema} focusedKey={focusedKey} />

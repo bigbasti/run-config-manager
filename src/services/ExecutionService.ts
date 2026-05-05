@@ -13,6 +13,7 @@ import {
   firstMatch,
 } from './readyPatterns';
 import { makePrettifier } from './prettyOutput';
+import { loadEnvFiles } from './EnvFileLoader';
 
 interface Entry {
   execution: vscode.TaskExecution;
@@ -161,8 +162,37 @@ export class ExecutionService {
     const { command, args } = adapter.buildCommand(resolvedCfg, folder);
     log.debug(`buildCommand: ${command} ${args.join(' ')}`);
     log.debug(`cwd: ${cwd}`);
+    // Load .env files freshly per launch — the spec is that values are
+    // never baked into the saved config, so editing the file is enough
+    // to change behaviour. Missing files warn and continue.
+    const envFiles = (resolvedCfg.envFiles ?? []) as string[];
+    let envFromFiles: Record<string, string> = {};
+    if (envFiles.length > 0) {
+      const { merged, files } = await loadEnvFiles(envFiles, folder.uri.fsPath);
+      envFromFiles = merged;
+      const missing = files.filter(f => !f.loaded).map(f => f.path);
+      if (missing.length) {
+        log.warn(`Run "${cfg.name}": .env file(s) missing/unreadable: ${missing.join(', ')}`);
+      }
+      const loadedCount = files.filter(f => f.loaded).length;
+      const varCount = Object.keys(envFromFiles).length;
+      log.debug(
+        `Run "${cfg.name}": loaded ${loadedCount}/${files.length} .env file(s), ${varCount} merged var(s)`,
+      );
+    }
+    // Merge precedence (last wins):
+    //   1. process.env  — host environment baseline.
+    //   2. envFromFiles — .env files in user-declared order; later files
+    //                     in the array overwrote earlier ones during load.
+    //   3. cfg.env      — explicitly typed env table on the form. Form
+    //                     wins over .env so a user override always sticks.
+    //   4. prepared.env — adapter additions (e.g. Tomcat CATALINA_BASE).
+    //                     Last because adapter knows what it's doing and
+    //                     occasionally needs to overwrite user input
+    //                     (e.g. JAVA_HOME for forked compilers).
     const mergedEnv: Record<string, string | undefined> = {
       ...process.env,
+      ...envFromFiles,
       ...resolvedCfg.env,
       ...(prepared.env ?? {}),
     };

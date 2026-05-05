@@ -5,7 +5,7 @@ import type { RunConfig } from '../../shared/types';
 import type { FormSchema } from '../../shared/formSchema';
 import { resolveProjectUri } from '../../utils/paths';
 import { log } from '../../utils/logger';
-import { dependsOnField } from '../sharedFields';
+import { dependsOnField, envFilesField } from '../sharedFields';
 
 const VAR_SYNTAX_HINT =
   'Supports ${VAR} and ${env:VAR} (environment variables), ' +
@@ -119,6 +119,7 @@ export class CustomCommandAdapter implements RuntimeAdapter {
         },
       ],
       advanced: [
+        envFilesField(),
         {
           kind: 'kv',
           key: 'env',

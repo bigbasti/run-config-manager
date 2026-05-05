@@ -12,7 +12,7 @@ import { suggestClasspath } from '../spring-boot/suggestClasspath';
 import { resolveProjectUri } from '../../utils/paths';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
-import { dependsOnField } from '../sharedFields';
+import { dependsOnField, envFilesField } from '../sharedFields';
 
 const VAR_SYNTAX_HINT =
   'Supports ${VAR} and ${env:VAR} (environment variables), ' +
@@ -385,6 +385,7 @@ export class JavaAdapter implements RuntimeAdapter {
         },
       ],
       advanced: [
+        envFilesField(),
         {
           kind: 'kv',
           key: 'env',

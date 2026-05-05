@@ -5,7 +5,7 @@ import type { FormField, FormSchema } from '../../shared/formSchema';
 import { readPackageJsonInfo } from './detectPackageJson';
 import { splitArgs } from './splitArgs';
 import { log } from '../../utils/logger';
-import { dependsOnField } from '../sharedFields';
+import { dependsOnField, envFilesField } from '../sharedFields';
 import { detectNpmPort } from '../../services/detectProjectPort';
 
 export class NpmAdapter implements RuntimeAdapter {
@@ -113,6 +113,7 @@ export class NpmAdapter implements RuntimeAdapter {
         },
       ],
       advanced: [
+        envFilesField(),
         {
           kind: 'kv',
           key: 'env',

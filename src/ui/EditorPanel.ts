@@ -15,6 +15,7 @@ import { validateBuildProjectPath } from '../utils/validateBuildProjectPath';
 import { RunConfigSchema } from '../shared/schema';
 import type { DockerService } from '../services/DockerService';
 import { BuildToolSettingsService } from '../services/BuildToolSettingsService';
+import { loadEnvFiles } from '../services/EnvFileLoader';
 import { JdkInstallerService, type JdkPackage, CancelledError, ChecksumUnavailableError, jdkInstallDirName } from '../services/JdkInstallerService';
 import { probeJdkVersion } from '../adapters/spring-boot/detectJdks';
 
@@ -540,6 +541,45 @@ export class EditorPanel {
         }
         return;
       }
+      case 'pickEnvFile': {
+        // File picker scoped to .env files. We allow any extension though
+        // — many projects use `.env.local`, `.env.dev`, etc.
+        log.debug('pickEnvFile');
+        const picked = await vscode.window.showOpenDialog({
+          canSelectFiles: true,
+          canSelectFolders: false,
+          canSelectMany: false,
+          defaultUri: this.args.folder.uri,
+          openLabel: 'Add .env file',
+          // No `filters` — `.env` files don't carry a conventional
+          // extension and applying a filter would hide them.
+        });
+        if (!picked || picked.length === 0) return;
+        const rel = relativeFromWorkspace(this.args.folder, picked[0]);
+        log.debug(`pickEnvFile picked: ${rel}`);
+        this.panel.webview.postMessage({ cmd: 'envFilePicked', path: rel } satisfies Inbound);
+        return;
+      }
+      case 'loadEnvFiles': {
+        // Asked by the webview on init, when files are added/removed, and
+        // also via "edit existing config" so the count pills always
+        // reflect the current files. Errors per-file are surfaced via
+        // the `error` tag on each entry — we never reject the whole batch.
+        log.debug(`loadEnvFiles: ${msg.paths.length} path(s)`);
+        const result = await loadEnvFiles(msg.paths, this.args.folder.uri.fsPath);
+        this.panel.webview.postMessage({
+          cmd: 'envFilesLoaded',
+          files: result.files.map(f => ({
+            path: f.path,
+            loaded: f.loaded,
+            count: Object.keys(f.variables).length,
+            variables: f.variables,
+            ...(f.error ? { error: f.error } : {}),
+            ...(f.errorDetail ? { errorDetail: f.errorDetail } : {}),
+          })),
+        } satisfies Inbound);
+        return;
+      }
       case 'listJdkDownloads': {
         // Initial dialog open. Return distro list immediately and load the
         // first distro's packages so the version dropdown is populated on
@@ -908,6 +948,11 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
   // empty (an empty string would treat the config as "in a group named ''"
   // which the tree provider would then render as a nameless folder).
   const groupTrimmed = cfg.group?.trim();
+  // Normalise envFiles: trim each path, drop empties, drop the array
+  // entirely when nothing's left so saved run.json stays tidy.
+  const envFiles = (cfg.envFiles ?? [])
+    .map(p => (typeof p === 'string' ? p.trim() : ''))
+    .filter(Boolean);
   const common = {
     ...cfg,
     env: cfg.env ?? {},
@@ -915,11 +960,13 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
     vmArgs: cfg.vmArgs ?? '',
     ...(deps.length > 0 ? { dependsOn: deps } : { dependsOn: undefined }),
     ...(groupTrimmed ? { group: groupTrimmed } : { group: undefined }),
+    ...(envFiles.length > 0 ? { envFiles } : { envFiles: undefined }),
   };
   // Remove explicit undefined slots so JSON.stringify doesn't leave
   // `"dependsOn": null` / `"group": null` artefacts on disk.
   if (common.dependsOn === undefined) delete (common as any).dependsOn;
   if (common.group === undefined) delete (common as any).group;
+  if (common.envFiles === undefined) delete (common as any).envFiles;
   if (cfg.type === 'tomcat') {
     const to = cfg.typeOptions as Partial<import('../shared/types').TomcatTypeOptions> | undefined;
     return {

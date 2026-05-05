@@ -7,6 +7,7 @@ import { SelectOrCustom } from './SelectOrCustom';
 import { CsvChecklist } from './CsvChecklist';
 import { InspectDialog } from './InspectDialog';
 import { DependencyList } from './DependencyList';
+import { EnvFileList, type EnvFileStatus } from './EnvFileList';
 
 interface Props {
   field: FormField;
@@ -26,9 +27,16 @@ interface Props {
   // Lookup by field key. Undefined means "no error"; otherwise the message
   // is rendered below the input and a red border is drawn around the field.
   fieldErrors?: Map<string, string>;
+  // Status map for envFileList fields. Keyed by path; value is the
+  // per-file load result the extension reported. Empty/undefined while
+  // load is in flight — the list shows "loading…" in that state.
+  envFileStatus?: Map<string, EnvFileStatus>;
+  // Pop the file picker for an envFileList field. App.tsx posts
+  // `pickEnvFile` and appends the picked path to the array on reply.
+  onAddEnvFile?: () => void;
 }
 
-export function Field({ field, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath, fieldErrors }: Props) {
+export function Field({ field, values, onChange, onPickFolder, onFocusField, onFieldAction, busyActionId, pending, pathWarnings, onValidatePath, fieldErrors, envFileStatus, onAddEnvFile }: Props) {
   // Honor dependsOn: hide the field if its dependency's current value doesn't match.
   if (field.dependsOn) {
     const dep = getPath(values, field.dependsOn.key);
@@ -93,6 +101,8 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
             blur,
             pathWarning: pathWarnings?.get(field.key),
             onValidatePath,
+            envFileStatus,
+            onAddEnvFile,
           })}
         </div>
         {inspectable && (
@@ -211,6 +221,11 @@ interface RenderHandlers {
   blur: () => void;
   pathWarning?: { reason: string; suggestion?: string } | null;
   onValidatePath?: (fieldKey: string, buildTool: 'maven' | 'gradle' | 'either', path: string) => void;
+  // Used by the new envFileList kind. Pulled into RenderHandlers because
+  // every field-level callback already lives here, keeping renderInput's
+  // signature stable.
+  envFileStatus?: Map<string, EnvFileStatus>;
+  onAddEnvFile?: () => void;
 }
 
 function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderHandlers) {
@@ -330,6 +345,17 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
           onBlur={h.blur}
         />
       );
+    case 'envFileList': {
+      const list = (v as string[] | undefined) ?? [];
+      return (
+        <EnvFileList
+          files={list}
+          status={h.envFileStatus ?? new Map()}
+          onAdd={() => h.onAddEnvFile?.()}
+          onRemove={idx => set(list.filter((_, i) => i !== idx))}
+        />
+      );
+    }
   }
 }
 

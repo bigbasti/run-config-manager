@@ -116,6 +116,16 @@ export type FormField =
       // human-readable. `group` collects them visually (e.g. "This folder",
       // "Launch configs", "Tasks").
       options: Array<{ value: string; label: string; group?: string; description?: string }>;
+    } & BaseFieldMeta)
+  | ({
+      // List of .env file paths feeding into the env merge at run time.
+      // Stores `string[]` on the config (`envFiles`); the per-file parsed
+      // variables come from the extension's `envFilesLoaded` reply, not
+      // from the saved config. Renders as a stack of file pills with
+      // count + missing-file warning + eye-icon preview.
+      kind: 'envFileList';
+      key: string;
+      label: string;
     } & BaseFieldMeta);
 
 export type InfoContent = {

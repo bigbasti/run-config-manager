@@ -85,6 +85,14 @@ interface RunConfigBase {
   projectPath: string;
   workspaceFolder: string;
   env: Record<string, string>;
+  // Paths to `.env` files (workspace-relative or absolute) that contribute
+  // env vars at run time. Loaded fresh on every launch — values are NOT
+  // copied into the saved config, so editing the file picks up the change
+  // without re-saving the run config. Multiple files are loaded in order;
+  // later files override earlier ones, and the form's `env` map overrides
+  // both. Storing only the path keeps the config tidy and avoids leaking
+  // secrets into run.json.
+  envFiles?: string[];
   programArgs: string;
   vmArgs: string;
   port?: number;
