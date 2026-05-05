@@ -3,6 +3,7 @@ import type { RuntimeAdapter, DetectionResult, StreamingPatch } from '../Runtime
 import type { RunConfig } from '../../shared/types';
 import type { FormSchema } from '../../shared/formSchema';
 import { detectJdks } from '../spring-boot/detectJdks';
+import { probeJdksStreaming, readJdks, jdkOption } from '../spring-boot/probeJdksStreaming';
 import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { findGradleRoot } from '../spring-boot/findBuildRoot';
 import { resolveProjectUri } from '../../utils/paths';
@@ -61,7 +62,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
       },
       context: {
         gradleCommand: effectiveGradleCommand,
-        jdks,
+        jdks: jdks.map(p => ({ path: p })),
         gradleInstalls: buildTools.gradleInstalls,
         buildRoot,
         // Populated on demand via the 'loadTasks' action — empty at first.
@@ -106,15 +107,9 @@ export class GradleTaskAdapter implements RuntimeAdapter {
       });
     })().catch(e => log.warn(`Gradle Task probe (gradleCommand/buildRoot) failed: ${(e as Error).message}`));
 
-    (async () => {
-      const jdks = await detectJdks();
-      log.debug(`Gradle Task probe: jdks=${jdks.length}`);
-      emit({
-        contextPatch: { jdks },
-        defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
-        resolved: ['typeOptions.jdkPath'],
-      });
-    })().catch(e => log.warn(`Gradle Task probe (jdks) failed: ${(e as Error).message}`));
+    probeJdksStreaming(emit, 'gradle-task').catch(e =>
+      log.warn(`Gradle Task probe (jdks) failed: ${(e as Error).message}`),
+    );
 
     (async () => {
       const bt = await detectBuildTools();
@@ -128,7 +123,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
   }
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
-    const jdks = (context.jdks as string[] | undefined) ?? [];
+    const jdks = readJdks(context.jdks);
     const gradleInstalls = (context.gradleInstalls as string[] | undefined) ?? [];
     const detectedBuildRoot = (context.buildRoot as string | undefined) ?? '';
     const loadedTasks = (context.loadedTasks as GradleTaskEntry[] | undefined) ?? [];
@@ -218,7 +213,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
           kind: 'selectOrCustom',
           key: 'typeOptions.jdkPath',
           label: 'JDK',
-          options: jdks.map(p => ({ value: p, label: p })),
+          options: jdks.map(jdkOption),
           placeholder: '/path/to/jdk',
           help: 'Java installation. Sets JAVA_HOME for the task. Leave blank to use the build tool\'s default.',
           examples: ['/usr/lib/jvm/jdk-21', '/opt/jdk-17'],

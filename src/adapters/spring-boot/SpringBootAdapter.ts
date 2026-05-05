@@ -5,6 +5,7 @@ import type { FormField, FormSchema } from '../../shared/formSchema';
 import { readSpringBootInfo } from './detectSpringBoot';
 import { findMainClasses, type MainClassCandidate } from '../java-shared/findMainClasses';
 import { detectJdks } from './detectJdks';
+import { probeJdksStreaming, readJdks, jdkOption } from './probeJdksStreaming';
 import { suggestClasspath } from './suggestClasspath';
 import { detectBuildTools } from './detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from './findBuildRoot';
@@ -111,7 +112,10 @@ export class SpringBootAdapter implements RuntimeAdapter {
         buildTool: info.buildTool,
         gradleCommand: effectiveGradleCommand,
         mainClasses,
-        jdks,
+        // Wrap string paths into JdkInfo[]. Streaming detection later
+        // overwrites this with version-enriched entries; the synchronous
+        // form keeps the dropdown usable from the first paint.
+        jdks: jdks.map(p => ({ path: p })),
         gradleInstalls: buildTools.gradleInstalls,
         mavenInstalls: buildTools.mavenInstalls,
         buildRoot,
@@ -241,16 +245,14 @@ export class SpringBootAdapter implements RuntimeAdapter {
       });
     })().catch(e => log.warn(`Spring Boot probe (mainClasses) failed: ${(e as Error).message}`));
 
-    // JDK probe: filesystem + (possibly) Java extension API.
-    (async () => {
-      const jdks = await detectJdks();
-      log.debug(`Spring Boot probe: jdks=${jdks.length}`);
-      emit({
-        contextPatch: { jdks },
-        defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
-        resolved: ['typeOptions.jdkPath'],
-      });
-    })().catch(e => log.warn(`Spring Boot probe (jdks) failed: ${(e as Error).message}`));
+    // JDK probe: filesystem + (possibly) Java extension API. Two-phase —
+    // emits paths first, then enriches with versions in a second sweep so
+    // the dropdown labels show "Java 21.0.2 (Temurin)" once probed. The
+    // helper keeps `typeOptions.jdkPath` in the pending set the whole time
+    // so the spinner renders next to the field while versions resolve.
+    probeJdksStreaming(emit, 'spring-boot').catch(e =>
+      log.warn(`Spring Boot probe (jdks) failed: ${(e as Error).message}`),
+    );
 
     // Build-tool installs.
     (async () => {
@@ -282,7 +284,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
     const mainClasses = (context.mainClasses as MainClassCandidate[] | undefined) ?? [];
-    const jdks = (context.jdks as string[] | undefined) ?? [];
+    const jdks = readJdks(context.jdks);
     const gradleInstalls = (context.gradleInstalls as string[] | undefined) ?? [];
     const mavenInstalls = (context.mavenInstalls as string[] | undefined) ?? [];
     const detectedBuildTool = (context.buildTool as string | undefined) ?? 'maven';
@@ -294,7 +296,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
       label: m.isSpringBoot ? `🚀 ${m.fqn}` : m.fqn,
     }));
 
-    const jdkOptions = jdks.map(p => ({ value: p, label: p }));
+    const jdkOptions = jdks.map(jdkOption);
     const gradleInstallOptions = gradleInstalls.map(p => ({ value: p, label: p }));
     const mavenInstallOptions = mavenInstalls.map(p => ({ value: p, label: p }));
     const detectedProfiles = (context.profiles as string[] | undefined) ?? [];

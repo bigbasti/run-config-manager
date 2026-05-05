@@ -3,6 +3,7 @@ import type { RuntimeAdapter, DetectionResult, StreamingPatch } from '../Runtime
 import type { RunConfig } from '../../shared/types';
 import type { FormSchema } from '../../shared/formSchema';
 import { detectJdks } from '../spring-boot/detectJdks';
+import { probeJdksStreaming, readJdks, jdkOption } from '../spring-boot/probeJdksStreaming';
 import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { findMavenRoot } from '../spring-boot/findBuildRoot';
 import { splitArgs } from '../npm/splitArgs';
@@ -51,7 +52,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
         },
       },
       context: {
-        jdks,
+        jdks: jdks.map(p => ({ path: p })),
         mavenInstalls: buildTools.mavenInstalls,
         buildRoot,
         loadedGoals: [],
@@ -90,15 +91,9 @@ export class MavenGoalAdapter implements RuntimeAdapter {
       });
     })().catch(e => log.warn(`Maven Goal probe (buildRoot) failed: ${(e as Error).message}`));
 
-    (async () => {
-      const jdks = await detectJdks();
-      log.debug(`Maven Goal probe: jdks=${jdks.length}`);
-      emit({
-        contextPatch: { jdks },
-        defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
-        resolved: ['typeOptions.jdkPath'],
-      });
-    })().catch(e => log.warn(`Maven Goal probe (jdks) failed: ${(e as Error).message}`));
+    probeJdksStreaming(emit, 'maven-goal').catch(e =>
+      log.warn(`Maven Goal probe (jdks) failed: ${(e as Error).message}`),
+    );
 
     (async () => {
       const bt = await detectBuildTools();
@@ -112,7 +107,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
   }
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
-    const jdks = (context.jdks as string[] | undefined) ?? [];
+    const jdks = readJdks(context.jdks);
     const mavenInstalls = (context.mavenInstalls as string[] | undefined) ?? [];
     const detectedBuildRoot = (context.buildRoot as string | undefined) ?? '';
     const loadedGoals = (context.loadedGoals as MavenGoalEntry[] | undefined) ?? [];
@@ -203,7 +198,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
           kind: 'selectOrCustom',
           key: 'typeOptions.jdkPath',
           label: 'JDK',
-          options: jdks.map(p => ({ value: p, label: p })),
+          options: jdks.map(jdkOption),
           placeholder: '/path/to/jdk',
           help: 'Java installation. Sets JAVA_HOME for mvn.',
           examples: ['/usr/lib/jvm/jdk-21', '/opt/jdk-17'],

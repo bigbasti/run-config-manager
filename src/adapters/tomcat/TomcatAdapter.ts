@@ -3,6 +3,7 @@ import type { RuntimeAdapter, DetectionResult, StreamingPatch } from '../Runtime
 import type { RunConfig } from '../../shared/types';
 import type { FormSchema } from '../../shared/formSchema';
 import { detectJdks } from '../spring-boot/detectJdks';
+import { probeJdksStreaming, readJdks, jdkOption } from '../spring-boot/probeJdksStreaming';
 import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { detectTomcatInstalls, findTomcatArtifacts } from './detectTomcat';
 import { prepareTomcatLaunch, catalinaExecutable } from './tomcatRuntime';
@@ -77,7 +78,7 @@ export class TomcatAdapter implements RuntimeAdapter {
       },
       context: {
         tomcatInstalls,
-        jdks,
+        jdks: jdks.map(p => ({ path: p })),
         gradleInstalls: buildTools.gradleInstalls,
         mavenInstalls: buildTools.mavenInstalls,
         artifacts,
@@ -125,15 +126,9 @@ export class TomcatAdapter implements RuntimeAdapter {
       });
     })().catch(e => log.warn(`Tomcat probe (tomcatInstalls) failed: ${(e as Error).message}`));
 
-    (async () => {
-      const jdks = await detectJdks();
-      log.debug(`Tomcat probe: jdks=${jdks.length}`);
-      emit({
-        contextPatch: { jdks },
-        defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
-        resolved: ['typeOptions.jdkPath'],
-      });
-    })().catch(e => log.warn(`Tomcat probe (jdks) failed: ${(e as Error).message}`));
+    probeJdksStreaming(emit, 'tomcat').catch(e =>
+      log.warn(`Tomcat probe (jdks) failed: ${(e as Error).message}`),
+    );
 
     (async () => {
       const bt = await detectBuildTools();
@@ -215,7 +210,7 @@ export class TomcatAdapter implements RuntimeAdapter {
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
     const tomcatInstalls = (context.tomcatInstalls as string[] | undefined) ?? [];
-    const jdks = (context.jdks as string[] | undefined) ?? [];
+    const jdks = readJdks(context.jdks);
     const gradleInstalls = (context.gradleInstalls as string[] | undefined) ?? [];
     const mavenInstalls = (context.mavenInstalls as string[] | undefined) ?? [];
     const artifacts = (context.artifacts as Array<{ path: string; kind: string; label: string }> | undefined) ?? [];
@@ -262,7 +257,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           kind: 'selectOrCustom',
           key: 'typeOptions.jdkPath',
           label: 'JDK',
-          options: jdks.map(p => ({ value: p, label: p })),
+          options: jdks.map(jdkOption),
           placeholder: '/usr/lib/jvm/zulu-17-amd64',
           help: 'JDK to run Tomcat with. Leave blank for `java` from PATH.',
           examples: ['/usr/lib/jvm/zulu-17-amd64', '/opt/jdk-21'],

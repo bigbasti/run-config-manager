@@ -5,6 +5,7 @@ import type { FormSchema } from '../../shared/formSchema';
 import { detectJavaApp } from './detectJavaApp';
 import { findMainClasses, type MainClassCandidate } from '../java-shared/findMainClasses';
 import { detectJdks } from '../spring-boot/detectJdks';
+import { probeJdksStreaming, readJdks, jdkOption } from '../spring-boot/probeJdksStreaming';
 import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from '../spring-boot/findBuildRoot';
 import { suggestClasspath } from '../spring-boot/suggestClasspath';
@@ -86,7 +87,7 @@ export class JavaAdapter implements RuntimeAdapter {
         gradleCommand: effectiveGradleCommand,
         hasApplicationPlugin: info.hasApplicationPlugin,
         mainClasses,
-        jdks,
+        jdks: jdks.map(p => ({ path: p })),
         gradleInstalls: buildTools.gradleInstalls,
         mavenInstalls: buildTools.mavenInstalls,
         buildRoot,
@@ -165,15 +166,9 @@ export class JavaAdapter implements RuntimeAdapter {
       });
     })().catch(e => log.warn(`Java probe (mainClasses) failed: ${(e as Error).message}`));
 
-    (async () => {
-      const jdks = await detectJdks();
-      log.debug(`Java probe: jdks=${jdks.length}`);
-      emit({
-        contextPatch: { jdks },
-        defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
-        resolved: ['typeOptions.jdkPath'],
-      });
-    })().catch(e => log.warn(`Java probe (jdks) failed: ${(e as Error).message}`));
+    probeJdksStreaming(emit, 'java').catch(e =>
+      log.warn(`Java probe (jdks) failed: ${(e as Error).message}`),
+    );
 
     (async () => {
       const bt = await detectBuildTools();
@@ -205,7 +200,7 @@ export class JavaAdapter implements RuntimeAdapter {
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
     const mainClasses = (context.mainClasses as MainClassCandidate[] | undefined) ?? [];
-    const jdks = (context.jdks as string[] | undefined) ?? [];
+    const jdks = readJdks(context.jdks);
     const gradleInstalls = (context.gradleInstalls as string[] | undefined) ?? [];
     const mavenInstalls = (context.mavenInstalls as string[] | undefined) ?? [];
     const detectedBuildTool = (context.buildTool as string | undefined) ?? 'maven';
@@ -216,7 +211,7 @@ export class JavaAdapter implements RuntimeAdapter {
     // For Java we ignore the Spring tag — every main class is a legitimate
     // candidate. Sort stays stable (findMainClasses already sorts).
     const mainClassOptions = mainClasses.map(m => ({ value: m.fqn, label: m.fqn }));
-    const jdkOptions = jdks.map(p => ({ value: p, label: p }));
+    const jdkOptions = jdks.map(jdkOption);
     const gradleInstallOptions = gradleInstalls.map(p => ({ value: p, label: p }));
     const mavenInstallOptions = mavenInstalls.map(p => ({ value: p, label: p }));
 

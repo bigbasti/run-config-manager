@@ -6,6 +6,7 @@ import { readQuarkusInfo } from './detectQuarkus';
 import { findQuarkusProfiles } from './findQuarkusProfiles';
 import { detectQuarkusPort, safeDetect } from '../../services/detectProjectPort';
 import { detectJdks } from '../spring-boot/detectJdks';
+import { probeJdksStreaming, readJdks, jdkOption } from '../spring-boot/probeJdksStreaming';
 import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from '../spring-boot/findBuildRoot';
 import { resolveProjectUri } from '../../utils/paths';
@@ -71,7 +72,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
       context: {
         buildTool: info.buildTool,
         gradleCommand: effectiveGradleCommand,
-        jdks,
+        jdks: jdks.map(p => ({ path: p })),
         gradleInstalls: buildTools.gradleInstalls,
         mavenInstalls: buildTools.mavenInstalls,
         buildRoot,
@@ -145,15 +146,9 @@ export class QuarkusAdapter implements RuntimeAdapter {
       }
     })().catch(e => log.warn(`Quarkus probe (port) failed: ${(e as Error).message}`));
 
-    (async () => {
-      const jdks = await detectJdks();
-      log.debug(`Quarkus probe: jdks=${jdks.length}`);
-      emit({
-        contextPatch: { jdks },
-        defaultsPatch: jdks[0] ? { typeOptions: { jdkPath: jdks[0] } as any } : undefined,
-        resolved: ['typeOptions.jdkPath'],
-      });
-    })().catch(e => log.warn(`Quarkus probe (jdks) failed: ${(e as Error).message}`));
+    probeJdksStreaming(emit, 'quarkus').catch(e =>
+      log.warn(`Quarkus probe (jdks) failed: ${(e as Error).message}`),
+    );
 
     (async () => {
       const bt = await detectBuildTools();
@@ -172,7 +167,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
   }
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
-    const jdks = (context.jdks as string[] | undefined) ?? [];
+    const jdks = readJdks(context.jdks);
     const gradleInstalls = (context.gradleInstalls as string[] | undefined) ?? [];
     const mavenInstalls = (context.mavenInstalls as string[] | undefined) ?? [];
     const detectedBuildTool = (context.buildTool as string | undefined) ?? 'maven';
@@ -180,7 +175,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
     const detectedBuildRoot = (context.buildRoot as string | undefined) ?? '';
     const detectedProfiles = (context.profiles as string[] | undefined) ?? [];
 
-    const jdkOptions = jdks.map(p => ({ value: p, label: p }));
+    const jdkOptions = jdks.map(jdkOption);
     const gradleInstallOptions = gradleInstalls.map(p => ({ value: p, label: p }));
     const mavenInstallOptions = mavenInstalls.map(p => ({ value: p, label: p }));
     const profileOptions = detectedProfiles.map(p => ({ value: p, label: p }));
