@@ -128,7 +128,8 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     }
 
     const preparing = this.exec.isPreparing(n.config.id);
-    const running = this.exec.isRunning(n.config.id) || this.dbg.isRunning(n.config.id);
+    const debugging = this.dbg.isRunning(n.config.id);
+    const running = this.exec.isRunning(n.config.id) || debugging;
     const started = this.exec.isStarted(n.config.id);
     const failed = this.exec.isFailed(n.config.id);
     const rebuilding = this.exec.isRebuilding(n.config.id);
@@ -241,8 +242,14 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       item.iconPath = new vscode.ThemeIcon('loading~spin');
       item.description = 'Starting…';
     } else if (started) {
-      item.iconPath = new vscode.ThemeIcon('debug-start', new vscode.ThemeColor('charts.green'));
-      item.description = undefined;
+      // Debug session attached → green bug to mirror VS Code's own
+      // debug-toolbar icon. Plain run → green play. Both share the same
+      // green so colour-coded "running" reads consistently across the
+      // sidebar; the glyph carries the mode signal.
+      item.iconPath = debugging
+        ? new vscode.ThemeIcon('debug', new vscode.ThemeColor('charts.green'))
+        : new vscode.ThemeIcon('debug-start', new vscode.ThemeColor('charts.green'));
+      item.description = debugging ? 'Debug' : undefined;
     } else if (stale) {
       // Idle + stale: surface the warning as the idle-state signal. The
       // tooltip explains; the description nudges the user to re-create the
