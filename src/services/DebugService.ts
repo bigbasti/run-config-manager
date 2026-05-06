@@ -378,21 +378,53 @@ function debugCwd(cfg: RunConfig, folder: vscode.WorkspaceFolder): string {
   return resolveProjectUri(folder, cfg.projectPath).fsPath;
 }
 
-// Probe the given TCP port until it accepts a connection OR the budget
-// expires. Resolves true on first successful connect, false on timeout.
-// Short poll interval (500ms) keeps the attach feel responsive once the JVM
-// gets going.
+// Probe the given JDWP port until the JVM completes a clean
+// JDWP-Handshake exchange. Resolves true on first successful handshake,
+// false on timeout. Short poll interval (500ms) keeps the attach feel
+// responsive once the JVM gets going.
+//
+// We deliberately speak the JDWP protocol here rather than just opening
+// and tearing down a TCP socket. A bare connect-then-destroy looks
+// identical to a half-finished attach to the JDWP agent, which then
+// logs `handshake failed - connection prematurally closed` (sic).
+// That's harmless but very noisy: every probe before the actual attach
+// would show up in the user's terminal. Proper handshake then graceful
+// close = silent agent.
 async function waitForPort(host: string, port: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
+  // The JDWP handshake string is exactly these 14 ASCII bytes — both
+  // directions. See https://docs.oracle.com/en/java/javase/21/docs/specs/jdwp/jdwp-spec.html
+  const HANDSHAKE = Buffer.from('JDWP-Handshake', 'ascii');
   while (Date.now() < deadline) {
-    const alive = await new Promise<boolean>(resolve => {
+    const ok = await new Promise<boolean>(resolve => {
       const sock = net.createConnection({ host, port });
-      const onDone = (ok: boolean) => { sock.destroy(); resolve(ok); };
-      sock.once('connect', () => onDone(true));
-      sock.once('error', () => onDone(false));
-      sock.setTimeout(400, () => onDone(false));
+      let received = Buffer.alloc(0);
+      let resolved = false;
+      const finish = (val: boolean) => {
+        if (resolved) return;
+        resolved = true;
+        // `end()` flushes pending writes and sends FIN — the JVM treats
+        // this as a clean disconnect after a successful handshake, no
+        // log spam.
+        try { sock.end(); } catch { /* ignore */ }
+        resolve(val);
+      };
+      sock.once('connect', () => {
+        // Server speaks first in the JDWP handshake; we're allowed to
+        // write our half right away, the JVM responds when it's ready.
+        try { sock.write(HANDSHAKE); } catch { /* ignore */ }
+      });
+      sock.on('data', chunk => {
+        received = Buffer.concat([received, chunk]);
+        if (received.length >= HANDSHAKE.length) {
+          const matches = received.slice(0, HANDSHAKE.length).equals(HANDSHAKE);
+          finish(matches);
+        }
+      });
+      sock.once('error', () => finish(false));
+      sock.setTimeout(800, () => finish(false));
     });
-    if (alive) return true;
+    if (ok) return true;
     await new Promise(r => setTimeout(r, 500));
   }
   return false;

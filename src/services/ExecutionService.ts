@@ -130,7 +130,7 @@ export class ExecutionService {
 
     // Let the adapter prep any filesystem state / env vars (Tomcat writes its
     // CATALINA_BASE scaffold here). prepareLaunch may override cwd.
-    let prepared: { env?: Record<string, string>; cwd?: string } = {};
+    let prepared: { env?: Record<string, string>; cwd?: string; extraArgs?: string[] } = {};
     if (adapter.prepareLaunch) {
       this.preparing.add(cfg.id);
       this.emitter.fire(cfg.id);
@@ -159,7 +159,12 @@ export class ExecutionService {
     }
 
     const cwd = prepared.cwd ?? initialCwd;
-    const { command, args } = adapter.buildCommand(resolvedCfg, folder);
+    const built = adapter.buildCommand(resolvedCfg, folder);
+    const command = built.command;
+    // Adapters can prepend args via prepared.extraArgs — used by the
+    // Spring Boot debug path to inject `--init-script <path>` so JDWP
+    // applies only to the bootRun JVM, never to the gradle daemon.
+    const args = [...(prepared.extraArgs ?? []), ...built.args];
     log.debug(`buildCommand: ${command} ${args.join(' ')}`);
     log.debug(`cwd: ${cwd}`);
     // Load .env files freshly per launch — the spec is that values are

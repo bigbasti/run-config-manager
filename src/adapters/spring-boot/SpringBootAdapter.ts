@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as nodePath from 'path';
 import type { RuntimeAdapter, DetectionResult } from '../RuntimeAdapter';
 import type { RunConfig } from '../../shared/types';
 import type { FormField, FormSchema } from '../../shared/formSchema';
@@ -585,7 +588,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
     cfg: RunConfig,
     _folder: vscode.WorkspaceFolder,
     ctx: { debug: boolean; debugPort?: number },
-  ): Promise<{ env?: Record<string, string> }> {
+  ): Promise<{ env?: Record<string, string>; extraArgs?: string[] }> {
     if (cfg.type !== 'spring-boot') return {};
     const env: Record<string, string> = {};
     // JAVA_HOME steers which JDK Gradle / Maven use for compilation + forked
@@ -598,25 +601,10 @@ export class SpringBootAdapter implements RuntimeAdapter {
     if (cfg.typeOptions.jdkPath) {
       env.JAVA_HOME = cfg.typeOptions.jdkPath;
     }
-    // JAVA_TOOL_OPTIONS is picked up by every forked JVM — it's the only
-    // channel that reaches `bootRun`'s child process. We compose it from
-    // these inputs that all need to apply:
-    //   1. colorOutput — ansi + log pattern injection
-    //   2. vmArgs (gradle mode only) — user-declared VM args (e.g.
-    //      `-Dspring.config.name=foo`). Maven mode already forwards vmArgs
-    //      via `-Dspring-boot.run.jvmArguments`; java-main applies them
-    //      directly to `java`. Only gradle's `bootRun` had no channel, so we
-    //      bridge via JAVA_TOOL_OPTIONS here.
-    //   3. JDWP — debug attach (gradle only; for maven the flag goes via
-    //      the buildCommand's `-Dspring-boot.run.jvmArguments`, see
-    //      DebugService.startAttachFlow).
-    //
-    // We always set JAVA_TOOL_OPTIONS (even when no parts are present)
-    // so that ExecutionService's last-wins merge doesn't let a stale value
-    // from process.env or cfg.env survive — this used to break debug:
-    // DebugService set cfg.env.JAVA_TOOL_OPTIONS=<jdwp> for gradle, but
-    // prepareLaunch overwrote it without the JDWP flag, leaving the
-    // forked JVM with no debug socket. Now JDWP is composed in here.
+    // JAVA_TOOL_OPTIONS is the bridge for color args + user vmArgs into
+    // every forked JVM (the gradle daemon, the bootRun child, and any
+    // tests they spawn). Crucially we do NOT put JDWP here — see the
+    // gradle debug branch below for why.
     const toolOptParts: string[] = [];
     if (cfg.typeOptions.colorOutput) {
       env.FORCE_COLOR = '1';
@@ -630,18 +618,32 @@ export class SpringBootAdapter implements RuntimeAdapter {
     if (cfg.typeOptions.launchMode === 'gradle') {
       const vm = (cfg.vmArgs ?? '').trim();
       if (vm) toolOptParts.push(vm);
-      // suspend=n so bootRun reaches "Started" before the user attaches;
-      // server=y is mandatory for attach mode. address=*:<port> binds on
-      // every interface, matching how IntelliJ's bootRun debug works.
-      if (ctx.debug && cfg.typeOptions.launchMode === 'gradle') {
-        const port = ctx.debugPort ?? cfg.typeOptions.debugPort ?? 5005;
-        toolOptParts.push(`-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}`);
-      }
     }
     if (toolOptParts.length) {
       env.JAVA_TOOL_OPTIONS = toolOptParts.join(' ');
     }
-    return { env };
+
+    // Gradle debug: write an init script that adds the JDWP arg only to
+    // the BootRun task's jvmArgs, then pass `--init-script <path>` to
+    // gradle via extraArgs. This is the IntelliJ approach.
+    //
+    // Why not JAVA_TOOL_OPTIONS for JDWP? It applies to *every* forked
+    // JVM, including the gradle daemon itself. The daemon JVM grabs
+    // port 5005 first, and bootRun's forked JVM then fails to bind:
+    //   ERROR: transport error 202: bind failed: Address already in use
+    // The init script targets BootRun in isolation, so the daemon stays
+    // a normal JVM and only the application gets the debug agent.
+    let extraArgs: string[] | undefined;
+    if (ctx.debug && cfg.typeOptions.launchMode === 'gradle') {
+      const port = ctx.debugPort ?? cfg.typeOptions.debugPort ?? 5005;
+      const initScriptPath = await writeBootRunDebugInitScript(port);
+      // `--init-script` is gradle's "run this file before settling
+      // configuration"; we leave the user's own gradle setup alone.
+      extraArgs = ['--init-script', initScriptPath];
+      log.debug(`Spring Boot gradle debug: init script ${initScriptPath} (port ${port})`);
+    }
+
+    return { env, ...(extraArgs ? { extraArgs } : {}) };
   }
 
   getDebugConfig(cfg: RunConfig, _folder: vscode.WorkspaceFolder): vscode.DebugConfiguration {
@@ -797,4 +799,33 @@ function buildJavaMain(cfg: Extract<RunConfig, { type: 'spring-boot' }>) {
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+// Writes a Gradle init script that adds the JDWP agent to the BootRun
+// task only — the gradle daemon and any sibling JVMs stay untouched.
+// Returns the absolute path; the caller passes it via `--init-script`.
+//
+// Why a fresh file per launch? `os.tmpdir()` is shared across runs;
+// reusing one path is fine but writing each time keeps the port up to
+// date and avoids races if the user fires two debug sessions in
+// quick succession on different ports. The OS reaps tmp on its own
+// schedule, so we don't bother cleaning up.
+async function writeBootRunDebugInitScript(port: number): Promise<string> {
+  const file = nodePath.join(os.tmpdir(), `rcm-bootrun-debug-${port}-${Date.now()}.gradle`);
+  // The script reaches into rootProject + every subproject's BootRun
+  // task and appends the JDWP arg. We use both `tasks.matching` and
+  // `subprojects { ... }` so the script works for single-module and
+  // multi-module reactors without the user having to declare anything.
+  const body = [
+    'allprojects {',
+    '  afterEvaluate {',
+    "    tasks.matching { it.name == 'bootRun' }.configureEach {",
+    `      jvmArgs '-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}'`,
+    '    }',
+    '  }',
+    '}',
+    '',
+  ].join('\n');
+  await fs.promises.writeFile(file, body, 'utf8');
+  return file;
 }

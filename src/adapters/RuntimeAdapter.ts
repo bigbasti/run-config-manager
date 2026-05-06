@@ -68,6 +68,12 @@ export interface PrepareResult {
   // Working directory override. When set, takes precedence over ExecutionService's
   // default buildCwd logic.
   cwd?: string;
+  // Extra command-line arguments prepended to the buildCommand result.
+  // Used by Spring Boot debug to ship `--init-script <path>` to gradle —
+  // the init script attaches the JDWP agent to bootRun's forked JVM only,
+  // not to the gradle daemon (which would otherwise win the port-bind
+  // race when JDWP is set via JAVA_TOOL_OPTIONS).
+  extraArgs?: string[];
 }
 
 // A streaming patch: adapters emit one of these whenever a piece of detection
