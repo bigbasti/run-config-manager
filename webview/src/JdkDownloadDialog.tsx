@@ -100,6 +100,12 @@ export function JdkDownloadDialog({ distros, initialPackages, installRoot, post,
   }, [distro, post]);
 
   const currentList = packages[distro] ?? [];
+  // Distinguish "fetch in flight" from "fetch returned empty" so the
+  // dropdown can show the right hint. Foojay can return zero packages
+  // for an unsupported arch / OS combination.
+  const hasReply = Object.prototype.hasOwnProperty.call(packages, distro);
+  const isLoading = !hasReply;
+  const isEmpty = hasReply && currentList.length === 0;
   const selectedPackage = currentList.find(p => p.id === packageId);
   // Build the target path the installer will use. We construct it with
   // the platform-correct separator: detected via the installRoot prefix
@@ -218,8 +224,10 @@ export function JdkDownloadDialog({ distros, initialPackages, installRoot, post,
             onChange={e => setPackageId(e.target.value)}
             disabled={inFlight || currentList.length === 0}
           >
-            {currentList.length === 0 ? (
+            {isLoading ? (
               <option value="">Loading…</option>
+            ) : isEmpty ? (
+              <option value="">No packages found for this distribution</option>
             ) : currentList.map(p => (
               <option key={p.id} value={p.id}>
                 Java {p.versionLabel} — {humanSize(p.size)}

@@ -67,6 +67,14 @@ export function MavenDownloadDialog({
   }, [major, post]);
 
   const currentList = versions[major] ?? [];
+  // The map carrying versions[major] presence is the "did the reply
+  // arrive?" signal — populated (or empty array) means we got an answer.
+  // Undefined means still in flight. Without this distinction the
+  // dropdown showed "Loading…" forever when Apache returned zero GA
+  // entries on a line (e.g. Maven 4 while only betas existed).
+  const hasReply = Object.prototype.hasOwnProperty.call(versions, major);
+  const isLoading = !hasReply;
+  const isEmpty = hasReply && currentList.length === 0;
   const inFlight = phase === 'downloading' || phase === 'verifying' || phase === 'extracting';
   const phaseLabel = useMemo(() => {
     switch (phase) {
@@ -169,8 +177,10 @@ export function MavenDownloadDialog({
             onChange={e => setVersion(e.target.value)}
             disabled={inFlight || currentList.length === 0}
           >
-            {currentList.length === 0 ? (
+            {isLoading ? (
               <option value="">Loading…</option>
+            ) : isEmpty ? (
+              <option value="">No versions found for this line</option>
             ) : currentList.map(v => (
               <option key={v.version} value={v.version}>{v.versionLabel}</option>
             ))}

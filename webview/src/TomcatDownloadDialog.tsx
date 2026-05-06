@@ -67,6 +67,12 @@ export function TomcatDownloadDialog({
   }, [major, post]);
 
   const currentList = versions[major] ?? [];
+  // Distinguish "fetch in flight" from "fetch returned empty" so the
+  // dropdown can show the right hint. Apache occasionally has lines
+  // with no GA releases yet (e.g. when a new major is in beta only).
+  const hasReply = Object.prototype.hasOwnProperty.call(versions, major);
+  const isLoading = !hasReply;
+  const isEmpty = hasReply && currentList.length === 0;
   const inFlight = phase === 'downloading' || phase === 'verifying' || phase === 'extracting';
   const phaseLabel = useMemo(() => {
     switch (phase) {
@@ -169,8 +175,10 @@ export function TomcatDownloadDialog({
             onChange={e => setVersion(e.target.value)}
             disabled={inFlight || currentList.length === 0}
           >
-            {currentList.length === 0 ? (
+            {isLoading ? (
               <option value="">Loading…</option>
+            ) : isEmpty ? (
+              <option value="">No versions found for this line</option>
             ) : currentList.map(v => (
               <option key={v.version} value={v.version}>{v.versionLabel}</option>
             ))}

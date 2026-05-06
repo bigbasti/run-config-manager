@@ -141,8 +141,13 @@ export function GradleDownloadDialog({
             onChange={e => setVersion(e.target.value)}
             disabled={inFlight || versions.length === 0}
           >
+            {/* The dialog only mounts once gradleDownloadList has
+                replied, so "empty array" here means services.gradle.org
+                returned no GA versions (extremely rare — would indicate
+                an outage or filter mismatch). Tell the user instead of
+                spinning forever. */}
             {versions.length === 0 ? (
-              <option value="">Loading…</option>
+              <option value="">No versions found</option>
             ) : versions.map(v => (
               <option key={v.version} value={v.version}>{v.versionLabel}</option>
             ))}

@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "publisher": "SebastianGross",
   "license": "MIT",
   "repository": {
