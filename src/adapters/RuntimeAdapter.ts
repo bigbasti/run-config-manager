@@ -74,6 +74,13 @@ export interface PrepareResult {
   // not to the gradle daemon (which would otherwise win the port-bind
   // race when JDWP is set via JAVA_TOOL_OPTIONS).
   extraArgs?: string[];
+  // Replacement config for buildCommand — used when prepareLaunch needed
+  // to compute or update something the adapter would otherwise have to
+  // read from a stale cfg (e.g. Spring Boot's "Recompute classpath on
+  // each run" recomputes and rewrites typeOptions.classpath right
+  // before launch). When omitted, ExecutionService uses the original
+  // resolvedCfg.
+  cfg?: import('../shared/types').RunConfig;
 }
 
 // A streaming patch: adapters emit one of these whenever a piece of detection

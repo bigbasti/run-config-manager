@@ -166,7 +166,12 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
         </div>
       )}
       {action && !action.inline && (
-        <div style={{ marginTop: 4 }}>
+        <div
+          // Two-column row: action button on the left, optional
+          // companion checkbox flush right. Without sideToggle the
+          // button sits alone — same as before.
+          style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 }}
+        >
           <button
             type="button"
             className="secondary"
@@ -176,6 +181,38 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
           >
             {actionBusy ? `⏳ ${action.busyLabel ?? 'Working…'}` : action.label}
           </button>
+          {action.sideToggle && (
+            <>
+              <label
+                // The label shrinks to fit checkbox + text packed tight,
+                // sitting directly after the action button. The
+                // <span> spacer below it claims the leftover row width
+                // so the parent flex row remains full-width while keeping
+                // these two clusters left-aligned.
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  cursor: 'pointer',
+                  fontSize: '0.95em',
+                  whiteSpace: 'nowrap',
+                }}
+                onFocus={() => onFocusField?.(action.sideToggle!.key)}
+                onBlur={() => onFocusField?.(null)}
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(getPath(values, action.sideToggle.key))}
+                  onChange={e => onChange(setPath(values, action.sideToggle!.key, e.target.checked))}
+                />
+                <span>{action.sideToggle.label}</span>
+              </label>
+              {/* Eats the remaining width so button+checkbox stay
+                  left-aligned and the label text doesn't get squished
+                  against either edge. */}
+              <span style={{ flex: 1, minWidth: 0 }} />
+            </>
+          )}
         </div>
       )}
       {inspectOpen && inspectable && (

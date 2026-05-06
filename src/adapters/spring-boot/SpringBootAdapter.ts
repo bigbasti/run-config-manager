@@ -10,6 +10,7 @@ import { findMainClasses, type MainClassCandidate } from '../java-shared/findMai
 import { detectJdks } from './detectJdks';
 import { probeJdksStreaming, readJdks, jdkOption } from './probeJdksStreaming';
 import { suggestClasspath } from './suggestClasspath';
+import { recomputeClasspath } from './recomputeClasspath';
 import { detectBuildTools } from './detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from './findBuildRoot';
 import { findSpringProfiles } from './findProfiles';
@@ -444,7 +445,26 @@ export class SpringBootAdapter implements RuntimeAdapter {
           placeholder: 'target/classes:lib/*',
           help: 'Colon-separated on macOS/Linux, semicolon on Windows. Click "Recompute classpath" to populate from your build tool. Values containing "*" are a placeholder hint — recompute before saving.',
           dependsOn: { key: 'typeOptions.launchMode', equals: 'java-main' },
-          action: { id: 'recomputeClasspath', label: 'Recompute classpath', busyLabel: 'Recomputing…' },
+          action: {
+            id: 'recomputeClasspath',
+            label: 'Recompute classpath',
+            busyLabel: 'Recomputing…',
+            // The companion toggle for "do it every run" lives on the
+            // same row, flush right. Same launchMode gating applies via
+            // the parent field's dependsOn.
+            sideToggle: {
+              key: 'typeOptions.recomputeClasspathOnRun',
+              label: 'Recompute classpath on each run',
+              help:
+                'When enabled, the classpath is rebuilt by the build tool every time you start this configuration, ' +
+                'and the saved value above is overwritten with the result. ' +
+                'Use this when your project picks up new dependencies frequently — without it, a saved classpath can ' +
+                'go stale (missing a newly-added jar, or pinning an upgraded library to its old version) and the app ' +
+                'launches against the wrong classes. ' +
+                'Cost: each launch waits for the recompute, which adds the build tool\'s startup time (Gradle/Maven ' +
+                'daemon: a few seconds; cold daemon: up to a minute).',
+            },
+          },
         },
         {
           kind: 'text',
@@ -586,9 +606,9 @@ export class SpringBootAdapter implements RuntimeAdapter {
 
   async prepareLaunch(
     cfg: RunConfig,
-    _folder: vscode.WorkspaceFolder,
+    folder: vscode.WorkspaceFolder,
     ctx: { debug: boolean; debugPort?: number },
-  ): Promise<{ env?: Record<string, string>; extraArgs?: string[] }> {
+  ): Promise<{ env?: Record<string, string>; extraArgs?: string[]; cfg?: RunConfig }> {
     if (cfg.type !== 'spring-boot') return {};
     const env: Record<string, string> = {};
     // JAVA_HOME steers which JDK Gradle / Maven use for compilation + forked
@@ -643,7 +663,51 @@ export class SpringBootAdapter implements RuntimeAdapter {
       log.debug(`Spring Boot gradle debug: init script ${initScriptPath} (port ${port})`);
     }
 
-    return { env, ...(extraArgs ? { extraArgs } : {}) };
+    // "Recompute classpath on each run" — only meaningful in java-main
+    // mode (Maven/Gradle launch modes always invoke the build tool, which
+    // computes the classpath internally). When enabled, we re-run the
+    // classpath probe and ship the result back to ExecutionService via
+    // `cfg`, so buildJavaMain assembles the `-cp` from the fresh value
+    // instead of whatever was saved last time. Catches dependency
+    // upgrades that landed since the user last clicked "Recompute".
+    let updatedCfg: RunConfig | undefined;
+    if (cfg.typeOptions.launchMode === 'java-main' && cfg.typeOptions.recomputeClasspathOnRun) {
+      log.info(`Spring Boot: recomputing classpath before run (recomputeClasspathOnRun=true)`);
+      try {
+        const projectRoot = resolveProjectUri(folder, cfg.projectPath);
+        const buildRoot = cfg.typeOptions.buildRoot
+          ? vscode.Uri.file(cfg.typeOptions.buildRoot)
+          : projectRoot;
+        const fresh = await recomputeClasspath({
+          projectRoot,
+          buildRoot,
+          buildTool: cfg.typeOptions.buildTool,
+          gradleCommand: cfg.typeOptions.gradleCommand,
+          gradlePath: cfg.typeOptions.gradlePath,
+          mavenPath: cfg.typeOptions.mavenPath,
+          jdkPath: cfg.typeOptions.jdkPath,
+        });
+        log.debug(`Spring Boot: pre-run classpath length=${fresh.length}`);
+        updatedCfg = {
+          ...cfg,
+          typeOptions: { ...cfg.typeOptions, classpath: fresh },
+        };
+      } catch (e) {
+        // Don't silently fall back to a possibly-stale classpath — that
+        // defeats the whole point of the toggle. Surface the failure so
+        // the user knows their dependency-upgrade isn't taking effect.
+        throw new Error(
+          `"Recompute classpath on each run" failed for "${cfg.name}": ${(e as Error).message}. ` +
+          `Fix the build, or untick the toggle to fall back to the saved classpath.`,
+        );
+      }
+    }
+
+    return {
+      env,
+      ...(extraArgs ? { extraArgs } : {}),
+      ...(updatedCfg ? { cfg: updatedCfg } : {}),
+    };
   }
 
   getDebugConfig(cfg: RunConfig, _folder: vscode.WorkspaceFolder): vscode.DebugConfiguration {

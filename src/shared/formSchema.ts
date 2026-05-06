@@ -24,6 +24,16 @@ type BaseFieldMeta = {
     busyLabel?: string;
     inline?: boolean;
     title?: string;
+    // Optional companion checkbox rendered on the same horizontal row as
+    // the action button, flush right. Used by Spring Boot's
+    // "Recompute classpath" / "Recompute classpath on each run" pair so
+    // the manual button (click once) and the auto toggle (do it every
+    // time) sit side-by-side rather than stacking.
+    // `key` is a dotted path into the config (just like a regular field
+    // key) and stores a boolean. The label appears to the right of the
+    // checkbox itself; help text shows in the help panel when the field
+    // is focused.
+    sideToggle?: { key: string; label: string; help?: string };
   };
   // Adds a small "Inspect" eye-icon button next to the field. When clicked,
   // the webview opens a dialog that splits the current value by whitespace

@@ -52,6 +52,12 @@ export interface SpringBootTypeOptions {
   //   - spring.output.ansi.enabled=ALWAYS
   //   - FORCE_COLOR=1, CLICOLOR_FORCE=1
   colorOutput?: boolean;
+  // java-main only: when true, ExecutionService re-runs the build tool's
+  // classpath probe before each launch and overwrites `classpath` with
+  // the result. Catches dependency upgrades that landed since the config
+  // was saved, at the cost of an extra build-tool invocation per run.
+  // Off by default so the common (no-deps-changed) case stays fast.
+  recomputeClasspathOnRun?: boolean;
 }
 
 export type TypeOptions =

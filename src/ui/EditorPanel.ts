@@ -1343,6 +1343,7 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
         ...(typeof to?.debugPort === 'number' ? { debugPort: to.debugPort } : {}),
         ...(typeof to?.rebuildOnSave === 'boolean' ? { rebuildOnSave: to.rebuildOnSave } : {}),
         ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
+        ...(typeof to?.recomputeClasspathOnRun === 'boolean' ? { recomputeClasspathOnRun: to.recomputeClasspathOnRun } : {}),
       },
     };
   }
