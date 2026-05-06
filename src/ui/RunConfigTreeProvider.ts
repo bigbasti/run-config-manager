@@ -205,7 +205,9 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     //   rebuilding (yellow sync-spin — dev server is recompiling on change)
     //   failed     (red error — log scanner matched a failure banner)
     //   starting   (loading-spin — running, no ready signal yet)
-    //   started    (green pass-filled — ready pattern matched)
+    //   started    (green debug-start — ready pattern matched; same play
+    //               icon VS Code uses in its own Run & Debug view so the
+    //               extension blends with the IDE)
     //   idle       (type icon)
     //
     // Rebuilding sits above failed because a user-initiated save-and-rebuild
@@ -239,7 +241,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       item.iconPath = new vscode.ThemeIcon('loading~spin');
       item.description = 'Starting…';
     } else if (started) {
-      item.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
+      item.iconPath = new vscode.ThemeIcon('debug-start', new vscode.ThemeColor('charts.green'));
       item.description = undefined;
     } else if (stale) {
       // Idle + stale: surface the warning as the idle-state signal. The
@@ -309,7 +311,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
 
     // Idle configs get the Docker brand SVG (media/icons/docker.svg),
     // matching how every other type renders when idle. Running state
-    // overrides with the green pass-filled marker; "container missing" is
+    // overrides with the green debug-start play marker; "container missing" is
     // the one exception — the warning icon is more informative than the
     // brand icon when the saved id no longer exists on this machine.
     const folder = this.store.getFolder(n.folderKey);
@@ -319,7 +321,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     // `dockerIdle:grouped` via an optional-tail regex.
     const groupSuffix = n.config.group ? ':grouped' : '';
     if (running) {
-      item.iconPath = new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
+      item.iconPath = new vscode.ThemeIcon('debug-start', new vscode.ThemeColor('charts.green'));
       item.description = summary?.image ?? 'running';
       item.contextValue = `dockerRunning${groupSuffix}`;
     } else if (!summary && to.containerId) {
@@ -649,7 +651,7 @@ function iconForDepStatus(
     // started it manually, or a previous orchestration finished), keep the
     // tree honest about that.
     return runningNow
-      ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'))
+      ? new vscode.ThemeIcon('debug-start', new vscode.ThemeColor('charts.green'))
       : undefined;
   }
   switch (status) {
@@ -660,7 +662,7 @@ function iconForDepStatus(
     case 'delaying':
       return new vscode.ThemeIcon('watch', new vscode.ThemeColor('charts.yellow'));
     case 'running':
-      return new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
+      return new vscode.ThemeIcon('debug-start', new vscode.ThemeColor('charts.green'));
     case 'failed':
       return new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
     case 'skipped':

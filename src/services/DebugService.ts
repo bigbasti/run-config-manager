@@ -104,6 +104,13 @@ export class DebugService {
   // For Spring Boot Maven/Gradle: launch the build tool with JDWP suspend=n,
   // then attach. The build-tool task is tracked by ExecutionService so the
   // Stop button terminates it correctly; the debug session is tracked here.
+  //
+  // Implementation note: JDWP is now composed by SpringBootAdapter.prepareLaunch
+  // (gradle uses JAVA_TOOL_OPTIONS; maven uses -Dspring-boot.run.jvmArguments,
+  // mutated below before calling exec.run). Earlier this method tried to
+  // inject JDWP via cfg.env.JAVA_TOOL_OPTIONS but prepareLaunch's own
+  // composition won the merge race in ExecutionService and overwrote the
+  // flag — the JVM never opened a debug socket and attach timed out at 60s.
   private async startAttachFlow(
     cfg: Extract<RunConfig, { type: 'spring-boot' }>,
     folder: vscode.WorkspaceFolder,
@@ -113,37 +120,40 @@ export class DebugService {
       vscode.window.showErrorMessage('Internal error: ExecutionService not wired into DebugService.');
       return false;
     }
-    const port = (attachConf.port as number | undefined) ?? 5005;
-
-    // Compose a copy of the config with the JDWP flag appended to vmArgs so the
-    // build tool passes it through to the forked JVM.
-    const jdwpFlag = `-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}`;
+    const port = (attachConf.port as number | undefined) ?? cfg.typeOptions.debugPort ?? 5005;
     const mode = cfg.typeOptions.launchMode;
-    let vmArgs = (cfg.vmArgs ?? '').trim();
-    vmArgs = vmArgs ? `${vmArgs} ${jdwpFlag}` : jdwpFlag;
 
-    let debugCfg: RunConfig;
-    if (mode === 'gradle') {
-      // Gradle bootRun doesn't read -Dspring-boot.run.jvmArguments. It reads
-      // ORG_GRADLE_PROJECT_jvmArgs or you set systemProperties in the task.
-      // The user-facing convention is JAVA_TOOL_OPTIONS — Spring Boot's
-      // forked JVM inherits it, and it's non-invasive.
-      debugCfg = {
-        ...cfg,
-        env: { ...(cfg.env ?? {}), JAVA_TOOL_OPTIONS: jdwpFlag },
-      };
-    } else {
-      // Maven: wired through -Dspring-boot.run.jvmArguments (our buildCommand
-      // already quotes this).
-      debugCfg = { ...cfg, vmArgs };
+    let runCfg: RunConfig = cfg;
+    if (mode === 'maven') {
+      // Maven flows JDWP through -Dspring-boot.run.jvmArguments which the
+      // buildCommand quotes from cfg.vmArgs. We append the flag onto a
+      // copied config so it lands in the forked JVM. (Gradle uses
+      // JAVA_TOOL_OPTIONS via prepareLaunch — see SpringBootAdapter.)
+      const jdwpFlag = `-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}`;
+      const vmArgs = (cfg.vmArgs ?? '').trim();
+      runCfg = { ...cfg, vmArgs: vmArgs ? `${vmArgs} ${jdwpFlag}` : jdwpFlag };
     }
 
-    const execution = await this.exec.run(debugCfg, folder);
+    // Pass debug=true so prepareLaunch composes the JDWP flag for gradle.
+    // Maven ignores this flag inside prepareLaunch (its JDWP flows via
+    // vmArgs above); harmless to pass uniformly.
+    const execution = await this.exec.run(runCfg, folder, { debug: true, debugPort: port });
     if (!execution) return false;
 
-    // Wait for the JVM to open the JDWP port before attaching. attachConf's
-    // timeout is 60s; we start attaching after 1s and let VS Code retry.
-    await new Promise(r => setTimeout(r, 1000));
+    // Same wait-then-attach pattern as Tomcat/Java/Quarkus. Apache's
+    // vscjava.vscode-java-debug attach throws hard on ECONNREFUSED, so we
+    // wait for the JVM to actually open the port (cold compile + bootRun
+    // can take a minute on a big project; 5-minute cap covers cold cache).
+    log.info(`Spring Boot debug: waiting for JDWP on localhost:${port}…`);
+    const ready = await waitForPort('localhost', port, 5 * 60_000);
+    if (!ready) {
+      vscode.window.showErrorMessage(
+        `Debug attach failed: JDWP port ${port} did not open within 5 minutes.`,
+      );
+      await this.exec.stop(cfg.id);
+      return false;
+    }
+    log.info(`Spring Boot debug: JDWP socket open, attaching…`);
 
     try {
       const started = await vscode.debug.startDebugging(folder, attachConf);
@@ -152,8 +162,6 @@ export class DebugService {
         this.emitter.fire(cfg.id);
         log.info(`Debug attached: ${cfg.name} (port ${port})`);
       } else {
-        // Attach failed — tear down the task so the user isn't left with an
-        // orphan JVM.
         await this.exec.stop(cfg.id);
       }
       return started;

@@ -584,7 +584,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
   async prepareLaunch(
     cfg: RunConfig,
     _folder: vscode.WorkspaceFolder,
-    _ctx: { debug: boolean; debugPort?: number },
+    ctx: { debug: boolean; debugPort?: number },
   ): Promise<{ env?: Record<string, string> }> {
     if (cfg.type !== 'spring-boot') return {};
     const env: Record<string, string> = {};
@@ -599,14 +599,24 @@ export class SpringBootAdapter implements RuntimeAdapter {
       env.JAVA_HOME = cfg.typeOptions.jdkPath;
     }
     // JAVA_TOOL_OPTIONS is picked up by every forked JVM — it's the only
-    // channel that reaches `bootRun`'s child process. We compose it from two
-    // inputs that both need to apply:
+    // channel that reaches `bootRun`'s child process. We compose it from
+    // these inputs that all need to apply:
     //   1. colorOutput — ansi + log pattern injection
     //   2. vmArgs (gradle mode only) — user-declared VM args (e.g.
     //      `-Dspring.config.name=foo`). Maven mode already forwards vmArgs
     //      via `-Dspring-boot.run.jvmArguments`; java-main applies them
     //      directly to `java`. Only gradle's `bootRun` had no channel, so we
     //      bridge via JAVA_TOOL_OPTIONS here.
+    //   3. JDWP — debug attach (gradle only; for maven the flag goes via
+    //      the buildCommand's `-Dspring-boot.run.jvmArguments`, see
+    //      DebugService.startAttachFlow).
+    //
+    // We always set JAVA_TOOL_OPTIONS (even when no parts are present)
+    // so that ExecutionService's last-wins merge doesn't let a stale value
+    // from process.env or cfg.env survive — this used to break debug:
+    // DebugService set cfg.env.JAVA_TOOL_OPTIONS=<jdwp> for gradle, but
+    // prepareLaunch overwrote it without the JDWP flag, leaving the
+    // forked JVM with no debug socket. Now JDWP is composed in here.
     const toolOptParts: string[] = [];
     if (cfg.typeOptions.colorOutput) {
       env.FORCE_COLOR = '1';
@@ -620,6 +630,13 @@ export class SpringBootAdapter implements RuntimeAdapter {
     if (cfg.typeOptions.launchMode === 'gradle') {
       const vm = (cfg.vmArgs ?? '').trim();
       if (vm) toolOptParts.push(vm);
+      // suspend=n so bootRun reaches "Started" before the user attaches;
+      // server=y is mandatory for attach mode. address=*:<port> binds on
+      // every interface, matching how IntelliJ's bootRun debug works.
+      if (ctx.debug && cfg.typeOptions.launchMode === 'gradle') {
+        const port = ctx.debugPort ?? cfg.typeOptions.debugPort ?? 5005;
+        toolOptParts.push(`-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}`);
+      }
     }
     if (toolOptParts.length) {
       env.JAVA_TOOL_OPTIONS = toolOptParts.join(' ');
