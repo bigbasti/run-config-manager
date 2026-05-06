@@ -285,7 +285,7 @@ export async function pathExists(p: string): Promise<boolean> {
 // Per-user install root for things like `~/.rcm/<kind>/`. On Windows we
 // use %LOCALAPPDATA% so the install lands in the no-elevation user-data
 // area rather than a roaming profile.
-export function userInstallRoot(kind: 'jdks' | 'tomcats'): string {
+export function userInstallRoot(kind: 'jdks' | 'tomcats' | 'mavens' | 'gradles'): string {
   if (process.platform === 'win32') {
     const base = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
     return path.join(base, 'rcm', kind);

@@ -186,6 +186,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
           placeholder: '/opt/maven/apache-maven-3.9.6',
           help: 'Maven install directory. Leave blank to use `mvn` from PATH.',
           examples: ['/opt/maven/apache-maven-3.9.6', '/usr/share/maven'],
+          action: { id: 'openMavenDownload', label: '☁', title: 'Download and install a Maven from Apache', inline: true },
         },
         {
           kind: 'text',

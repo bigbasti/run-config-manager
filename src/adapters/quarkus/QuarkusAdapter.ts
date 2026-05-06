@@ -243,6 +243,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
           help: 'Gradle install directory. Used only when "Gradle command" is set to "gradle" (system). Leave blank to use "gradle" from PATH.',
           examples: ['/opt/gradle/gradle-8.5', '/usr/share/gradle'],
           dependsOn: { key: 'typeOptions.gradleCommand', equals: 'gradle' },
+          action: { id: 'openGradleDownload', label: '☁', title: 'Download and install a Gradle from gradle.org', inline: true },
         },
         {
           kind: 'selectOrCustom',
@@ -253,6 +254,7 @@ export class QuarkusAdapter implements RuntimeAdapter {
           help: 'Maven install directory. Leave blank to use "mvn" from PATH.',
           examples: ['/opt/maven/apache-maven-3.9.6', '/usr/share/maven'],
           dependsOn: { key: 'typeOptions.launchMode', equals: 'maven' },
+          action: { id: 'openMavenDownload', label: '☁', title: 'Download and install a Maven from Apache', inline: true },
         },
         {
           kind: 'text',

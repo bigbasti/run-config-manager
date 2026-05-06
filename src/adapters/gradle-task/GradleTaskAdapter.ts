@@ -201,6 +201,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
           help: 'Gradle install directory. Used only when "Gradle command" is "gradle" (system). Leave blank to use `gradle` from PATH.',
           examples: ['/opt/gradle/gradle-8.5', '/usr/share/gradle'],
           dependsOn: { key: 'typeOptions.gradleCommand', equals: 'gradle' },
+          action: { id: 'openGradleDownload', label: '☁', title: 'Download and install a Gradle from gradle.org', inline: true },
         },
         {
           kind: 'text',

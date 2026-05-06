@@ -18,6 +18,8 @@ import { BuildToolSettingsService } from '../services/BuildToolSettingsService';
 import { loadEnvFiles } from '../services/EnvFileLoader';
 import { JdkInstallerService, type JdkPackage, CancelledError, ChecksumUnavailableError, jdkInstallDirName } from '../services/JdkInstallerService';
 import { TomcatInstallerService, type TomcatPackage } from '../services/TomcatInstallerService';
+import { MavenInstallerService, type MavenPackage } from '../services/MavenInstallerService';
+import { GradleInstallerService, type GradleVersion as GradleVersionPkg } from '../services/GradleInstallerService';
 import { probeJdkVersion } from '../adapters/spring-boot/detectJdks';
 
 interface OpenArgs {
@@ -72,6 +74,10 @@ export class EditorPanel {
   // Tomcat installer + per-major cache (same lifetime model as JDK).
   private readonly tomcatInstaller = new TomcatInstallerService();
   private readonly tomcatPackages = new Map<number, TomcatPackage[]>();
+  private readonly mavenInstaller = new MavenInstallerService();
+  private readonly mavenPackages = new Map<number, MavenPackage[]>();
+  private readonly gradleInstaller = new GradleInstallerService();
+  private gradleVersions: GradleVersionPkg[] | undefined;
   // Cumulative detection context for the currently-open form. Starts from
   // args.streaming?.initialContext, grows as streaming patches arrive, and
   // is mutated by action handlers (loadTasks / loadGoals) so subsequent
@@ -828,6 +834,184 @@ export class EditorPanel {
         this.tomcatInstaller.cancel();
         return;
       }
+      case 'listMavenDownloads': {
+        log.debug('listMavenDownloads');
+        try {
+          const majors = await this.mavenInstaller.listMajors();
+          const first = majors[0]?.major;
+          const versionsByMajor: Record<number, MavenPackage[]> = {};
+          if (first !== undefined) {
+            const versions = await this.mavenInstaller.listVersions(first);
+            this.mavenPackages.set(first, versions);
+            versionsByMajor[first] = versions;
+          }
+          this.panel.webview.postMessage({
+            cmd: 'mavenDownloadList',
+            majors,
+            versionsByMajor: Object.fromEntries(
+              Object.entries(versionsByMajor).map(([k, v]) => [k, v.map(toMavenDto)]),
+            ) as Record<number, ReturnType<typeof toMavenDto>[]>,
+            installRoot: this.mavenInstaller.getInstallRoot(),
+          } satisfies Inbound);
+        } catch (e) {
+          log.warn(`listMavenDownloads failed: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'mavenDownloadError',
+            message: `Could not load Maven versions: ${(e as Error).message}`,
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'listMavenVersions': {
+        log.debug(`listMavenVersions: ${msg.major}`);
+        try {
+          let versions = this.mavenPackages.get(msg.major);
+          if (!versions) {
+            versions = await this.mavenInstaller.listVersions(msg.major);
+            this.mavenPackages.set(msg.major, versions);
+          }
+          this.panel.webview.postMessage({
+            cmd: 'mavenVersionList',
+            major: msg.major,
+            versions: versions.map(toMavenDto),
+          } satisfies Inbound);
+        } catch (e) {
+          log.warn(`listMavenVersions failed: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'mavenDownloadError',
+            message: `Could not list Maven ${msg.major} versions: ${(e as Error).message}`,
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'downloadMaven': {
+        log.info(`downloadMaven: maven-${msg.major} v${msg.version}`);
+        const versions = this.mavenPackages.get(msg.major) ?? [];
+        const pkg = versions.find(v => v.version === msg.version);
+        if (!pkg) {
+          this.panel.webview.postMessage({
+            cmd: 'mavenDownloadError',
+            message: 'Maven version not found — please refresh the dialog.',
+          } satisfies Inbound);
+          return;
+        }
+        try {
+          const result = await this.mavenInstaller.install(pkg, p => {
+            this.panel.webview.postMessage({
+              cmd: 'mavenDownloadProgress',
+              state: p.state,
+              fraction: p.fraction,
+              ...(p.detail ? { detail: p.detail } : {}),
+            } satisfies Inbound);
+          });
+          // Slot the new install into the Maven dropdown.
+          const existing = (this.context.mavenInstalls as string[] | undefined) ?? [];
+          if (!existing.includes(result.mavenHome)) {
+            this.context.mavenInstalls = [...existing, result.mavenHome];
+            if (this.args.adapter) {
+              const schema = this.args.adapter.getFormSchema(this.context);
+              this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+            }
+          }
+          this.panel.webview.postMessage({
+            cmd: 'mavenDownloadComplete',
+            mavenHome: result.mavenHome,
+            version: result.version,
+            major: result.major,
+          } satisfies Inbound);
+          this.panel.webview.postMessage({
+            cmd: 'configPatch',
+            patch: { typeOptions: { mavenPath: result.mavenHome } } as any,
+            force: true,
+          } satisfies Inbound);
+        } catch (e) {
+          const cancelled = e instanceof CancelledError;
+          log.warn(`downloadMaven: ${cancelled ? 'cancelled' : 'failed'}: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'mavenDownloadError',
+            message: cancelled ? 'Download cancelled.' : (e as Error).message,
+            ...(cancelled ? { cancelled: true } : {}),
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'cancelMavenDownload': {
+        log.debug('cancelMavenDownload');
+        this.mavenInstaller.cancel();
+        return;
+      }
+      case 'listGradleDownloads': {
+        log.debug('listGradleDownloads');
+        try {
+          const versions = await this.gradleInstaller.listVersions();
+          this.gradleVersions = versions;
+          this.panel.webview.postMessage({
+            cmd: 'gradleDownloadList',
+            versions: versions.map(toGradleDto),
+            installRoot: this.gradleInstaller.getInstallRoot(),
+          } satisfies Inbound);
+        } catch (e) {
+          log.warn(`listGradleDownloads failed: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'gradleDownloadError',
+            message: `Could not load Gradle versions: ${(e as Error).message}`,
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'downloadGradle': {
+        log.info(`downloadGradle: ${msg.version}`);
+        const v = (this.gradleVersions ?? []).find(x => x.version === msg.version);
+        if (!v) {
+          this.panel.webview.postMessage({
+            cmd: 'gradleDownloadError',
+            message: 'Gradle version not found — please refresh the dialog.',
+          } satisfies Inbound);
+          return;
+        }
+        try {
+          const result = await this.gradleInstaller.install(v, p => {
+            this.panel.webview.postMessage({
+              cmd: 'gradleDownloadProgress',
+              state: p.state,
+              fraction: p.fraction,
+              ...(p.detail ? { detail: p.detail } : {}),
+            } satisfies Inbound);
+          });
+          const existing = (this.context.gradleInstalls as string[] | undefined) ?? [];
+          if (!existing.includes(result.gradleHome)) {
+            this.context.gradleInstalls = [...existing, result.gradleHome];
+            if (this.args.adapter) {
+              const schema = this.args.adapter.getFormSchema(this.context);
+              this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+            }
+          }
+          this.panel.webview.postMessage({
+            cmd: 'gradleDownloadComplete',
+            gradleHome: result.gradleHome,
+            version: result.version,
+          } satisfies Inbound);
+          this.panel.webview.postMessage({
+            cmd: 'configPatch',
+            patch: { typeOptions: { gradlePath: result.gradleHome } } as any,
+            force: true,
+          } satisfies Inbound);
+        } catch (e) {
+          const cancelled = e instanceof CancelledError;
+          log.warn(`downloadGradle: ${cancelled ? 'cancelled' : 'failed'}: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'gradleDownloadError',
+            message: cancelled ? 'Download cancelled.' : (e as Error).message,
+            ...(cancelled ? { cancelled: true } : {}),
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'cancelGradleDownload': {
+        log.debug('cancelGradleDownload');
+        this.gradleInstaller.cancel();
+        return;
+      }
       case 'refreshContainers': {
         if (!this.args.docker) return;
         log.debug('Docker refresh containers');
@@ -1038,6 +1222,24 @@ function toTomcatDto(p: TomcatPackage) {
     version: p.version,
     versionLabel: p.versionLabel,
     installDirName: `apache-tomcat-${p.version}`,
+  };
+}
+
+function toMavenDto(p: MavenPackage) {
+  return {
+    major: p.major,
+    version: p.version,
+    versionLabel: p.versionLabel,
+    installDirName: `apache-maven-${p.version}`,
+  };
+}
+
+function toGradleDto(v: GradleVersionPkg) {
+  return {
+    version: v.version,
+    versionLabel: v.version + (v.current ? ' (latest)' : ''),
+    installDirName: `gradle-${v.version}`,
+    current: v.current,
   };
 }
 

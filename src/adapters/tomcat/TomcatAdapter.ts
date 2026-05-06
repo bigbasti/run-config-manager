@@ -348,6 +348,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           placeholder: '/opt/gradle/gradle-8.5',
           help: 'Gradle install dir. Only used when "Build tool" = Gradle AND the Gradle command is set to `gradle` (system).',
           dependsOn: { key: 'typeOptions.buildTool', equals: 'gradle' },
+          action: { id: 'openGradleDownload', label: '☁', title: 'Download and install a Gradle from gradle.org', inline: true },
         },
         {
           kind: 'select',
@@ -368,6 +369,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           placeholder: '/opt/maven/apache-maven-3.9.6',
           help: 'Maven install dir. Leave blank to use `mvn` from PATH.',
           dependsOn: { key: 'typeOptions.buildTool', equals: 'maven' },
+          action: { id: 'openMavenDownload', label: '☁', title: 'Download and install a Maven from Apache', inline: true },
         },
         {
           kind: 'text',

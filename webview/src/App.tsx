@@ -8,8 +8,11 @@ import { HelpPanel } from './HelpPanel';
 import { BuildToolSettingsPanel, buildToolForConfig } from './BuildToolSettingsPanel';
 import { JdkDownloadDialog } from './JdkDownloadDialog';
 import { TomcatDownloadDialog } from './TomcatDownloadDialog';
+import { MavenDownloadDialog } from './MavenDownloadDialog';
+import { GradleDownloadDialog } from './GradleDownloadDialog';
+import { LoadingDialog } from './LoadingDialog';
 import type { EnvFileStatus } from './form/EnvFileList';
-import type { TomcatVersionDto } from '../../src/shared/protocol';
+import type { TomcatVersionDto, MavenVersionDto, GradleVersionDto } from '../../src/shared/protocol';
 import type { JdkPackageDto } from '../../src/shared/protocol';
 
 declare function acquireVsCodeApi(): { postMessage(msg: Outbound): void; getState<T>(): T; setState<T>(s: T): void };
@@ -99,6 +102,28 @@ export function App() {
     initialVersions: Record<number, TomcatVersionDto[]>;
     installRoot: string;
   } | null>(null);
+  const [mavenDialog, setMavenDialog] = useState<{
+    majors: Array<{ major: number; label: string }>;
+    initialVersions: Record<number, MavenVersionDto[]>;
+    installRoot: string;
+  } | null>(null);
+  const [gradleDialog, setGradleDialog] = useState<{
+    versions: GradleVersionDto[];
+    installRoot: string;
+  } | null>(null);
+  // "Pending" flag set the instant the user clicks a cloud button.
+  // Renders an immediate loading dialog so the UI doesn't appear frozen
+  // while the extension fetches the version list (foojay / Apache /
+  // services.gradle.org can take several seconds, especially on cold
+  // DNS). Cleared when the actual list reply arrives, OR by an error
+  // reply, OR by the user clicking Cancel on the loading shell.
+  const [loadingDialog, setLoadingDialog] = useState<
+    null | 'jdk' | 'tomcat' | 'maven' | 'gradle'
+  >(null);
+  // Mirror of loadingDialog readable from the empty-deps message handler
+  // below (which captures stale state otherwise). Updated in lockstep.
+  const loadingDialogRef = useRef<typeof loadingDialog>(null);
+  useEffect(() => { loadingDialogRef.current = loadingDialog; }, [loadingDialog]);
   // Subscriber list for the dialog's stream view of inbound messages.
   // App.tsx forwards anything it doesn't handle locally so the dialog can
   // listen without us re-dispatching every message kind.
@@ -260,15 +285,30 @@ export function App() {
         // Server replied to our `listJdkDownloads` — open the dialog. The
         // dialog will later post messages directly via `post()` and listen
         // through the dialog subscribers ref below.
+        setLoadingDialog(prev => (prev === 'jdk' ? null : prev));
         setJdkDialog({
           distros: msg.distros,
           initialPackages: msg.packagesByDistro,
           installRoot: msg.installRoot,
         });
       } else if (msg.cmd === 'tomcatDownloadList') {
+        setLoadingDialog(prev => (prev === 'tomcat' ? null : prev));
         setTomcatDialog({
           majors: msg.majors,
           initialVersions: msg.versionsByMajor,
+          installRoot: msg.installRoot,
+        });
+      } else if (msg.cmd === 'mavenDownloadList') {
+        setLoadingDialog(prev => (prev === 'maven' ? null : prev));
+        setMavenDialog({
+          majors: msg.majors,
+          initialVersions: msg.versionsByMajor,
+          installRoot: msg.installRoot,
+        });
+      } else if (msg.cmd === 'gradleDownloadList') {
+        setLoadingDialog(prev => (prev === 'gradle' ? null : prev));
+        setGradleDialog({
+          versions: msg.versions,
           installRoot: msg.installRoot,
         });
       } else if (
@@ -281,10 +321,36 @@ export function App() {
         || msg.cmd === 'tomcatDownloadProgress'
         || msg.cmd === 'tomcatDownloadComplete'
         || msg.cmd === 'tomcatDownloadError'
+        || msg.cmd === 'mavenVersionList'
+        || msg.cmd === 'mavenDownloadProgress'
+        || msg.cmd === 'mavenDownloadComplete'
+        || msg.cmd === 'mavenDownloadError'
+        || msg.cmd === 'gradleDownloadProgress'
+        || msg.cmd === 'gradleDownloadComplete'
+        || msg.cmd === 'gradleDownloadError'
       ) {
+        // If the loading shell is still up (i.e. the listing fetch failed
+        // before the real dialog mounted), the *DownloadError reply has
+        // to dismiss it here — there's no subscriber yet to forward to.
+        // We also surface the message via the form's error banner so the
+        // user knows what happened.
+        const cur = loadingDialogRef.current;
+        if (msg.cmd === 'jdkDownloadError' && cur === 'jdk') {
+          setLoadingDialog(null);
+          setError(msg.message);
+        } else if (msg.cmd === 'tomcatDownloadError' && cur === 'tomcat') {
+          setLoadingDialog(null);
+          setError(msg.message);
+        } else if (msg.cmd === 'mavenDownloadError' && cur === 'maven') {
+          setLoadingDialog(null);
+          setError(msg.message);
+        } else if (msg.cmd === 'gradleDownloadError' && cur === 'gradle') {
+          setLoadingDialog(null);
+          setError(msg.message);
+        }
         // Forward to dialog subscribers (the open dialog). Nothing in App
         // itself needs these messages; the configPatch/schemaUpdate that
-        // arrive alongside `jdkDownloadComplete` already update the form.
+        // arrive alongside `*DownloadComplete` already update the form.
         for (const sub of dialogSubscribersRef.current) sub(msg);
       } else if (msg.cmd === 'buildToolSettings') {
         setSettings(msg);
@@ -423,14 +489,26 @@ export function App() {
       return;
     }
     if (actionId === 'openJdkDownload') {
-      // Open the download dialog — the server replies with
-      // jdkDownloadList; our message listener flips jdkDialog to non-null
-      // and the dialog mounts.
+      // Show the loading shell immediately so users get feedback while
+      // the extension hits foojay; the real dialog mounts when
+      // `jdkDownloadList` arrives.
+      setLoadingDialog('jdk');
       post({ cmd: 'listJdkDownloads' });
       return;
     }
     if (actionId === 'openTomcatDownload') {
+      setLoadingDialog('tomcat');
       post({ cmd: 'listTomcatDownloads' });
+      return;
+    }
+    if (actionId === 'openMavenDownload') {
+      setLoadingDialog('maven');
+      post({ cmd: 'listMavenDownloads' });
+      return;
+    }
+    if (actionId === 'openGradleDownload') {
+      setLoadingDialog('gradle');
+      post({ cmd: 'listGradleDownloads' });
       return;
     }
   };
@@ -544,6 +622,37 @@ export function App() {
           })()}
         </div>
       </div>
+      {/* Loading shell — rendered the instant the user clicks a cloud
+          button, before the real dialog has any data. We only show it
+          while no real dialog of the same kind is mounted yet. */}
+      {loadingDialog === 'jdk' && !jdkDialog && (
+        <LoadingDialog
+          title="Download a JDK"
+          detail="Fetching available distributions from foojay.io…"
+          onClose={() => setLoadingDialog(null)}
+        />
+      )}
+      {loadingDialog === 'tomcat' && !tomcatDialog && (
+        <LoadingDialog
+          title="Download Apache Tomcat"
+          detail="Reading the Apache directory listing…"
+          onClose={() => setLoadingDialog(null)}
+        />
+      )}
+      {loadingDialog === 'maven' && !mavenDialog && (
+        <LoadingDialog
+          title="Download Apache Maven"
+          detail="Reading the Apache archive listing…"
+          onClose={() => setLoadingDialog(null)}
+        />
+      )}
+      {loadingDialog === 'gradle' && !gradleDialog && (
+        <LoadingDialog
+          title="Download Gradle"
+          detail="Fetching versions from services.gradle.org…"
+          onClose={() => setLoadingDialog(null)}
+        />
+      )}
       {jdkDialog && (
         <JdkDownloadDialog
           distros={jdkDialog.distros}
@@ -568,6 +677,31 @@ export function App() {
             return () => { dialogSubscribersRef.current.delete(handler); };
           }}
           onClose={() => setTomcatDialog(null)}
+        />
+      )}
+      {mavenDialog && (
+        <MavenDownloadDialog
+          majors={mavenDialog.majors}
+          initialVersions={mavenDialog.initialVersions}
+          installRoot={mavenDialog.installRoot}
+          post={post}
+          onMessage={handler => {
+            dialogSubscribersRef.current.add(handler);
+            return () => { dialogSubscribersRef.current.delete(handler); };
+          }}
+          onClose={() => setMavenDialog(null)}
+        />
+      )}
+      {gradleDialog && (
+        <GradleDownloadDialog
+          versions={gradleDialog.versions}
+          installRoot={gradleDialog.installRoot}
+          post={post}
+          onMessage={handler => {
+            dialogSubscribersRef.current.add(handler);
+            return () => { dialogSubscribersRef.current.delete(handler); };
+          }}
+          onClose={() => setGradleDialog(null)}
         />
       )}
     </>

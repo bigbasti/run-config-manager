@@ -77,6 +77,13 @@ export type Outbound =
   | { cmd: 'listTomcatVersions'; major: number }
   | { cmd: 'downloadTomcat'; major: number; version: string }
   | { cmd: 'cancelTomcatDownload' }
+  | { cmd: 'listMavenDownloads' }
+  | { cmd: 'listMavenVersions'; major: number }
+  | { cmd: 'downloadMaven'; major: number; version: string }
+  | { cmd: 'cancelMavenDownload' }
+  | { cmd: 'listGradleDownloads' }
+  | { cmd: 'downloadGradle'; version: string }
+  | { cmd: 'cancelGradleDownload' }
   | { cmd: 'pickEnvFile' }
   // Loads (or reloads) the listed .env files and reports per-file status
   // + parsed variables. Fired on init/edit/add/remove so the form pills
@@ -220,6 +227,34 @@ export type Inbound =
       major: number;
     }
   | { cmd: 'tomcatDownloadError'; message: string; cancelled?: boolean }
+  | {
+      cmd: 'mavenDownloadList';
+      majors: Array<{ major: number; label: string }>;
+      versionsByMajor: Record<number, MavenVersionDto[]>;
+      installRoot: string;
+    }
+  | { cmd: 'mavenVersionList'; major: number; versions: MavenVersionDto[] }
+  | {
+      cmd: 'mavenDownloadProgress';
+      state: 'downloading' | 'verifying' | 'extracting';
+      fraction: number | null;
+      detail?: string;
+    }
+  | { cmd: 'mavenDownloadComplete'; mavenHome: string; version: string; major: number }
+  | { cmd: 'mavenDownloadError'; message: string; cancelled?: boolean }
+  | {
+      cmd: 'gradleDownloadList';
+      versions: GradleVersionDto[];
+      installRoot: string;
+    }
+  | {
+      cmd: 'gradleDownloadProgress';
+      state: 'downloading' | 'verifying' | 'extracting';
+      fraction: number | null;
+      detail?: string;
+    }
+  | { cmd: 'gradleDownloadComplete'; gradleHome: string; version: string }
+  | { cmd: 'gradleDownloadError'; message: string; cancelled?: boolean }
   | { cmd: 'envFilePicked'; path: string }
   // Reply to `loadEnvFiles`. Per-file status with variables so the UI can
   // render orange "missing" rows and feed the eye-icon dialog.
@@ -247,6 +282,22 @@ export interface TomcatVersionDto {
   version: string;
   versionLabel: string;
   installDirName: string;
+}
+
+export interface MavenVersionDto {
+  major: number;
+  version: string;
+  versionLabel: string;
+  installDirName: string;
+}
+
+export interface GradleVersionDto {
+  version: string;
+  versionLabel: string;
+  installDirName: string;
+  // True when this is the most recent GA release (the "current" flag
+  // from services.gradle.org). The dialog can highlight it.
+  current: boolean;
 }
 
 // DTO mirrors JdkPackage but only the fields the UI uses, so we don't ship
