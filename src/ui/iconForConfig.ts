@@ -1,25 +1,21 @@
 import * as vscode from 'vscode';
 import type { RunConfig } from '../shared/types';
 
-// Brands whose canonical simple-icons color is too dark to read on a VS
-// Code dark theme (pure black Java/Angular/Next.js, dark teal Gradle).
-// For these, the generator emits a `-light.svg` sibling tinted with the
-// original color, and we return {light, dark} pairs so VS Code picks the
-// right one per active theme.
-const BRANDS_WITH_LIGHT_VARIANT = new Set(['java', 'angular', 'nextjs', 'gradle']);
-
-// Builds the Uri (or {light, dark} pair) for a brand name. Exported so
-// tree-group headers and individual config rows share the same theme logic.
+// All brand SVGs ship in a mono variant — gray (#cccccc) for dark themes
+// and dark gray (#3c3c3c) for light themes — so the colour signal in the
+// tree is reserved for state (green play / bug = running, yellow spinner
+// = rebuilding, red = failed). Every brand has a `<brand>-light.svg`
+// sibling; we always return the {light, dark} pair so VS Code picks the
+// right one per active theme. Earlier versions kept brand colours on
+// some icons; users reported running configs were hard to spot because
+// every row was already coloured.
 export function brandIconUri(
   brand: string,
   extensionUri: vscode.Uri,
-): vscode.Uri | { light: vscode.Uri; dark: vscode.Uri } {
+): { light: vscode.Uri; dark: vscode.Uri } {
   const dark = vscode.Uri.joinPath(extensionUri, 'media', 'icons', `${brand}.svg`);
-  if (BRANDS_WITH_LIGHT_VARIANT.has(brand)) {
-    const light = vscode.Uri.joinPath(extensionUri, 'media', 'icons', `${brand}-light.svg`);
-    return { light, dark };
-  }
-  return dark;
+  const light = vscode.Uri.joinPath(extensionUri, 'media', 'icons', `${brand}-light.svg`);
+  return { light, dark };
 }
 
 // Maps a config to the brand SVG under media/icons/. For npm configs we
@@ -33,7 +29,7 @@ export function iconForConfig(
   cfg: RunConfig,
   workspaceFolder: vscode.WorkspaceFolder | undefined,
   extensionUri: vscode.Uri,
-): vscode.Uri | { light: vscode.Uri; dark: vscode.Uri } {
+): { light: vscode.Uri; dark: vscode.Uri } {
   return brandIconUri(brandFor(cfg, workspaceFolder), extensionUri);
 }
 

@@ -182,11 +182,20 @@ describe('iconForConfig: light/dark theme variants', () => {
     }
   });
 
-  test('spring-boot returns a plain Uri — its green reads on both themes', () => {
+  test('spring-boot now also returns a {light, dark} pair — every brand is mono-themed', () => {
+    // Used to keep brand colour because the green read on both themes,
+    // but the user reported coloured icons made running configs hard to
+    // spot (running state itself signals with green). All brands now
+    // render gray-on-dark / dark-gray-on-light, so each brand returns
+    // the {light, dark} pair.
     const cfg = { id: 'sb', name: 'x', type: 'spring-boot', projectPath: '', workspaceFolder: '',
       env: {}, programArgs: '', vmArgs: '', typeOptions: {} } as any;
     const v = iconForConfig(cfg, folder as any, EXTENSION_URI);
-    expect('light' in v).toBe(false);
+    expect('light' in v).toBe(true);
+    if ('light' in v) {
+      expect(v.light.fsPath).toMatch(/spring-boot-light\.svg$/);
+      expect(v.dark.fsPath).toMatch(/spring-boot\.svg$/);
+    }
   });
 });
 
