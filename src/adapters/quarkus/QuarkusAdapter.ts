@@ -10,14 +10,12 @@ import { probeJdksStreaming, readJdks, jdkOption } from '../spring-boot/probeJdk
 import { detectBuildTools } from '../spring-boot/detectBuildTools';
 import { findGradleRoot, findMavenRoot, gradleModulePrefix } from '../spring-boot/findBuildRoot';
 import { resolveProjectUri } from '../../utils/paths';
-import { dependsOnField, envFilesField } from '../sharedFields';
+import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
 
 const VAR_SYNTAX_HINT =
-  'Supports ${VAR} and ${env:VAR} (environment variables), ' +
-  '${workspaceFolder}, ${userHome}, and ${cwd}/${projectPath}. ' +
-  'Unresolved variables expand to an empty string at launch.';
+  'Supports `${VAR}` and `${env:VAR}` (environment variables), `${workspaceFolder}`, `${userHome}`, and `${cwd}` / `${projectPath}`. Unresolved variables expand to an empty string at launch.';
 
 export class QuarkusAdapter implements RuntimeAdapter {
   readonly type = 'quarkus' as const;
@@ -304,8 +302,10 @@ export class QuarkusAdapter implements RuntimeAdapter {
           kind: 'boolean',
           key: 'typeOptions.colorOutput',
           label: 'Colored log output',
+          inlineLabel: true,
           help:
-            'Sets FORCE_COLOR=1 and CLICOLOR_FORCE=1 so libraries that auto-detect TTY don\'t strip ANSI codes. Quarkus\'s console usually gets colors right on its own, but the integrated terminal can confuse its detection.',
+            'Sets `FORCE_COLOR=1` and `CLICOLOR_FORCE=1` so libraries that auto-detect TTY don\'t strip ANSI codes.\n\n' +
+            'Quarkus\'s console usually gets colors right on its own, but the integrated terminal can confuse its detection.',
         },
       ],
       advanced: [
@@ -332,12 +332,13 @@ export class QuarkusAdapter implements RuntimeAdapter {
           label: 'VM args',
           placeholder: '-Xmx1g',
           help:
-            'JVM flags. Quarkus dev mode forwards these to the forked JVM via -Djvm.args when set. ' +
+            'JVM flags. Quarkus dev mode forwards these to the forked JVM via `-Djvm.args` when set.\n\n' +
             VAR_SYNTAX_HINT,
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC'],
           inspectable: true,
         },
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
+        closeTerminalOnExitField(),
       ],
     };
   }

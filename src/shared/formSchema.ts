@@ -108,7 +108,17 @@ export type FormField =
       options: Array<{ value: string; label: string }>;
       placeholder?: string;
     } & BaseFieldMeta)
-  | ({ kind: 'boolean'; key: string; label: string } & BaseFieldMeta)
+  | ({
+      kind: 'boolean';
+      key: string;
+      label: string;
+      // When true, the field renders as `[ ] label` only — the
+      // outer header label is suppressed and the inline text uses
+      // the field's `label` instead of the default "Enabled". Used
+      // for "Close terminal as soon as process ends" so the
+      // checkbox sits directly beside the explanatory phrase.
+      inlineLabel?: boolean;
+    } & BaseFieldMeta)
   | ({ kind: 'kv'; key: string; label: string } & BaseFieldMeta)
   // Like `kv`, but the underlying value is an ordered list of
   // {key, value, enabled} rows instead of a flat Record. Used by the

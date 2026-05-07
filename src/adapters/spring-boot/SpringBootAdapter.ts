@@ -26,9 +26,7 @@ import { log } from '../../utils/logger';
 // environments. Click the "Test variables" icon in the side panel to see
 // which variables resolve vs. fail in the current environment.
 const VAR_SYNTAX_HINT =
-  'Supports ${VAR} and ${env:VAR} (environment variables), ' +
-  '${workspaceFolder}, ${userHome}, and ${cwd}/${projectPath}. ' +
-  'Unresolved variables expand to an empty string at launch.';
+  'Supports `${VAR}` and `${env:VAR}` (environment variables), `${workspaceFolder}`, `${userHome}`, and `${cwd}` / `${projectPath}`. Unresolved variables expand to an empty string at launch.';
 
 // Colored console pattern for Spring Boot. Each %clr(...){color} wraps a
 // segment in the ANSI escape for that color when ansi is enabled.
@@ -41,7 +39,7 @@ const VAR_SYNTAX_HINT =
 // and the JVM tokenises fine. The visual result looks like a regular space.
 const COLORED_LOG_PATTERN = "%clr(%d{yyyy-MM-dd\\'T\\'HH:mm:ss.SSS}){faint} %clr(%5p) %clr([%t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %clr(%replace(%m){'(/[a-zA-Z0-9/._-]+)','\u001b[94m$1\u001b[0m'}) %n%wEx";
 import { splitArgs } from '../npm/splitArgs';
-import { dependsOnField, envFilesField } from '../sharedFields';
+import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 
 export class SpringBootAdapter implements RuntimeAdapter {
   readonly type = 'spring-boot' as const;
@@ -409,14 +407,12 @@ export class SpringBootAdapter implements RuntimeAdapter {
           options: jdkOptions,
           placeholder: '/path/to/jdk',
           help:
-            'Java installation used for this config. Always shown (no longer ' +
-            'just for java-main) — Maven / Gradle also need the right JDK to ' +
-            'compile sources that target newer Java releases. Applied as: ' +
-            '(1) the `java` binary when launchMode=java-main; ' +
-            '(2) `javaExec` on the Java debug attach so breakpoints resolve; ' +
-            '(3) JAVA_HOME for the ./gradlew / mvn child process (build-time ' +
-            'compilation, bootRun, tests, classpath recompute). ' +
-            'Leave blank to inherit JAVA_HOME from the shell that launched VS Code.',
+            'Java installation used for this config. Always shown (no longer just for `java-main`) — Maven / Gradle also need the right JDK to compile sources that target newer Java releases.\n\n' +
+            '**Applied as:**\n' +
+            '- the `java` binary when `launchMode=java-main`\n' +
+            '- `javaExec` on the Java debug attach so breakpoints resolve\n' +
+            '- `JAVA_HOME` for the `./gradlew` / `mvn` child process (build-time compilation, `bootRun`, tests, classpath recompute)\n\n' +
+            'Leave blank to inherit `JAVA_HOME` from the shell that launched VS Code.',
           examples: ['/usr/lib/jvm/jdk-21', '/opt/jdk-17'],
           // Surfaces a ⬇ icon next to the field. The webview intercepts
           // this actionId to open the JDK download dialog (it doesn't
@@ -456,13 +452,9 @@ export class SpringBootAdapter implements RuntimeAdapter {
               key: 'typeOptions.recomputeClasspathOnRun',
               label: 'Recompute classpath on each run',
               help:
-                'When enabled, the classpath is rebuilt by the build tool every time you start this configuration, ' +
-                'and the saved value above is overwritten with the result. ' +
-                'Use this when your project picks up new dependencies frequently — without it, a saved classpath can ' +
-                'go stale (missing a newly-added jar, or pinning an upgraded library to its old version) and the app ' +
-                'launches against the wrong classes. ' +
-                'Cost: each launch waits for the recompute, which adds the build tool\'s startup time (Gradle/Maven ' +
-                'daemon: a few seconds; cold daemon: up to a minute).',
+                'When enabled, the classpath is rebuilt by the build tool every time you start this configuration, and the saved value above is overwritten with the result.\n\n' +
+                'Use this when your project picks up new dependencies frequently — without it, a saved classpath can go stale (missing a newly-added jar, or pinning an upgraded library to its old version) and the app launches against the wrong classes.\n\n' +
+                '**Cost:** each launch waits for the recompute, which adds the build tool\'s startup time (Gradle/Maven daemon: a few seconds; cold daemon: up to a minute).',
             },
           },
         },
@@ -497,25 +489,16 @@ export class SpringBootAdapter implements RuntimeAdapter {
           kind: 'boolean',
           key: 'typeOptions.rebuildOnSave',
           label: 'Rebuild on save (hot reload)',
+          inlineLabel: true,
           help:
-            'Launches a second Gradle task in continuous mode alongside the app: ' +
-            '`./gradlew -t :<module>:classes :<module>:processResources`. Edits to ' +
-            'Java sources and resource files (application*.properties, templates, ' +
-            'static/) trigger a recompile → DevTools picks up the classpath change ' +
-            'and warm-restarts the Spring context.\n\n' +
-            'REQUIREMENTS (all three must hold for hot reload to actually fire):\n' +
-            '1) `org.springframework.boot:spring-boot-devtools` on the classpath. ' +
-            'Best declared as `developmentOnly` in build.gradle so it\'s excluded from production artifacts.\n' +
-            '2) bootRun must fork a separate JVM (the Spring Boot plugin\'s default) ' +
-            'so DevTools can restart the app without bringing down Gradle.\n' +
-            '3) For multi-module projects: edits to SIBLING modules the app depends on ' +
-            'won\'t be picked up by `:<module>:classes` alone. If you need cross-module ' +
-            'hot-reload, replace this shortcut with a manually-authored Gradle Task config ' +
-            'that runs `-t build -x test -x check` from the build root.\n\n' +
-            'If hot reload isn\'t working, open the "(watch)" terminal and verify Gradle ' +
-            'is actually rebuilding on your save — if it is but the app doesn\'t reload, ' +
-            'the issue is DevTools on the classpath, not the watcher.\n\n' +
-            'Requires Gradle — Maven mode has no built-in watch task.',
+            'Launches a second Gradle task in continuous mode alongside the app: `./gradlew -t :<module>:classes :<module>:processResources`.\n\n' +
+            'Edits to Java sources and resource files (`application*.properties`, templates, `static/`) trigger a recompile → DevTools picks up the classpath change and warm-restarts the Spring context.\n\n' +
+            '**Requirements** (all three must hold for hot reload to actually fire):\n' +
+            '- `org.springframework.boot:spring-boot-devtools` on the classpath. Best declared as `developmentOnly` in `build.gradle` so it\'s excluded from production artifacts.\n' +
+            '- `bootRun` must fork a separate JVM (the Spring Boot plugin\'s default) so DevTools can restart the app without bringing down Gradle.\n' +
+            '- For multi-module projects: edits to **sibling** modules the app depends on won\'t be picked up by `:<module>:classes` alone. If you need cross-module hot-reload, replace this shortcut with a manually-authored Gradle Task config that runs `-t build -x test -x check` from the build root.\n\n' +
+            'If hot reload isn\'t working, open the `(watch)` terminal and verify Gradle is actually rebuilding on your save — if it is but the app doesn\'t reload, the issue is DevTools on the classpath, not the watcher.\n\n' +
+            'Requires **Gradle** — Maven mode has no built-in watch task.',
           // Warn only when we've definitely probed and didn't find DevTools
           // (hasDevTools === false). The undefined case means detection
           // is still in flight — stay quiet until we know.
@@ -534,6 +517,7 @@ export class SpringBootAdapter implements RuntimeAdapter {
           kind: 'boolean',
           key: 'typeOptions.colorOutput',
           label: 'Colored log output',
+          inlineLabel: true,
           help:
             'Forces ANSI colors in the terminal by setting spring.output.ansi.enabled=ALWAYS plus ' +
             'FORCE_COLOR=1 / CLICOLOR_FORCE=1 env vars. Libraries that auto-detect TTY will stop ' +
@@ -558,11 +542,9 @@ export class SpringBootAdapter implements RuntimeAdapter {
           key: 'env',
           label: 'Environment variables',
           help:
-            'Merged on top of inherited env. ' +
-            'Note: JAVA_OPTS is NOT read by Gradle / Spring Boot bootRun — it\'s a ' +
-            'convention of shell wrappers (catalina.sh, maven) only. Put JVM flags ' +
-            'in the "VM args" field above (they\'re injected via JAVA_TOOL_OPTIONS for ' +
-            'gradle mode). ' + VAR_SYNTAX_HINT,
+            'Merged on top of inherited env.\n\n' +
+            '**Note:** `JAVA_OPTS` is NOT read by Gradle / Spring Boot `bootRun` — it\'s a convention of shell wrappers (`catalina.sh`, `maven`) only. Put JVM flags in the **VM args** field above (they\'re injected via `JAVA_TOOL_OPTIONS` for gradle mode).\n\n' +
+            VAR_SYNTAX_HINT,
           examples: ['SPRING_PROFILES_ACTIVE=dev', 'JAVA_HOME=/opt/jdk-21', 'DB_URL=${DB_URL}'],
         },
         {
@@ -580,15 +562,17 @@ export class SpringBootAdapter implements RuntimeAdapter {
           label: 'VM args',
           placeholder: '-Xmx1g',
           help:
-            'JVM flags. Applied directly in java-main mode; wrapped in ' +
-            '-Dspring-boot.run.jvmArguments for Maven; injected via ' +
-            'JAVA_TOOL_OPTIONS for Gradle (bootRun has no first-class ' +
-            'vmArgs channel, but the forked JVM honors JAVA_TOOL_OPTIONS). ' +
+            'JVM flags.\n\n' +
+            '**Applied as:**\n' +
+            '- directly in `java-main` mode\n' +
+            '- wrapped in `-Dspring-boot.run.jvmArguments` for Maven\n' +
+            '- injected via `JAVA_TOOL_OPTIONS` for Gradle (`bootRun` has no first-class `vmArgs` channel, but the forked JVM honors `JAVA_TOOL_OPTIONS`)\n\n' +
             VAR_SYNTAX_HINT,
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC', '-Dapp.home=${workspaceFolder}'],
           inspectable: true,
         },
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
+        closeTerminalOnExitField(),
       ],
     };
   }

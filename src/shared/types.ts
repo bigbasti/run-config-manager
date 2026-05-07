@@ -100,6 +100,16 @@ interface RunConfigBase {
   // both. Storing only the path keeps the config tidy and avoids leaking
   // secrets into run.json.
   envFiles?: string[];
+  // Mirrors the form's "Close terminal as soon as process ends"
+  // checkbox. When true (default), the integrated terminal closes
+  // automatically once the process exits or the user clicks Stop.
+  // When false, the terminal lingers after the process ends — the
+  // user can scroll through logs and dismiss it manually with any
+  // key (matching the built-in Run & Debug "Terminal will be reused
+  // by tasks, press any key to close it" behavior). Doesn't apply
+  // to docker (no terminal owned by us) or http-request (no long-
+  // running process).
+  closeTerminalOnExit?: boolean;
   programArgs: string;
   vmArgs: string;
   port?: number;

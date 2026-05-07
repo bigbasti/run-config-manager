@@ -19,8 +19,7 @@ import { log } from '../../utils/logger';
 // appear; etc. No custom React panel needed.
 
 const VAR_SYNTAX_HINT =
-  'Supports ${env:VAR} (from .env files / process env), ${workspaceFolder}, and ${userHome}. ' +
-  'Unresolved variables expand to an empty string at request time.';
+  'Supports `${env:VAR}` (from `.env` files / process env), `${workspaceFolder}`, and `${userHome}`. Unresolved variables expand to an empty string at request time.';
 
 export class HttpRequestAdapter implements RuntimeAdapter {
   readonly type = 'http-request' as const;
@@ -120,8 +119,9 @@ export class HttpRequestAdapter implements RuntimeAdapter {
           key: 'typeOptions.queryParams',
           label: 'Query parameters',
           help:
-            'Appended to the URL as `?key=value&...`. Toggle the checkbox on each row to disable a param without removing it. ' +
-            'Both keys and values support ${VAR} interpolation. ' + VAR_SYNTAX_HINT,
+            'Appended to the URL as `?key=value&...`. Toggle the checkbox on each row to disable a param without removing it.\n\n' +
+            'Both keys and values support `${VAR}` interpolation.\n\n' +
+            VAR_SYNTAX_HINT,
         },
 
         // ------- Headers -----------------------------------------------------
@@ -130,8 +130,8 @@ export class HttpRequestAdapter implements RuntimeAdapter {
           key: 'typeOptions.headers',
           label: 'Headers',
           help:
-            'Custom HTTP headers. Content-Type is inferred from the body kind below (application/json, application/x-www-form-urlencoded, etc.) — ' +
-            'overriding it here wins. Authorization is set automatically from the Auth section unless you add it here. ' +
+            'Custom HTTP headers. `Content-Type` is inferred from the body kind below (`application/json`, `application/x-www-form-urlencoded`, etc.) — overriding it here wins.\n\n' +
+            '`Authorization` is set automatically from the **Auth** section unless you add it here.\n\n' +
             VAR_SYNTAX_HINT,
         },
 
@@ -148,9 +148,8 @@ export class HttpRequestAdapter implements RuntimeAdapter {
             { value: 'oauth-client-credentials', label: 'OAuth 2 — client credentials' },
           ],
           help:
-            'How to authenticate. Adds the right Authorization header (or query param for API key) automatically. ' +
-            'OAuth client credentials performs an extra POST to the token endpoint at run time, then uses the returned access_token ' +
-            'as a Bearer on the actual request.',
+            'How to authenticate. Adds the right `Authorization` header (or query param for API key) automatically.\n\n' +
+            '**OAuth client credentials** performs an extra `POST` to the token endpoint at run time, then uses the returned `access_token` as a Bearer on the actual request.',
         },
         {
           kind: 'text',
@@ -209,9 +208,9 @@ export class HttpRequestAdapter implements RuntimeAdapter {
           placeholder: 'https://auth.example.com/oauth2/token',
           dependsOn: { key: 'typeOptions.authKind', equals: 'oauth-client-credentials' },
           help:
-            'The OAuth 2 token endpoint to call before the actual request. ' +
-            'The runner POSTs `grant_type=client_credentials` here, reads `access_token` from the JSON response, ' +
-            'and uses it as a Bearer token. ' + VAR_SYNTAX_HINT,
+            'The OAuth 2 token endpoint to call before the actual request.\n\n' +
+            'The runner `POST`s `grant_type=client_credentials` here, reads `access_token` from the JSON response, and uses it as a Bearer token.\n\n' +
+            VAR_SYNTAX_HINT,
         },
         {
           kind: 'text',
@@ -246,9 +245,9 @@ export class HttpRequestAdapter implements RuntimeAdapter {
           ],
           dependsOn: { key: 'typeOptions.authKind', equals: 'oauth-client-credentials' },
           help:
-            'How to send the client id/secret to the token endpoint. ' +
-            'The header form (RFC 6749 §2.3.1 preferred) is what most servers expect; ' +
-            'switch to body when your server requires `client_id` / `client_secret` as form parameters.',
+            'How to send the client id/secret to the token endpoint.\n\n' +
+            'The **header** form (RFC 6749 §2.3.1 preferred) is what most servers expect.\n\n' +
+            'Switch to **body** when your server requires `client_id` / `client_secret` as form parameters.',
         },
 
         // ------- Body --------------------------------------------------------
@@ -264,8 +263,8 @@ export class HttpRequestAdapter implements RuntimeAdapter {
             { value: 'xml', label: 'XML' },
           ],
           help:
-            'Request body format. The right Content-Type is set automatically (you can override it in Headers above). ' +
-            'GET/HEAD requests typically have no body — using one is allowed but uncommon.',
+            'Request body format. The right `Content-Type` is set automatically (you can override it in **Headers** above).\n\n' +
+            '`GET` / `HEAD` requests typically have no body — using one is allowed but uncommon.',
         },
         {
           kind: 'textarea',
@@ -276,8 +275,8 @@ export class HttpRequestAdapter implements RuntimeAdapter {
           placeholder: '{ "name": "Alice", "email": "alice@example.com" }',
           dependsOn: { key: 'typeOptions.bodyKind', equals: 'json' },
           help:
-            'JSON payload. We don\'t validate or pretty-print on save — you can keep it as you typed it. ' +
-            'Variables are expanded after stringification, so put ${env:NAME} inside string values, not as bare tokens. ' +
+            'JSON payload. We don\'t validate or pretty-print on save — you can keep it as you typed it.\n\n' +
+            'Variables are expanded **after** stringification, so put `${env:NAME}` inside string values, not as bare tokens.\n\n' +
             VAR_SYNTAX_HINT,
         },
         {
@@ -286,8 +285,8 @@ export class HttpRequestAdapter implements RuntimeAdapter {
           label: 'Form fields',
           dependsOn: { key: 'typeOptions.bodyKind', equals: 'form-urlencoded' },
           help:
-            'application/x-www-form-urlencoded body. Each row becomes one `key=value` pair, URL-encoded. ' +
-            'Toggle the checkbox to disable a row without removing it. ' +
+            '`application/x-www-form-urlencoded` body. Each row becomes one `key=value` pair, URL-encoded.\n\n' +
+            'Toggle the checkbox to disable a row without removing it.\n\n' +
             VAR_SYNTAX_HINT,
         },
         {
@@ -318,13 +317,14 @@ export class HttpRequestAdapter implements RuntimeAdapter {
           language: 'javascript',
           placeholder: 'if ($status !== 200) throw new Error("expected 200");\nreturn { id: $response.id };',
           help:
-            'Runs after the response arrives. Available bindings: ' +
-            '`$response` (parsed body — JSON when content-type is JSON, otherwise the string), ' +
-            '`$rawBody` (always a string), ' +
-            '`$headers` (lowercased header map), ' +
-            '`$status` (status code as number). ' +
-            'Throwing or returning false fails the assertion (red icon flash). Returning anything else logs it to your chosen sink. ' +
-            'Sandbox: 5-second cap, no `require()`, no fs / network access.',
+            'Runs after the response arrives.\n\n' +
+            '**Available bindings:**\n' +
+            '- `$response` — parsed body (JSON when content-type is JSON, otherwise the string)\n' +
+            '- `$rawBody` — always a string\n' +
+            '- `$headers` — lowercased header map\n' +
+            '- `$status` — status code as number\n\n' +
+            'Throwing or returning `false` fails the assertion (red icon flash). Returning anything else logs it to your chosen sink.\n\n' +
+            '**Sandbox:** 5-second cap, no `require()`, no fs / network access.',
         },
 
         // ------- Output ------------------------------------------------------
@@ -337,11 +337,9 @@ export class HttpRequestAdapter implements RuntimeAdapter {
             { value: 'panel', label: 'Output channel + side panel' },
           ],
           help:
-            'The full request/response (URL, headers, body, status, timing, assert result) is always written to the ' +
-            '"Run Configurations" Output channel — that\'s the run history you can scroll back through. ' +
-            'Pick "Output channel + side panel" to additionally open a read-only tab beside the editor with the ' +
-            'response status, headers, and pretty-printed body. Useful for big JSON responses you want to read ' +
-            'without scrolling past the request log.',
+            'The full request/response (URL, headers, body, status, timing, assert result) is always written to the **Run Configurations** Output channel — that\'s the run history you can scroll back through.\n\n' +
+            'Pick **Output channel + side panel** to additionally open a read-only tab beside the editor with the response status, headers, and pretty-printed body.\n\n' +
+            'Useful for big JSON responses you want to read without scrolling past the request log.',
         },
       ],
       advanced: [

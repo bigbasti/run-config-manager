@@ -114,4 +114,20 @@ describe('runMigrations', () => {
     const r = runMigrations(baseFile('0.6.0'), '0.7.0');
     expect(r.file.version).toBe('0.7.0');
   });
+
+  test('the closeTerminalOnExit migration adds the field with true to existing configs', () => {
+    // Use the real registry — exercises the actual migration we ship.
+    const file = baseFile('0.0.0', {
+      configurations: [
+        { id: 'a', name: 'A', type: 'npm' } as any,
+        { id: 'b', name: 'B', type: 'npm', closeTerminalOnExit: false } as any,
+      ],
+    });
+    const r = runMigrations(file, '0.6.3');
+    expect(r.contentChanged).toBe(true);
+    // First config gets the default (true).
+    expect((r.file.configurations[0] as any).closeTerminalOnExit).toBe(true);
+    // Second config keeps its explicit value.
+    expect((r.file.configurations[1] as any).closeTerminalOnExit).toBe(false);
+  });
 });

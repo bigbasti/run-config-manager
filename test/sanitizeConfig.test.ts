@@ -384,4 +384,37 @@ describe('sanitizeConfig', () => {
     } as RunConfig);
     expect(outWhitespace.group).toBeUndefined();
   });
+
+  test('closeTerminalOnExit: defaults to true when missing', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'custom-command',
+      typeOptions: { command: 'echo', cwd: '', shell: 'default', interactive: false } as any,
+    } as RunConfig);
+    expect(out.closeTerminalOnExit).toBe(true);
+  });
+
+  test('closeTerminalOnExit: explicit false survives sanitize', () => {
+    // Regression guard for the bug where the toggle had no effect —
+    // earlier sanitize stripped `false` along with `true` to keep
+    // run.json tidy, but ExecutionService can't see what isn't on
+    // the config.
+    const out = sanitizeConfig({
+      ...base,
+      type: 'custom-command',
+      typeOptions: { command: 'echo', cwd: '', shell: 'default', interactive: false } as any,
+      closeTerminalOnExit: false,
+    } as RunConfig);
+    expect(out.closeTerminalOnExit).toBe(false);
+  });
+
+  test('closeTerminalOnExit: explicit true is preserved (not stripped)', () => {
+    const out = sanitizeConfig({
+      ...base,
+      type: 'custom-command',
+      typeOptions: { command: 'echo', cwd: '', shell: 'default', interactive: false } as any,
+      closeTerminalOnExit: true,
+    } as RunConfig);
+    expect(out.closeTerminalOnExit).toBe(true);
+  });
 });

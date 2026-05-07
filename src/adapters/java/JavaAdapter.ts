@@ -12,12 +12,10 @@ import { suggestClasspath } from '../spring-boot/suggestClasspath';
 import { resolveProjectUri } from '../../utils/paths';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
-import { dependsOnField, envFilesField } from '../sharedFields';
+import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 
 const VAR_SYNTAX_HINT =
-  'Supports ${VAR} and ${env:VAR} (environment variables), ' +
-  '${workspaceFolder}, ${userHome}, and ${cwd}/${projectPath}. ' +
-  'Unresolved variables expand to an empty string at launch.';
+  'Supports `${VAR}` and `${env:VAR}` (environment variables), `${workspaceFolder}`, `${userHome}`, and `${cwd}` / `${projectPath}`. Unresolved variables expand to an empty string at launch.';
 
 export class JavaAdapter implements RuntimeAdapter {
   readonly type = 'java' as const;
@@ -265,7 +263,9 @@ export class JavaAdapter implements RuntimeAdapter {
           rows: 2,
           placeholder: ':systemtest:systemtestDev --tests "de.telit.pkg.*Test"',
           help:
-            'Free-form command tail appended to the build-tool binary. Use this for ad-hoc invocations that don\'t fit the standard main-class/program-args split — e.g. running a specific Gradle test task with --tests filters. Quoted arguments are preserved. Program args, VM args, and Main class are all IGNORED in custom modes.',
+            'Free-form command tail appended to the build-tool binary.\n\n' +
+            'Use this for ad-hoc invocations that don\'t fit the standard main-class / program-args split — e.g. running a specific Gradle test task with `--tests` filters. Quoted arguments are preserved.\n\n' +
+            '**Program args**, **VM args**, and **Main class** are all **ignored** in custom modes.',
           examples: [
             ':api:test --tests "com.example.*IT"',
             'clean build -x test',
@@ -382,8 +382,9 @@ export class JavaAdapter implements RuntimeAdapter {
           kind: 'boolean',
           key: 'typeOptions.colorOutput',
           label: 'Colored log output',
+          inlineLabel: true,
           help:
-            'Sets FORCE_COLOR=1 / CLICOLOR_FORCE=1 so libraries that auto-detect TTY don\'t strip ANSI codes in the integrated terminal.',
+            'Sets `FORCE_COLOR=1` / `CLICOLOR_FORCE=1` so libraries that auto-detect TTY don\'t strip ANSI codes in the integrated terminal.',
         },
       ],
       advanced: [
@@ -414,7 +415,7 @@ export class JavaAdapter implements RuntimeAdapter {
           label: 'VM args',
           placeholder: '-Xmx1g',
           help:
-            'JVM flags applied directly to the `java` command line. ' +
+            'JVM flags applied directly to the `java` command line.\n\n' +
             VAR_SYNTAX_HINT,
           examples: ['-Xmx1g', '-Xmx2g -XX:+UseG1GC', '-Dapp.home=${workspaceFolder}'],
           inspectable: true,
@@ -427,6 +428,7 @@ export class JavaAdapter implements RuntimeAdapter {
           dependsOn: { key: 'typeOptions.launchMode', equals: 'java-main' },
         },
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
+        closeTerminalOnExitField(),
       ],
     };
   }

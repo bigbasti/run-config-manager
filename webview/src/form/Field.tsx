@@ -67,25 +67,33 @@ export function Field({ field, values, onChange, onPickFolder, onFocusField, onF
   const isRequired = Boolean(field.required);
   const errorMessage = fieldErrors?.get(field.key);
 
+  // Inline-label booleans hide the outer header — the checkbox row
+  // already shows the label next to itself, so a duplicate up here
+  // would be redundant clutter ("Close terminal as soon as process
+  // ends" appearing twice).
+  const suppressOuterLabel = field.kind === 'boolean' && field.inlineLabel === true;
+
   return (
     <div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span>
-          {field.label}
-          {isRequired && (
-            <span
-              title="Required"
-              aria-label="Required"
-              style={{
-                color: 'var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground, #ff5555))',
-                marginLeft: 3,
-                fontWeight: 700,
-              }}
-            >*</span>
-          )}
-        </span>
-        {isPending && <span className="field-spinner" title="Detecting…">⟳</span>}
-      </label>
+      {!suppressOuterLabel && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span>
+            {field.label}
+            {isRequired && (
+              <span
+                title="Required"
+                aria-label="Required"
+                style={{
+                  color: 'var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground, #ff5555))',
+                  marginLeft: 3,
+                  fontWeight: 700,
+                }}
+              >*</span>
+            )}
+          </span>
+          {isPending && <span className="field-spinner" title="Detecting…">⟳</span>}
+        </label>
+      )}
       <div
         className="field-row"
         style={errorMessage ? {
@@ -356,7 +364,13 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
             onBlur={h.blur}
             style={{ width: 'auto' }}
           />
-          <span style={{ fontSize: 12 }}>Enabled</span>
+          {/* When the field opts into inline-label mode, render its
+              actual label here (the outer header is suppressed). The
+              default "Enabled" only fits booleans whose meaning is
+              already given by the outer header. */}
+          <span style={{ fontSize: field.inlineLabel ? undefined : 12 }}>
+            {field.inlineLabel ? field.label : 'Enabled'}
+          </span>
         </label>
       );
     case 'kv':

@@ -1336,6 +1336,15 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
   if (common.dependsOn === undefined) delete (common as any).dependsOn;
   if (common.group === undefined) delete (common as any).group;
   if (common.envFiles === undefined) delete (common as any).envFiles;
+  // closeTerminalOnExit: persist explicitly. We used to strip `true`
+  // to keep run.json tidy, but users wanted the field always visible
+  // on disk so the toggle's state is obvious in source-controlled
+  // run.json files. Default `true` for any config that doesn't carry
+  // it — the migration step on load fills in the field for older
+  // configs. New configs always write the field.
+  if ((common as any).closeTerminalOnExit === undefined) {
+    (common as any).closeTerminalOnExit = true;
+  }
   if (cfg.type === 'tomcat') {
     const to = cfg.typeOptions as Partial<import('../shared/types').TomcatTypeOptions> | undefined;
     return {

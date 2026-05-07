@@ -12,14 +12,13 @@ import { findGradleRoot } from '../spring-boot/findBuildRoot';
 import { findSpringProfiles } from '../spring-boot/findProfiles';
 import { hasSpringBootDevTools } from '../spring-boot/detectDevTools';
 import { hasCustomLogback } from '../spring-boot/detectCustomLogback';
-import { dependsOnField, envFilesField } from '../sharedFields';
+import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 import type { PrepareContext, PrepareResult } from '../RuntimeAdapter';
 import { log } from '../../utils/logger';
 
 // Shared help-text footer — mirrors the Spring Boot adapter's pattern.
 const VAR_SYNTAX_HINT =
-  'Supports ${VAR}, ${env:VAR}, ${workspaceFolder}, ${userHome}, and ${cwd}/${projectPath}. ' +
-  'Unresolved variables expand to empty strings at launch.';
+  'Supports `${VAR}`, `${env:VAR}`, `${workspaceFolder}`, `${userHome}`, and `${cwd}` / `${projectPath}`. Unresolved variables expand to empty strings at launch.';
 
 // The Run-side scaffolding (writing CATALINA_BASE, editing server.xml, etc.)
 // lives in tomcatRuntime.ts. This adapter is responsible only for detect /
@@ -249,8 +248,8 @@ export class TomcatAdapter implements RuntimeAdapter {
           options: tomcatInstalls.map(p => ({ value: p, label: p })),
           placeholder: '/opt/apache-tomcat-10.1.18',
           help:
-            'Absolute path to the Tomcat install (CATALINA_HOME). Must contain bin/catalina.sh and conf/server.xml. ' +
-            'Auto-detected from CATALINA_HOME / TOMCAT_HOME / /opt/apache-tomcat-*. ' +
+            'Absolute path to the Tomcat install (`CATALINA_HOME`). Must contain `bin/catalina.sh` and `conf/server.xml`.\n\n' +
+            'Auto-detected from `CATALINA_HOME` / `TOMCAT_HOME` / `/opt/apache-tomcat-*`.\n\n' +
             'Click the cloud icon to download a fresh Tomcat from Apache directly into your home directory.',
           examples: ['/opt/apache-tomcat-10.1.18', '/usr/share/tomcat10'],
           // Mirrors the JDK download button — clicking opens the Tomcat
@@ -324,8 +323,8 @@ export class TomcatAdapter implements RuntimeAdapter {
           label: 'Build project path',
           validateBuildPath: 'either',
           help:
-            'Path (relative to workspace folder) of the project that produces the artifact. ' +
-            'Leave blank to use the Project path field above. ' +
+            'Path (relative to workspace folder) of the project that produces the artifact.\n\n' +
+            'Leave blank to use the **Project path** field above.\n\n' +
             'Used for the `gradle :<module>:war` task scoping in multi-module projects.',
           examples: ['', 'api', 'web'],
         },
@@ -377,8 +376,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           label: 'Build root (optional)',
           placeholder: '(auto — same as Project path)',
           help:
-            'Absolute path to the Gradle/Maven root (where settings.gradle / reactor pom.xml lives). ' +
-            'Leave blank to use the Project path above.',
+            'Absolute path to the Gradle/Maven root (where `settings.gradle` / reactor `pom.xml` lives). Leave blank to use the **Project path** above.',
           dependsOn: { key: 'typeOptions.buildTool', equals: ['gradle', 'maven'] },
         },
         {
@@ -389,9 +387,12 @@ export class TomcatAdapter implements RuntimeAdapter {
           options: artifacts.map(a => ({ value: a.path, label: a.label })),
           placeholder: '/git/…/build/libs/app.war',
           help:
-            'WAR file or exploded web-app directory to deploy to Tomcat. ' +
-            'Auto-scanned from build/libs/*.war (Gradle), build/exploded/* (Gradle exploded), and target/*.war (Maven). ' +
-            'Pick "Custom…" to point to a WAR anywhere on disk.',
+            'WAR file or exploded web-app directory to deploy to Tomcat.\n\n' +
+            '**Auto-scanned from:**\n' +
+            '- `build/libs/*.war` (Gradle)\n' +
+            '- `build/exploded/*` (Gradle exploded)\n' +
+            '- `target/*.war` (Maven)\n\n' +
+            'Pick **Custom…** to point to a WAR anywhere on disk.',
           examples: ['/git/project/build/libs/api.war'],
         },
         {
@@ -403,8 +404,8 @@ export class TomcatAdapter implements RuntimeAdapter {
             { value: 'exploded', label: 'Exploded directory' },
           ],
           help:
-            'Exploded deployments support hot reload: Tomcat watches WEB-INF/classes and reloads the webapp. ' +
-            'Packaged WARs redeploy by re-exploding the file — slower but matches production layout.',
+            '**Exploded** deployments support hot reload: Tomcat watches `WEB-INF/classes` and reloads the webapp.\n\n' +
+            '**Packaged WARs** redeploy by re-exploding the file — slower, but matches production layout.',
         },
         {
           kind: 'text',
@@ -432,8 +433,8 @@ export class TomcatAdapter implements RuntimeAdapter {
           key: 'typeOptions.reloadable',
           label: 'Reloadable context (hot reload)',
           help:
-            'Sets <Context reloadable="true"/> so Tomcat reloads the webapp when WEB-INF/classes changes. ' +
-            'Best paired with an exploded deployment and "Rebuild on save".',
+            'Sets `<Context reloadable="true"/>` so Tomcat reloads the webapp when `WEB-INF/classes` changes.\n\n' +
+            'Best paired with an **exploded** deployment and **Rebuild on save**.',
           // Reloadable only applies to exploded deployments — Tomcat watches
           // WEB-INF/classes directories, and a packaged WAR's classes live
           // inside the archive until it's re-exploded on the next (re)deploy.
@@ -455,10 +456,11 @@ export class TomcatAdapter implements RuntimeAdapter {
           kind: 'boolean',
           key: 'typeOptions.rebuildOnSave',
           label: 'Rebuild on save',
+          inlineLabel: true,
           help:
-            'Spawns `./gradlew -t :<module>:classes` in the background so edits recompile automatically. ' +
-            'Combined with "Reloadable context" this gives a fast iteration loop. ' +
-            'Requires Gradle (Maven has no built-in watch task).',
+            'Spawns `./gradlew -t :<module>:classes` in the background so edits recompile automatically.\n\n' +
+            'Combined with **Reloadable context**, this gives a fast iteration loop.\n\n' +
+            'Requires **Gradle** — Maven has no built-in watch task.',
           dependsOn: { key: 'typeOptions.buildTool', equals: 'gradle' },
           // For Spring-Boot-on-Tomcat the Gradle watcher recompiles classes,
           // but hot reload in the deployed webapp still comes from DevTools.
@@ -475,11 +477,10 @@ export class TomcatAdapter implements RuntimeAdapter {
           kind: 'boolean',
           key: 'typeOptions.colorOutput',
           label: 'Colored log output',
+          inlineLabel: true,
           help:
-            'Forces ANSI colors in the terminal by setting FORCE_COLOR=1 / CLICOLOR_FORCE=1 ' +
-            'and, for Spring Boot apps, spring.output.ansi.enabled=ALWAYS. Also injects ' +
-            '-Dlogging.pattern.console=… via CATALINA_OPTS so Spring Boot\'s default Logback ' +
-            'console appender emits %clr(…) ANSI wrappers.',
+            'Forces ANSI colors in the terminal by setting `FORCE_COLOR=1` / `CLICOLOR_FORCE=1` and, for Spring Boot apps, `spring.output.ansi.enabled=ALWAYS`.\n\n' +
+            'Also injects `-Dlogging.pattern.console=…` via `CATALINA_OPTS` so Spring Boot\'s default Logback console appender emits `%clr(…)` ANSI wrappers.',
           warning: hasCustomLogbackCfg === true
             ? 'A custom logback / log4j2 config was found in src/main/resources with its own <pattern>. Our colored-output pattern is injected via -Dlogging.pattern.console, which the project\'s file overrides. FORCE_COLOR still takes effect for child processes, but the main log line format comes from your logback file. Either reference ${LOG_PATTERN} in your custom pattern, or delete the custom logback file to fall back to Spring Boot\'s default.'
             : undefined,
@@ -506,6 +507,7 @@ export class TomcatAdapter implements RuntimeAdapter {
           inspectable: true,
         },
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
+        closeTerminalOnExitField(),
       ],
     };
   }

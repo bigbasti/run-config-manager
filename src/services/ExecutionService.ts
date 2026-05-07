@@ -28,6 +28,20 @@ interface Entry {
   // uses its own interactive shell, so we surrender log scanning and just
   // assume the app is up after 15s. Cleared if the task ends early.
   readyTimer?: NodeJS.Timeout;
+  // Ref to the RunTerminal instance, when this config went through the
+  // CustomExecution path (vs ShellExecution). Held so stop() can kill
+  // the child directly without going through VS Code's
+  // TaskExecution.terminate, which would close the pseudoterminal
+  // before linger-mode could kick in.
+  //
+  // It's a ref-holder (not a direct field) because the CustomExecution
+  // callback that creates the RunTerminal runs asynchronously — by the
+  // time we build the Entry after `executeTask` resolves, the callback
+  // may not have run yet. Storing a shared object lets the callback
+  // mutate `.current` later and have stop() see the value.
+  // Undefined for shell-execution configs (Quarkus, interactive
+  // custom-command) — those don't support linger anyway.
+  terminalRef?: { current?: RunTerminal };
 }
 
 export interface RunOpts {
@@ -297,13 +311,27 @@ export class ExecutionService {
       if (typeof v === 'string') strictEnv[k] = v;
     }
 
+    // Shared ref the CustomExecution callback writes its RunTerminal
+    // into. We can't capture a plain `let` because by the time stop()
+    // looks at the Entry, the callback may not have fired yet — the
+    // ref-holder gives both sides a stable object to coordinate
+    // through.
+    const terminalRef: { current?: RunTerminal } = {};
+
     const execution2: vscode.ShellExecution | vscode.CustomExecution = useShellExecution
       ? new vscode.ShellExecution(command, args, { cwd, env: strictEnv })
-      : new vscode.CustomExecution(async () => new RunTerminal({
+      : new vscode.CustomExecution(async () => {
+          const runTerminal = new RunTerminal({
           command,
           args,
           cwd,
           env: mergedEnv,
+          // When the user explicitly UNchecked "Close terminal as
+          // soon as process ends" (closeTerminalOnExit === false),
+          // the terminal lingers after the process ends so logs
+          // survive the stop button. Default is close-immediately
+          // (field undefined or true).
+          keepOpenOnExit: resolvedCfg.closeTerminalOnExit === false,
           prettifier: makePrettifier(resolvedCfg, { cwd }),
           onOutput: chunk => {
             // Priority: failure > ready > rebuild. If a chunk happens to
@@ -330,7 +358,10 @@ export class ExecutionService {
           onExit: () => {
             // Handled by onDidEndTask listener; no-op here.
           },
-        }));
+        });
+        terminalRef.current = runTerminal;
+        return runTerminal;
+        });
 
     const task = new vscode.Task(
       { type: 'run-config', configId: cfg.id } as any,
@@ -343,7 +374,13 @@ export class ExecutionService {
 
     try {
       const execution = await vscode.tasks.executeTask(task);
-      const entry: Entry = { execution, configId: cfg.id };
+      const entry: Entry = {
+        execution,
+        configId: cfg.id,
+        // Only thread the ref through for CustomExecution configs —
+        // ShellExecution doesn't own a RunTerminal.
+        terminalRef: useShellExecution ? undefined : terminalRef,
+      };
 
       // Quarkus is a long-running dev server: mark it started optimistically
       // after 15s since we can't observe stdout. Custom commands (even the
@@ -434,7 +471,19 @@ export class ExecutionService {
   async stop(configId: string): Promise<void> {
     const entry = this.running.get(configId);
     if (!entry) return;
-    entry.execution.terminate();
+    // When the config went through our pseudoterminal AND the user
+    // opted into linger mode, kill the child process directly via
+    // RunTerminal instead of going through TaskExecution.terminate.
+    // The latter makes VS Code call close() on the pseudoterminal
+    // *before* our linger logic gets a chance to keep it alive — the
+    // terminal would tear down with the child still warm in the
+    // output buffer. Going direct lets the child exit naturally so
+    // RunTerminal.finish() can flip into linger mode.
+    if (entry.terminalRef?.current) {
+      entry.terminalRef.current.requestStop();
+    } else {
+      entry.execution.terminate();
+    }
     entry.watcher?.terminate();
     if (entry.readyTimer) clearTimeout(entry.readyTimer);
     this.running.delete(configId);

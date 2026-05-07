@@ -65,6 +65,10 @@ const commonFields = {
   // than baked into the saved config, so editing the file is enough to
   // change behaviour.
   envFiles: z.array(z.string().min(1)).optional(),
+  // Optional: when explicitly false, the integrated terminal lingers
+  // after the process exits so the user can read logs. Default at
+  // consumption time is `true` (close immediately, original behavior).
+  closeTerminalOnExit: z.boolean().optional(),
   programArgs: z.string(),
   vmArgs: z.string(),
   port: z.number().int().positive().optional(),

@@ -9,13 +9,11 @@ import { findGradleRoot } from '../spring-boot/findBuildRoot';
 import { resolveProjectUri } from '../../utils/paths';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
-import { dependsOnField, envFilesField } from '../sharedFields';
+import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 import type { GradleTaskEntry } from './discoverGradleTasks';
 
 const VAR_SYNTAX_HINT =
-  'Supports ${VAR} and ${env:VAR} (environment variables), ' +
-  '${workspaceFolder}, ${userHome}, and ${cwd}/${projectPath}. ' +
-  'Unresolved variables expand to an empty string at launch.';
+  'Supports `${VAR}` and `${env:VAR}` (environment variables), `${workspaceFolder}`, `${userHome}`, and `${cwd}` / `${projectPath}`. Unresolved variables expand to an empty string at launch.';
 
 export class GradleTaskAdapter implements RuntimeAdapter {
   readonly type = 'gradle-task' as const;
@@ -224,6 +222,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
           kind: 'boolean',
           key: 'typeOptions.colorOutput',
           label: 'Colored log output',
+          inlineLabel: true,
           help: 'Sets FORCE_COLOR=1 / CLICOLOR_FORCE=1. Note that `--console=plain` (needed for the integrated terminal) still strips some Gradle-native colors; this mostly affects output from tools the task forks.',
         },
       ],
@@ -237,6 +236,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
           examples: ['DB_URL=${DB_URL}', 'GRADLE_OPTS=-Xmx2g'],
         },
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
+        closeTerminalOnExitField(),
       ],
     };
   }

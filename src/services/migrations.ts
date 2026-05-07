@@ -32,9 +32,29 @@ export interface MigrationEntry {
   migrate: (file: RunFile) => RunFile;
 }
 
-// Empty by default — no shape changes have shipped yet that require a
-// migration. Future releases append here.
-export const MIGRATIONS: MigrationEntry[] = [];
+// Migration registry. Entries apply oldest-first when the on-disk
+// version is older than the entry's `to` AND the running extension
+// has reached `to`.
+export const MIGRATIONS: MigrationEntry[] = [
+  {
+    // Stamp `closeTerminalOnExit: true` onto every config that
+    // doesn't already carry the field. The field controls whether
+    // the integrated terminal lingers after the process ends. The
+    // sanitize layer used to strip `true` from disk for tidiness;
+    // we now persist it explicitly so the toggle's state is
+    // obvious in source-controlled run.json files.
+    from: '0.0.0',
+    to: '0.6.3',
+    migrate: file => ({
+      ...file,
+      configurations: file.configurations.map(c =>
+        c.closeTerminalOnExit === undefined
+          ? { ...c, closeTerminalOnExit: true }
+          : c,
+      ),
+    }),
+  },
+];
 
 export interface MigrationResult {
   file: RunFile;

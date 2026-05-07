@@ -5,12 +5,10 @@ import type { RunConfig } from '../../shared/types';
 import type { FormSchema } from '../../shared/formSchema';
 import { resolveProjectUri } from '../../utils/paths';
 import { log } from '../../utils/logger';
-import { dependsOnField, envFilesField } from '../sharedFields';
+import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 
 const VAR_SYNTAX_HINT =
-  'Supports ${VAR} and ${env:VAR} (environment variables), ' +
-  '${workspaceFolder}, ${userHome}, and ${cwd}/${projectPath}. ' +
-  'Unresolved variables expand to an empty string at launch.';
+  'Supports `${VAR}` and `${env:VAR}` (environment variables), `${workspaceFolder}`, `${userHome}`, and `${cwd}` / `${projectPath}`. Unresolved variables expand to an empty string at launch.';
 
 export class CustomCommandAdapter implements RuntimeAdapter {
   readonly type = 'custom-command' as const;
@@ -67,8 +65,8 @@ export class CustomCommandAdapter implements RuntimeAdapter {
           rows: 3,
           placeholder: './scripts/seed.sh --profile dev',
           help:
-            'The command to run. The whole string is passed through a shell, so operators like `&&`, `|`, `>`, globs (`*.txt`), and shell variables (`$FOO`) all work. ' +
-            'Use `${workspaceFolder}` / `${env:FOO}` for cross-environment paths. ' +
+            'The command to run. The whole string is passed through a shell, so operators like `&&`, `|`, `>`, globs (`*.txt`), and shell variables (`$FOO`) all work.\n\n' +
+            'Use `${workspaceFolder}` / `${env:FOO}` for cross-environment paths.\n\n' +
             VAR_SYNTAX_HINT,
           examples: [
             './scripts/seed.sh --profile dev',
@@ -99,7 +97,8 @@ export class CustomCommandAdapter implements RuntimeAdapter {
             { value: 'cmd', label: 'cmd.exe' },
           ],
           help:
-            'Which shell interprets the command. "Default" picks $SHELL on Unix, COMSPEC on Windows. Pin to a specific shell when your script relies on shell-specific features. ' +
+            'Which shell interprets the command. **Default** picks `$SHELL` on Unix, `COMSPEC` on Windows.\n\n' +
+            'Pin to a specific shell when your script relies on shell-specific features.\n\n' +
             'PowerShell scripts on mixed teams: pick `pwsh` to force PowerShell 7+ regardless of the user\'s default.',
         },
         {
@@ -107,14 +106,14 @@ export class CustomCommandAdapter implements RuntimeAdapter {
           key: 'typeOptions.interactive',
           label: 'Interactive (stdin, Ctrl+C)',
           help:
-            'When enabled, VS Code owns the terminal and your script can read from stdin, receive Ctrl+C, display interactive prompts, and redraw (spinners, TUIs). ' +
-            'Output prettification (colored log levels, clickable paths) is disabled in this mode. ' +
-            'Leave off for scripts that just print output — they get the prettifier plus output-channel logging.',
+            'When **enabled**, VS Code owns the terminal and your script can read from stdin, receive `Ctrl+C`, display interactive prompts, and redraw (spinners, TUIs). Output prettification (colored log levels, clickable paths) is **disabled** in this mode.\n\n' +
+            'Leave **off** for scripts that just print output — they get the prettifier plus output-channel logging.',
         },
         {
           kind: 'boolean',
           key: 'typeOptions.colorOutput',
           label: 'Force colored output',
+          inlineLabel: true,
           help: 'Sets FORCE_COLOR=1 / CLICOLOR_FORCE=1 so libraries that auto-detect TTY don\'t strip ANSI codes.',
         },
       ],
@@ -128,6 +127,7 @@ export class CustomCommandAdapter implements RuntimeAdapter {
           examples: ['NODE_ENV=production', 'DB_URL=${DB_URL}', 'DEBUG=app:*'],
         },
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
+        closeTerminalOnExitField(),
       ],
     };
   }

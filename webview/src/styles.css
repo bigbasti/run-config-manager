@@ -215,3 +215,19 @@ select:hover:not(:focus):not(:disabled) {
   font-family: var(--vscode-editor-font-family);
 }
 .help-panel .empty { color: var(--vscode-descriptionForeground); font-style: italic; }
+.help-panel .help-list {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  color: var(--vscode-foreground);
+}
+.help-panel .help-list li { margin-bottom: 3px; }
+.help-panel .help-code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.92em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.18));
+  color: var(--vscode-textPreformat-foreground, inherit);
+  white-space: nowrap;
+}
+.help-panel strong { font-weight: 600; }

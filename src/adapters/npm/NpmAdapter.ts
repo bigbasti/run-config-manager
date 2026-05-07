@@ -5,7 +5,7 @@ import type { FormField, FormSchema } from '../../shared/formSchema';
 import { readPackageJsonInfo } from './detectPackageJson';
 import { splitArgs } from './splitArgs';
 import { log } from '../../utils/logger';
-import { dependsOnField, envFilesField } from '../sharedFields';
+import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 import { detectNpmPort } from '../../services/detectProjectPort';
 
 export class NpmAdapter implements RuntimeAdapter {
@@ -119,10 +119,8 @@ export class NpmAdapter implements RuntimeAdapter {
           key: 'env',
           label: 'Environment variables',
           help:
-            'Extra environment variables merged on top of VS Code\'s inherited env. ' +
-            'Values are strings. Do not quote values here — the shell sees them literally. ' +
-            'Supports ${VAR} / ${env:VAR} / ${workspaceFolder} / ${cwd} / ${userHome}. ' +
-            'Unresolved variables expand to empty strings at launch.',
+            'Extra environment variables merged on top of VS Code\'s inherited env. Values are strings — do not quote them here, the shell sees them literally.\n\n' +
+            'Supports `${VAR}` / `${env:VAR}` / `${workspaceFolder}` / `${cwd}` / `${userHome}`. Unresolved variables expand to empty strings at launch.',
           examples: ['NODE_ENV=development', 'DEBUG=app:*', 'DATA_DIR=${workspaceFolder}/data'],
         },
         {
@@ -131,9 +129,8 @@ export class NpmAdapter implements RuntimeAdapter {
           label: 'Program args',
           placeholder: '--port 5000',
           help:
-            'Arguments passed to the script after "--". Quote values with spaces using double quotes. ' +
-            'Supports ${VAR} / ${env:VAR} / ${workspaceFolder} / ${cwd} / ${userHome}. ' +
-            'Unresolved variables expand to empty strings at launch.',
+            'Arguments passed to the script after `--`. Quote values with spaces using double quotes.\n\n' +
+            'Supports `${VAR}` / `${env:VAR}` / `${workspaceFolder}` / `${cwd}` / `${userHome}`. Unresolved variables expand to empty strings at launch.',
           examples: ['--port 5000', '--open --host 0.0.0.0', '--config=${workspaceFolder}/cfg'],
           inspectable: true,
         },
@@ -143,6 +140,7 @@ export class NpmAdapter implements RuntimeAdapter {
         // for schema compatibility with Java/Spring Boot configs; npm
         // configs simply leave it blank.
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
+        closeTerminalOnExitField(),
       ],
     };
   }

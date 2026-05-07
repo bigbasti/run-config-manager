@@ -9,12 +9,10 @@ import { findMavenRoot } from '../spring-boot/findBuildRoot';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
 import type { MavenGoalEntry } from './discoverMavenGoals';
-import { dependsOnField, envFilesField } from '../sharedFields';
+import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 
 const VAR_SYNTAX_HINT =
-  'Supports ${VAR} and ${env:VAR} (environment variables), ' +
-  '${workspaceFolder}, ${userHome}, and ${cwd}/${projectPath}. ' +
-  'Unresolved variables expand to an empty string at launch.';
+  'Supports `${VAR}` and `${env:VAR}` (environment variables), `${workspaceFolder}`, `${userHome}`, and `${cwd}` / `${projectPath}`. Unresolved variables expand to an empty string at launch.';
 
 export class MavenGoalAdapter implements RuntimeAdapter {
   readonly type = 'maven-goal' as const;
@@ -209,6 +207,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
           kind: 'boolean',
           key: 'typeOptions.colorOutput',
           label: 'Colored log output',
+          inlineLabel: true,
           help: 'Sets FORCE_COLOR=1 / CLICOLOR_FORCE=1 so libraries that auto-detect TTY don\'t strip ANSI codes.',
         },
       ],
@@ -222,6 +221,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
           examples: ['MAVEN_OPTS=-Xmx2g', 'DB_URL=${DB_URL}'],
         },
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
+        closeTerminalOnExitField(),
       ],
     };
   }
