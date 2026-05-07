@@ -42,6 +42,11 @@ interface Entry {
   // Undefined for shell-execution configs (Quarkus, interactive
   // custom-command) — those don't support linger anyway.
   terminalRef?: { current?: RunTerminal };
+  // Mirror of resolvedCfg.closeTerminalOnExit at run start. stop()
+  // uses this to decide whether to go through the linger-aware
+  // bypass or VS Code's normal terminate path. Stored on the entry
+  // so the cfg-mutation timing doesn't matter at stop time.
+  closeTerminalOnExit?: boolean;
 }
 
 export interface RunOpts {
@@ -380,6 +385,7 @@ export class ExecutionService {
         // Only thread the ref through for CustomExecution configs —
         // ShellExecution doesn't own a RunTerminal.
         terminalRef: useShellExecution ? undefined : terminalRef,
+        closeTerminalOnExit: resolvedCfg.closeTerminalOnExit,
       };
 
       // Quarkus is a long-running dev server: mark it started optimistically
@@ -479,8 +485,18 @@ export class ExecutionService {
     // terminal would tear down with the child still warm in the
     // output buffer. Going direct lets the child exit naturally so
     // RunTerminal.finish() can flip into linger mode.
-    if (entry.terminalRef?.current) {
-      entry.terminalRef.current.requestStop();
+    // Only bypass VS Code's terminate path when the user opted into
+    // linger (closeTerminalOnExit === false). The bypass exists so
+    // RunTerminal can flip into lingering mode before VS Code tears
+    // the pseudoterminal down — but for close-immediately configs
+    // that bypass adds nothing and triggers VS Code's own
+    // "press any key" prompt. Letting terminate() handle the
+    // lifecycle there matches the pre-linger behavior exactly.
+    const wantsLinger =
+      entry.terminalRef?.current !== undefined &&
+      entry.closeTerminalOnExit === false;
+    if (wantsLinger) {
+      entry.terminalRef!.current!.requestStop();
     } else {
       entry.execution.terminate();
     }
