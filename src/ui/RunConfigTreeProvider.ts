@@ -539,60 +539,128 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
   }
 
   // ------- Drag-and-drop --------------------------------------------------
+  //
+  // Two payload kinds, both encoded as JSON inside the same MIME type:
+  //   { kind: 'config', items: [{ folderKey, configId }, ...] }
+  //   { kind: 'folder', folderKey, path }
+  //
+  // Drop semantics:
+  //   - config → folder      = move into that folder.
+  //   - config → typeGroup   = move to top-level.
+  //   - config → other config= insert directly before that config
+  //                            (also inheriting that config's group).
+  //   - config → empty space = move to top-level, end of list.
+  //   - folder → folder      = nest (target becomes the new parent).
+  //   - folder → typeGroup
+  //     / config / empty     = move folder back to top-level.
+  //   - folder → self/desc.  = rejected (cycle).
 
-  // Drag side: encode the dragged config's identity into the transfer
-  // bag. We only support dragging individual config rows — folder rows
-  // are read-only as drag sources to keep the model simple (a folder
-  // move would imply renaming and rewriting every descendant; the
-  // user has the right-click "Rename folder" command for that).
   handleDrag(source: readonly Node[], data: vscode.DataTransfer): void {
-    const draggable = source.filter((n): n is Extract<Node, { kind: 'config' }> => n.kind === 'config');
-    if (draggable.length === 0) return;
-    // We ship one entry per dragged config. Receiving side iterates.
-    const payload = draggable.map(n => ({
-      folderKey: n.folderKey,
-      configId: n.config.id,
-    }));
-    data.set(DND_MIME, new vscode.DataTransferItem(JSON.stringify(payload)));
+    // We support dragging configs OR a single folder. Mixed drags
+    // are unusual; we prefer the folder when the user picked one
+    // (matching most file-explorer UIs that disallow mixed selection
+    // when a folder is involved).
+    const folder = source.find((n): n is Extract<Node, { kind: 'group' }> => n.kind === 'group');
+    if (folder) {
+      data.set(DND_MIME, new vscode.DataTransferItem(JSON.stringify({
+        kind: 'folder' as const,
+        folderKey: folder.folderKey,
+        path: folder.path,
+      })));
+      return;
+    }
+    const configs = source.filter((n): n is Extract<Node, { kind: 'config' }> => n.kind === 'config');
+    if (configs.length === 0) return;
+    data.set(DND_MIME, new vscode.DataTransferItem(JSON.stringify({
+      kind: 'config' as const,
+      items: configs.map(n => ({ folderKey: n.folderKey, configId: n.config.id })),
+    })));
   }
 
-  // Drop side: figure out what folder the drop landed on and reassign
-  // each dragged config's `group`. Drop targets:
-  //   - group node     → set group to that node's path
-  //   - folder node    → top-level (clear group)
-  //   - typeGroup node → top-level (clear group; type-buckets only
-  //                      hold ungrouped configs by design)
-  //   - undefined      → top-level
-  //   - config node    → no-op (you don't drop a config onto another
-  //                      config; we'd have to invent semantics)
   async handleDrop(target: Node | undefined, data: vscode.DataTransfer): Promise<void> {
     const item = data.get(DND_MIME);
     if (!item) return;
-    let payload: Array<{ folderKey: string; configId: string }>;
+    let payload: any;
     try { payload = JSON.parse(await item.asString()); }
     catch { return; }
-    if (!Array.isArray(payload) || payload.length === 0) return;
+    if (!payload || typeof payload !== 'object') return;
 
-    // Compute destination path for the drop. "" = top-level / ungrouped.
-    let destPath = '';
-    if (target?.kind === 'group') destPath = target.path;
-    // typeGroup / folder / undefined / config → '' (top-level).
+    if (payload.kind === 'folder') {
+      await this.dropFolder(payload as { folderKey: string; path: string }, target);
+      return;
+    }
+    if (payload.kind === 'config' && Array.isArray(payload.items)) {
+      await this.dropConfigs(payload.items as Array<{ folderKey: string; configId: string }>, target);
+      return;
+    }
+  }
 
-    for (const entry of payload) {
-      // Reject moves that span workspace folders — configs live in a
-      // specific folder's run.json and the on-disk shape isn't
-      // designed to carry configs across folders.
+  // Folder-drop: reparent the dragged folder under the target. Drops
+  // on anything other than another folder land at top-level.
+  private async dropFolder(
+    src: { folderKey: string; path: string },
+    target: Node | undefined,
+  ): Promise<void> {
+    if (target && 'folderKey' in target && target.folderKey !== src.folderKey) {
+      log.warn(`Drop ignored: cross-workspace folder moves aren't supported`);
+      return;
+    }
+    let newParent = '';
+    if (target?.kind === 'group') newParent = target.path;
+    // config / typeGroup / folder / undefined → top-level.
+    try {
+      await this.groupSvc.moveFolder(src.folderKey, src.path, newParent);
+    } catch (e) {
+      log.warn(`Drop folder failed: ${(e as Error).message}`);
+      vscode.window.showErrorMessage(`Move folder failed: ${(e as Error).message}`);
+    }
+  }
+
+  // Config-drop: reassign group + reorder in one shot. Reorder is
+  // done via `moveConfigToIndex` which writes the configurations
+  // array atomically. When dropping onto another config we insert
+  // the dragged item BEFORE the target so the user sees the dragged
+  // row land at the indicator position.
+  private async dropConfigs(
+    items: Array<{ folderKey: string; configId: string }>,
+    target: Node | undefined,
+  ): Promise<void> {
+    for (const entry of items) {
       if (target && 'folderKey' in target && target.folderKey !== entry.folderKey) {
         log.warn(`Drop ignored: cross-folder moves aren't supported (${entry.folderKey} → ${target.folderKey})`);
         continue;
       }
       try {
-        await this.groupSvc.moveConfig(entry.folderKey, entry.configId, destPath);
+        if (target?.kind === 'config') {
+          // Insert before the target. Inherit its group so the dropped
+          // config lands in the same context the user is pointing at.
+          const file = this.store.getForFolder(entry.folderKey);
+          const targetIdx = file.configurations.findIndex(c => c.id === target.config.id);
+          if (targetIdx === -1) {
+            log.warn(`Drop target not found in configurations array; skipping`);
+            continue;
+          }
+          await this.svcReorder(entry.folderKey, entry.configId, targetIdx, target.config.group);
+        } else {
+          // folder / typeGroup / undefined: pure group reassign,
+          // index defaults to "end" so the moved config sits at the
+          // bottom of its new home.
+          const file = this.store.getForFolder(entry.folderKey);
+          const destGroup = target?.kind === 'group' ? target.path : '';
+          await this.svcReorder(entry.folderKey, entry.configId, file.configurations.length, destGroup);
+        }
       } catch (e) {
         log.warn(`Drop failed for config ${entry.configId}: ${(e as Error).message}`);
         vscode.window.showErrorMessage(`Move failed: ${(e as Error).message}`);
       }
     }
+  }
+
+  // Wrapper around RunConfigService.moveConfigToIndex so callers
+  // here don't need to know the import; keeps the diff in this file
+  // self-contained.
+  private async svcReorder(folderKey: string, configId: string, idx: number, group: string | undefined): Promise<void> {
+    await this.svc.moveConfigToIndex(folderKey, configId, idx, group || undefined);
   }
 
   // Build child nodes for a config whose dependsOn list is non-empty. Each

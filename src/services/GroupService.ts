@@ -105,6 +105,34 @@ export class GroupService {
     await this.svc.update(folderKey, { ...ref.config, group: trimmed });
   }
 
+  // Move a folder (and every descendant) to a new parent path. Used
+  // by drag-and-drop to drop a folder into another folder ("nest")
+  // or back to top-level (parent = ""). Implementation is a chain of
+  // group-rewrites: every config / known-folder path that starts
+  // with `oldPath` gets the prefix rewritten.
+  //
+  // Cycle guard: nesting a folder into one of its own descendants
+  // would produce an infinite path. We reject that case explicitly.
+  async moveFolder(folderKey: string, oldPath: string, newParent: string): Promise<void> {
+    const trimmedOld = oldPath.trim();
+    const trimmedParent = newParent.trim();
+    if (!trimmedOld) return;
+    if (trimmedParent && !isValidFolderPath(trimmedParent)) {
+      throw new Error('Invalid destination folder path.');
+    }
+    if (trimmedParent === trimmedOld || isStrictDescendant(trimmedParent, trimmedOld)) {
+      throw new Error('Cannot drop a folder into itself or one of its descendants.');
+    }
+    // Compute the new full path: parent + last segment of oldPath.
+    const lastSeg = trimmedOld.includes('/')
+      ? trimmedOld.slice(trimmedOld.lastIndexOf('/') + 1)
+      : trimmedOld;
+    const newPath = trimmedParent ? `${trimmedParent}/${lastSeg}` : lastSeg;
+    if (newPath === trimmedOld) return; // no-op (already there)
+    log.info(`Group: move folder "${trimmedOld}" → "${newPath}"`);
+    await this.renameGroup(folderKey, trimmedOld, newPath);
+  }
+
   // Move a config to a different folder (or back to top-level when
   // newPath is empty). Used both by the right-click "Move…" command
   // and the drag-and-drop controller.

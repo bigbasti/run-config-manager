@@ -35,6 +35,38 @@ describe('ConfigStore', () => {
     store.dispose();
   });
 
+  test('legacy version: 1 (number) is coerced to "0.0.0" so migrations run', async () => {
+    // Files written before the migration system used `version: 1`
+    // (a literal number). On load we must treat that as the
+    // earliest version — NOT "1.0.0", which the migrator would see
+    // as newer than the running extension and refuse to migrate.
+    const legacy = JSON.stringify({
+      version: 1,
+      configurations: [{
+        id: '11111111-2222-3333-4444-555555555555',
+        name: 'App',
+        type: 'npm',
+        projectPath: '',
+        workspaceFolder: '',
+        env: {},
+        programArgs: '',
+        vmArgs: '',
+        typeOptions: { scriptName: 'start', packageManager: 'npm' },
+      }],
+    });
+    __writeFs('/ws/legacy/.vscode/run.json', legacy);
+    const store = new ConfigStore();
+    await store.attach([folder('legacy', '/ws/legacy')]);
+    const f = store.getForFolder('/ws/legacy');
+    // Loaded successfully (would fail if treated as newer).
+    expect(f.configurations).toHaveLength(1);
+    // Stamped with the running extension version (semver string).
+    expect(typeof f.version).toBe('string');
+    expect(f.version).not.toBe('1');
+    expect(f.version).not.toBe('1.0.0');
+    store.dispose();
+  });
+
   test('returns empty file when run.json is missing', async () => {
     const store = new ConfigStore();
     await store.attach([folder('a', '/ws/a')]);

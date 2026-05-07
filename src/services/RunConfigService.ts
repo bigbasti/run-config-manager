@@ -89,8 +89,55 @@ export class RunConfigService {
 
   async setKnownFolders(folderKey: string, groups: string[]): Promise<void> {
     const file = this.store.getForFolder(folderKey);
-    // Stable order on disk so diffs stay readable.
-    const sorted = Array.from(new Set(groups)).sort();
-    await this.store.write(folderKey, { ...file, groups: sorted });
+    // Preserve user-given order — folders were sorted alphabetically
+    // in early versions; once drag-and-drop landed, the array is the
+    // user's order, not a derived sort.
+    const seen = new Set<string>();
+    const dedup: string[] = [];
+    for (const p of groups) {
+      if (!seen.has(p)) { seen.add(p); dedup.push(p); }
+    }
+    await this.store.write(folderKey, { ...file, groups: dedup });
+  }
+
+  // Move one config to a target index in the configurations array,
+  // optionally also reassigning its `group` field. Used by the
+  // tree's drag-and-drop reorder flow. Single write — no race
+  // between the move and the group reassign.
+  async moveConfigToIndex(
+    folderKey: string,
+    configId: string,
+    targetIndex: number,
+    newGroup: string | undefined,
+  ): Promise<void> {
+    const file = this.store.getForFolder(folderKey);
+    const fromIdx = file.configurations.findIndex(c => c.id === configId);
+    if (fromIdx === -1) throw new Error(`Config not found: ${configId}`);
+    const cfg = file.configurations[fromIdx];
+
+    // Apply the group reassignment to a copy of the config first.
+    let nextCfg: RunConfig;
+    if (newGroup === undefined || newGroup === '') {
+      const { group: _drop, ...rest } = cfg;
+      void _drop;
+      nextCfg = rest as RunConfig;
+    } else {
+      nextCfg = { ...cfg, group: newGroup };
+    }
+
+    // Remove from old position, splice into the new one. Adjust the
+    // target when removing from before it (the array shifts left by
+    // one in that case).
+    const without = [
+      ...file.configurations.slice(0, fromIdx),
+      ...file.configurations.slice(fromIdx + 1),
+    ];
+    let idx = targetIndex;
+    if (fromIdx < idx) idx -= 1;
+    if (idx < 0) idx = 0;
+    if (idx > without.length) idx = without.length;
+    const next = [...without.slice(0, idx), nextCfg, ...without.slice(idx)];
+
+    await this.store.write(folderKey, { ...file, configurations: next });
   }
 }

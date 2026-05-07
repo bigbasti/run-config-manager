@@ -244,12 +244,23 @@ function migrateRaw(raw: string): string {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.configurations)) return raw;
     // Pre-schema coercion: legacy run.json files used `version: 1`
-    // (a number literal). The schema now expects a semver string.
-    // Treat `1` as "1.0.0" so the load doesn't fail just because the
-    // file format predates the migration system.
-    if (parsed.version === 1 || parsed.version === undefined || parsed.version === null) {
-      parsed.version = '1.0.0';
+    // (a number literal — the format predates the migration system).
+    // The schema now expects a semver string. We deliberately map the
+    // legacy literal to "0.0.0" — if we used "1.0.0" the migrator
+    // would treat the file as NEWER than any pre-1.0.0 extension and
+    // refuse to migrate it. Treating legacy as "earliest" lets every
+    // registered migration run on first load.
+    // Same treatment for "1" / "1.x" string forms left over from
+    // hand-edits; the literal number / string was never a real semver.
+    if (parsed.version === 1
+        || parsed.version === undefined
+        || parsed.version === null
+        || parsed.version === '1'
+        || (typeof parsed.version === 'string' && /^1(\.0)?(\.0)?$/.test(parsed.version))) {
+      parsed.version = '0.0.0';
     } else if (typeof parsed.version === 'number') {
+      // Any other bare-number version (e.g. version: 2, future
+      // pre-semver experiment) → coerce by treating as the major.
       parsed.version = `${parsed.version}.0.0`;
     }
     parsed.configurations = parsed.configurations.map(migrateSpringBootConfig);
