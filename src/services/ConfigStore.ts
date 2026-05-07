@@ -4,8 +4,10 @@ import { parseRunFile, stringifyRunFile, RunConfigSchema } from '../shared/schem
 import { deriveKnownFolders } from '../shared/folderPath';
 import { log } from '../utils/logger';
 import { migrateSpringBootConfig } from './migrateSpringBoot';
+import { EXTENSION_VERSION } from '../utils/extensionVersion';
+import { runMigrations } from './migrations';
 
-const EMPTY: RunFile = { version: 1, configurations: [], groups: [] };
+const EMPTY: RunFile = { version: EXTENSION_VERSION, configurations: [], groups: [] };
 
 interface FolderEntry {
   folder: vscode.WorkspaceFolder;
@@ -80,20 +82,46 @@ export class ConfigStore {
     const migrated = migrateRaw(raw);
     const parsed = parseRunFile(migrated);
     if (parsed.ok) {
-      // Migration step: when an older run.json is missing the
-      // top-level `groups` array, derive it from every prefix of every
-      // config.group so empty / pre-existing folders still render.
-      // After the first save the file gains the field on disk.
+      // Migration step (legacy): when an older run.json is missing
+      // the top-level `groups` array, derive it from every prefix of
+      // every config.group so empty / pre-existing folders still
+      // render. After the first save the file gains the field on
+      // disk.
       if (!parsed.value.groups) {
         parsed.value.groups = deriveKnownFolders(
           parsed.value.configurations.map(c => c.group),
         );
       }
-      entry.file = parsed.value;
+
+      // Migration step: walk the registered version migrations. The
+      // runner stamps `version` onto the result and reports whether
+      // anything actually changed. We persist back only when the
+      // content changed OR the on-disk version didn't already match
+      // the extension — pure version-bump-only rewrites would touch
+      // every workspace's run.json on every release, which would be
+      // git-noise for users who get nothing functional from the bump.
+      const onDiskVersion = parsed.value.version;
+      const result = runMigrations(parsed.value, EXTENSION_VERSION);
+      const versionStale = onDiskVersion !== result.finalVersion;
+      entry.file = result.file;
       entry.invalid = [];
       entry.lastError = undefined;
-      log.debug(`Loaded ${uri.fsPath}: ${parsed.value.configurations.length} valid configuration(s), ${parsed.value.groups.length} folder(s)`);
+      log.debug(
+        `Loaded ${uri.fsPath}: ${result.file.configurations.length} configuration(s), ` +
+        `${result.file.groups?.length ?? 0} folder(s), version ${result.finalVersion}` +
+        (result.contentChanged ? ' (migrated)' : ''),
+      );
       this.emitter.fire(key);
+      // Persist when something on disk needs updating. Skip when the
+      // file is brand-new / empty — no value in writing a version
+      // stamp into an empty run.json before the user has any configs.
+      if ((result.contentChanged || versionStale) && entry.file.configurations.length > 0) {
+        // Fire-and-forget: write() schedules its own debounce, and we
+        // don't want load() to depend on the file being on disk.
+        this.write(key, entry.file).catch(e =>
+          log.warn(`Post-migration save failed for ${uri.fsPath}: ${(e as Error).message}`),
+        );
+      }
       return;
     }
 
@@ -141,7 +169,7 @@ export class ConfigStore {
     }
 
     entry.file = {
-      version: 1,
+      version: EXTENSION_VERSION,
       configurations: validList,
       groups: deriveKnownFolders(validList.map(c => c.group)),
     };
@@ -215,6 +243,15 @@ function migrateRaw(raw: string): string {
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.configurations)) return raw;
+    // Pre-schema coercion: legacy run.json files used `version: 1`
+    // (a number literal). The schema now expects a semver string.
+    // Treat `1` as "1.0.0" so the load doesn't fail just because the
+    // file format predates the migration system.
+    if (parsed.version === 1 || parsed.version === undefined || parsed.version === null) {
+      parsed.version = '1.0.0';
+    } else if (typeof parsed.version === 'number') {
+      parsed.version = `${parsed.version}.0.0`;
+    }
     parsed.configurations = parsed.configurations.map(migrateSpringBootConfig);
     return JSON.stringify(parsed);
   } catch {

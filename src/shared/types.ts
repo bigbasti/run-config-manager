@@ -358,7 +358,11 @@ export type RunConfig =
   | (RunConfigBase & { type: 'http-request'; typeOptions: HttpRequestTypeOptions });
 
 export interface RunFile {
-  version: 1;
+  // Semver string mirroring the extension version that last wrote
+  // this file. The migration runner reads it on load and applies
+  // every registered schema-shape change between this version and
+  // the running extension's version.
+  version: string;
   configurations: RunConfig[];
   // Persistent list of folder paths (slash-separated, e.g.
   // "Backend/API/Internal"). Lets empty folders survive between

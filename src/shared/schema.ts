@@ -411,7 +411,16 @@ export const FolderPathSchema = z.string().refine(p => {
 }, { message: 'Folder paths use "/" as separator; segments cannot be empty.' });
 
 export const RunFileSchema = z.object({
-  version: z.literal(1),
+  // version mirrors the extension version that last wrote the file.
+  // The migration runner consults it on load to apply any registered
+  // schema-shape changes before the file flows into the rest of the
+  // services. Soft regex — we accept anything that looks like semver
+  // and let the runner decide what to do (older / newer / unknown).
+  // Legacy: original v1 files used `1` (number); the loader rewrites
+  // them to "1.0.0" before this validator runs.
+  version: z.string().regex(/^\d+(\.\d+){0,3}(?:-[A-Za-z0-9.]+)?$/, {
+    message: 'version must look like semver (e.g. "0.6.2")',
+  }),
   configurations: z.array(RunConfigSchema),
   // Optional — runs missing it are migrated by deriveKnownFolders().
   // Each entry is a slash-separated path (e.g. "Backend/API"). We

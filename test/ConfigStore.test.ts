@@ -6,7 +6,7 @@ function folder(name: string, path: string) {
 }
 
 const runJsonContents = (name: string) => JSON.stringify({
-  version: 1,
+  version: '1.0.0',
   configurations: [{
     id: '11111111-2222-3333-4444-555555555555',
     name,
@@ -58,7 +58,7 @@ describe('ConfigStore', () => {
     const store = new ConfigStore();
     await store.attach([folder('a', '/ws/a')]);
     await store.write('/ws/a', {
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         id: '11111111-2222-3333-4444-555555555555',
         name: 'New',

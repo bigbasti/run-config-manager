@@ -33,7 +33,7 @@ describe('ConfigStore salvage', () => {
 
   test('entry missing typeOptions is salvaged into invalid list', async () => {
     __writeFs('/ws/a/.vscode/run.json', JSON.stringify({
-      version: 1,
+      version: '1.0.0',
       configurations: [missingTypeOptions],
     }));
     const store = new ConfigStore();
@@ -50,7 +50,7 @@ describe('ConfigStore salvage', () => {
 
   test('mixed file: one valid, one invalid', async () => {
     __writeFs('/ws/a/.vscode/run.json', JSON.stringify({
-      version: 1,
+      version: '1.0.0',
       configurations: [validRow, missingTypeOptions],
     }));
     const store = new ConfigStore();
@@ -65,7 +65,7 @@ describe('ConfigStore salvage', () => {
     const noId = { ...missingTypeOptions } as any;
     delete noId.id;
     __writeFs('/ws/a/.vscode/run.json', JSON.stringify({
-      version: 1,
+      version: '1.0.0',
       configurations: [noId],
     }));
     const store = new ConfigStore();
@@ -78,7 +78,7 @@ describe('ConfigStore salvage', () => {
   test('entry without string name is dropped', async () => {
     const badName = { ...missingTypeOptions, name: 123 };
     __writeFs('/ws/a/.vscode/run.json', JSON.stringify({
-      version: 1,
+      version: '1.0.0',
       configurations: [badName],
     }));
     const store = new ConfigStore();

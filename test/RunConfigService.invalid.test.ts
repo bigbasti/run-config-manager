@@ -23,7 +23,7 @@ describe('RunConfigService with invalid entries', () => {
 
   async function makeWithInvalid() {
     __writeFs('/ws/a/.vscode/run.json', JSON.stringify({
-      version: 1,
+      version: '1.0.0',
       configurations: [invalidRow],
     }));
     const store = new ConfigStore();

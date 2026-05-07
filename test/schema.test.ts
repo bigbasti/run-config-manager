@@ -15,7 +15,7 @@ describe('RunFileSchema', () => {
 
   test('accepts a valid v1 file', () => {
     const result = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [minimalConfig],
     });
     expect(result.success).toBe(true);
@@ -23,7 +23,7 @@ describe('RunFileSchema', () => {
 
   test('accepts optional port field', () => {
     const result = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{ ...minimalConfig, port: 4200 }],
     });
     expect(result.success).toBe(true);
@@ -32,7 +32,7 @@ describe('RunFileSchema', () => {
   test('rejects missing required field (name)', () => {
     const { name, ...rest } = minimalConfig;
     const result = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [rest],
     });
     expect(result.success).toBe(false);
@@ -40,7 +40,7 @@ describe('RunFileSchema', () => {
 
   test('rejects unknown type', () => {
     const result = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{ ...minimalConfig, type: 'cobol' }],
     });
     expect(result.success).toBe(false);
@@ -61,13 +61,13 @@ describe('RunFileSchema', () => {
   });
 
   test('parseRunFile returns a typed error with the Zod path on schema mismatch', () => {
-    const outcome = parseRunFile(JSON.stringify({ version: 1, configurations: [{}] }));
+    const outcome = parseRunFile(JSON.stringify({ version: '1.0.0', configurations: [{}] }));
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) expect(outcome.error).toMatch(/configurations/);
   });
 
   test('parseRunFile succeeds on empty configurations array', () => {
-    const outcome = parseRunFile(JSON.stringify({ version: 1, configurations: [] }));
+    const outcome = parseRunFile(JSON.stringify({ version: '1.0.0', configurations: [] }));
     expect(outcome.ok).toBe(true);
     if (outcome.ok) expect(outcome.value.configurations).toEqual([]);
   });
@@ -96,13 +96,13 @@ describe('RunFileSchema', () => {
         colorOutput: true,
       },
     };
-    const result = RunFileSchema.safeParse({ version: 1, configurations: [quarkusConfig] });
+    const result = RunFileSchema.safeParse({ version: '1.0.0', configurations: [quarkusConfig] });
     expect(result.success).toBe(true);
   });
 
   test('rejects Quarkus config missing required typeOptions field', () => {
     const result = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         ...minimalConfig,
         type: 'quarkus',
@@ -114,7 +114,7 @@ describe('RunFileSchema', () => {
 
   test('accepts a Java config (java-main mode with classpath + main class)', () => {
     const result = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         id: '33333333-4444-5555-6666-777777777777',
         name: 'Java CLI',
@@ -144,7 +144,7 @@ describe('RunFileSchema', () => {
 
   test('rejects Java java-main config without mainClass', () => {
     const result = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         ...minimalConfig,
         type: 'java',
@@ -164,7 +164,7 @@ describe('RunFileSchema', () => {
 
   test('rejects Java java-main config without classpath', () => {
     const result = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         ...minimalConfig,
         type: 'java',
@@ -184,7 +184,7 @@ describe('RunFileSchema', () => {
 
   test('Java gradle mode does NOT require mainClass (read from build.gradle)', () => {
     const result = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         id: '44444444-5555-6666-7777-888888888888',
         name: 'Gradle run',
@@ -210,7 +210,7 @@ describe('RunFileSchema', () => {
 
   test('accepts a Maven Goal config', () => {
     const r = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         id: '66666666-7777-8888-9999-aaaaaaaaaaaa',
         name: 'Clean install',
@@ -228,7 +228,7 @@ describe('RunFileSchema', () => {
 
   test('rejects Maven Goal config with empty goal', () => {
     const r = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         ...minimalConfig,
         type: 'maven-goal',
@@ -240,7 +240,7 @@ describe('RunFileSchema', () => {
 
   test('accepts a Gradle Task config', () => {
     const r = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         id: '77777777-8888-9999-aaaa-bbbbbbbbbbbb',
         name: 'Drop schema',
@@ -258,7 +258,7 @@ describe('RunFileSchema', () => {
 
   test('accepts a Custom Command config', () => {
     const r = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         id: '88888888-9999-aaaa-bbbb-cccccccccccc',
         name: 'Seed DB',
@@ -281,7 +281,7 @@ describe('RunFileSchema', () => {
 
   test('rejects Custom Command with empty command', () => {
     const r = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         ...minimalConfig,
         type: 'custom-command',
@@ -298,7 +298,7 @@ describe('RunFileSchema', () => {
 
   test('rejects Custom Command with invalid shell value', () => {
     const r = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         ...minimalConfig,
         type: 'custom-command',
@@ -315,7 +315,7 @@ describe('RunFileSchema', () => {
 
   test('rejects Gradle Task config with empty task', () => {
     const r = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{
         ...minimalConfig,
         type: 'gradle-task',
@@ -345,12 +345,12 @@ describe('RunFileSchema', () => {
       jdkPath: '', module: '', gradlePath: '', mavenPath: '', buildRoot: '',
     };
     const withArgs = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{ ...base, typeOptions: { ...to, customArgs: ':systemtest:systemtestDev --tests "x.*"' } }],
     });
     expect(withArgs.success).toBe(true);
     const withoutArgs = RunFileSchema.safeParse({
-      version: 1,
+      version: '1.0.0',
       configurations: [{ ...base, typeOptions: { ...to, customArgs: '' } }],
     });
     expect(withoutArgs.success).toBe(false);

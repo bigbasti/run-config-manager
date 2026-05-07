@@ -36,6 +36,7 @@ import type { RunConfig, RunConfigType } from './shared/types';
 import type { InvalidConfigEntry } from './shared/types';
 import { buildRecoveredConfig } from './recovery/buildRecoveredConfig';
 import { RunConfigSchema } from './shared/schema';
+import { EXTENSION_VERSION } from './utils/extensionVersion';
 
 type ConfigNodeArg =
   | { kind: 'config'; folderKey: string; config: RunConfig }
@@ -725,7 +726,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       try {
         await vscode.workspace.fs.stat(uri);
       } catch {
-        const skeleton = JSON.stringify({ version: 1, configurations: [] }, null, 2) + '\n';
+        const skeleton = JSON.stringify({ version: EXTENSION_VERSION, configurations: [] }, null, 2) + '\n';
         await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(skeleton));
       }
       log.info(`Open run.json: ${uri.fsPath}`);
