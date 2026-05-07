@@ -69,7 +69,15 @@ const commonFields = {
   vmArgs: z.string(),
   port: z.number().int().positive().optional(),
   dependsOn: z.array(DependencyEntrySchema).optional(),
-  group: z.string().optional(),
+  // group can be either an empty/absent value or a valid slash-path
+  // (matches FolderPathSchema, declared below the union — so we inline
+  // the same check here to avoid a forward reference).
+  group: z.string()
+    .optional()
+    .refine(p => p === undefined || p === '' || (
+      !p.startsWith('/') && !p.endsWith('/') && !p.includes('//')
+      && p.split('/').every(s => s.trim().length > 0)
+    ), { message: 'Folder paths use "/" as separator; segments cannot be empty.' }),
 };
 
 export const JavaLaunchModeSchema = z.enum([
@@ -391,9 +399,25 @@ export const RunConfigSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
+// Folder path validator. We use slash as the separator between nested
+// folders, so a literal slash in a name is forbidden. Empty segments
+// (leading/trailing slash, double slash) are also rejected — they'd
+// produce phantom folders the user couldn't see or delete.
+export const FolderPathSchema = z.string().refine(p => {
+  if (!p.trim()) return false;
+  if (p.startsWith('/') || p.endsWith('/')) return false;
+  if (p.includes('//')) return false;
+  return p.split('/').every(seg => seg.trim().length > 0);
+}, { message: 'Folder paths use "/" as separator; segments cannot be empty.' });
+
 export const RunFileSchema = z.object({
   version: z.literal(1),
   configurations: z.array(RunConfigSchema),
+  // Optional — runs missing it are migrated by deriveKnownFolders().
+  // Each entry is a slash-separated path (e.g. "Backend/API"). We
+  // store every prefix the user has created, so an empty subfolder
+  // survives across sessions.
+  groups: z.array(FolderPathSchema).optional(),
 });
 
 export function parseRunFile(raw: string): Result<RunFile, string> {

@@ -360,6 +360,15 @@ export type RunConfig =
 export interface RunFile {
   version: 1;
   configurations: RunConfig[];
+  // Persistent list of folder paths (slash-separated, e.g.
+  // "Backend/API/Internal"). Lets empty folders survive between
+  // sessions — without this, a freshly-created subfolder would
+  // disappear as soon as the user closed the editor since groups
+  // would otherwise be derived purely from `config.group` strings.
+  // Migration: when this field is absent on disk, the loader
+  // populates it by walking config.group strings (every prefix of
+  // every group becomes a known folder).
+  groups?: string[];
 }
 
 // Result helper used across services.

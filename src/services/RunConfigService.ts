@@ -76,4 +76,21 @@ export class RunConfigService {
       { removeInvalidIds: [id] },
     );
   }
+
+  // ---------------------------------------------------------------
+  // Folder (group) CRUD — operates on the `groups` array of run.json.
+  // GroupService consumes these; we keep the persistence here so all
+  // writes go through ConfigStore's debounced save path.
+  // ---------------------------------------------------------------
+
+  knownFolders(folderKey: string): string[] {
+    return this.store.getForFolder(folderKey).groups ?? [];
+  }
+
+  async setKnownFolders(folderKey: string, groups: string[]): Promise<void> {
+    const file = this.store.getForFolder(folderKey);
+    // Stable order on disk so diffs stay readable.
+    const sorted = Array.from(new Set(groups)).sort();
+    await this.store.write(folderKey, { ...file, groups: sorted });
+  }
 }

@@ -89,6 +89,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const view = vscode.window.createTreeView('runConfigurations', {
     treeDataProvider: tree,
     showCollapseAll: true,
+    // The tree provider also implements TreeDragAndDropController so
+    // users can drag configs between folders / drop onto a folder to
+    // assign / drag back to root to ungroup.
+    dragAndDropController: tree,
   });
   const launchTasksView = vscode.window.createTreeView('runConfigLaunchTasks', {
     treeDataProvider: nativeTree,
@@ -517,25 +521,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // QuickPick offers every existing group + a sentinel row for creating
       // a new one. Picking the sentinel triggers an input box — one-step
       // flow without a separate command.
-      const NEW_SENTINEL = '$(add) Create new group…';
+      const NEW_SENTINEL = '$(add) Create new folder…';
+      // The picker shows every known folder (top-level + nested), so
+      // users can drop a config directly into a sub-folder. The
+      // sentinel row triggers an inline input for typing a fresh path
+      // (which can include "/" to create nested folders in one step).
       const items: vscode.QuickPickItem[] = [
-        ...existing.map(name => ({ label: name, description: 'existing group' })),
+        ...existing.map(path => ({
+          label: path,
+          description: path.includes('/') ? 'sub-folder' : 'folder',
+        })),
         ...(existing.length ? [{ label: '', kind: vscode.QuickPickItemKind.Separator } as vscode.QuickPickItem] : []),
-        { label: NEW_SENTINEL, description: 'type a name on the next step' },
+        { label: NEW_SENTINEL, description: 'type a name (slashes allowed for nested folders)' },
       ];
       const pick = await vscode.window.showQuickPick(items, {
-        placeHolder: `Add "${arg.config.name}" to which group?`,
+        placeHolder: `Add "${arg.config.name}" to which folder?`,
       });
       if (!pick) return;
       let targetName: string | undefined;
       if (pick.label === NEW_SENTINEL) {
         targetName = await vscode.window.showInputBox({
-          prompt: 'New group name',
-          placeHolder: 'e.g. Backend, Smoke test, Full stack',
+          prompt: 'New folder path',
+          placeHolder: 'e.g. Backend, Smoke test, or Backend/API',
           validateInput: v => {
             const t = v.trim();
-            if (!t) return 'Group name cannot be empty';
-            if (existing.includes(t)) return `Group "${t}" already exists — pick it from the list instead`;
+            if (!t) return 'Folder path cannot be empty';
+            if (t.startsWith('/') || t.endsWith('/') || t.includes('//')) {
+              return 'Folder paths use "/" as separator; segments cannot be empty.';
+            }
+            if (existing.includes(t)) return `Folder "${t}" already exists — pick it from the list instead`;
             return null;
           },
         });
@@ -560,52 +574,135 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
 
     // Group-row actions (right-click a group folder):
+    // Folders are paths now ("Backend/API"); the tree node carries
+    // both `path` (full slash path) and `name` (last segment for
+    // display). Commands operate on the path.
     vscode.commands.registerCommand('runConfig.runGroupSequential', async (arg: any) => {
       if (!arg || arg.kind !== 'group') return;
-      await runGroup(arg.folderKey, arg.name, 'sequential', groups, store, exec, dbg, docker, orchestrator, svc);
+      await runGroup(arg.folderKey, arg.path, 'sequential', groups, store, exec, dbg, docker, orchestrator, svc);
     }),
     vscode.commands.registerCommand('runConfig.runGroupParallel', async (arg: any) => {
       if (!arg || arg.kind !== 'group') return;
-      await runGroup(arg.folderKey, arg.name, 'parallel', groups, store, exec, dbg, docker, orchestrator, svc);
+      await runGroup(arg.folderKey, arg.path, 'parallel', groups, store, exec, dbg, docker, orchestrator, svc);
     }),
     vscode.commands.registerCommand('runConfig.renameGroup', async (arg: any) => {
       if (!arg || arg.kind !== 'group') return;
-      const existing = groups.list(arg.folderKey).filter(n => n !== arg.name);
+      // Renaming a folder also rewrites every descendant path; the
+      // service handles the cascade. We only validate the new last-
+      // segment is non-empty + slash-free.
+      const existingFolders = groups.list(arg.folderKey).filter(n => n !== arg.path);
+      const currentName = arg.name as string;
       const next = await vscode.window.showInputBox({
-        prompt: `Rename group "${arg.name}"`,
-        value: arg.name,
+        prompt: `Rename folder "${arg.path}"`,
+        value: currentName,
         validateInput: v => {
           const t = v.trim();
-          if (!t) return 'Group name cannot be empty';
-          if (existing.includes(t)) return `Group "${t}" already exists`;
+          if (!t) return 'Folder name cannot be empty';
+          if (t.includes('/')) return 'Use the right-click menu / drag-and-drop to nest folders; "/" isn\'t allowed in a name';
+          // Build the full new path by replacing the last segment of
+          // arg.path with the user's input. Block collisions.
+          const parent = arg.path.includes('/') ? arg.path.slice(0, arg.path.lastIndexOf('/')) : '';
+          const fullNew = parent ? `${parent}/${t}` : t;
+          if (fullNew !== arg.path && existingFolders.includes(fullNew)) {
+            return `Folder "${fullNew}" already exists`;
+          }
           return null;
         },
       });
-      if (!next || next.trim() === arg.name) return;
+      if (!next || next.trim() === currentName) return;
+      const parent = arg.path.includes('/') ? arg.path.slice(0, arg.path.lastIndexOf('/')) : '';
+      const fullNew = parent ? `${parent}/${next.trim()}` : next.trim();
       try {
-        await groups.renameGroup(arg.folderKey, arg.name, next.trim());
+        await groups.renameGroup(arg.folderKey, arg.path, fullNew);
       } catch (e) {
-        vscode.window.showErrorMessage(`Rename group failed: ${(e as Error).message}`);
+        vscode.window.showErrorMessage(`Rename folder failed: ${(e as Error).message}`);
       }
     }),
     vscode.commands.registerCommand('runConfig.deleteGroup', async (arg: any) => {
       if (!arg || arg.kind !== 'group') return;
-      const members = groups.members(arg.folderKey, arg.name);
+      const members = groups.members(arg.folderKey, arg.path, { recursive: true });
       const confirm = await vscode.window.showWarningMessage(
-        `Delete group "${arg.name}"?`,
+        `Delete folder "${arg.path}"?`,
         {
           modal: true,
           detail: members.length
-            ? `The ${members.length} member config(s) will NOT be deleted — they'll go back to the top level.`
-            : 'The group has no members.',
+            ? `The ${members.length} member config(s) (including in sub-folders) will NOT be deleted — they'll move back to the top level. Sub-folders themselves will be removed.`
+            : 'The folder is empty.',
         },
         'Delete',
       );
       if (confirm !== 'Delete') return;
       try {
-        await groups.deleteGroup(arg.folderKey, arg.name);
+        await groups.deleteFolder(arg.folderKey, arg.path);
       } catch (e) {
-        vscode.window.showErrorMessage(`Delete group failed: ${(e as Error).message}`);
+        vscode.window.showErrorMessage(`Delete folder failed: ${(e as Error).message}`);
+      }
+    }),
+
+    // The `+` button on a group/folder row offers "Add subfolder" or
+    // "Add another configuration to this folder" via a quickPick.
+    vscode.commands.registerCommand('runConfig.folder.addItem', async (arg: any) => {
+      if (!arg || arg.kind !== 'group') return;
+      const action = await vscode.window.showQuickPick(
+        [
+          { label: '$(new-folder) Add sub-folder', detail: 'Create an empty sub-folder under this one', value: 'subfolder' as const },
+          { label: '$(file-add) Add an existing configuration', detail: 'Move a config from another folder (or top-level) into this folder', value: 'existing' as const },
+        ],
+        { placeHolder: `Add to "${arg.path}"` },
+      );
+      if (!action) return;
+
+      if (action.value === 'subfolder') {
+        // Inline name validation: same rules as the rename flow plus
+        // "no path separator" (creating a deeply nested subfolder
+        // should be an explicit chain of clicks, not one input box).
+        const existingFolders = new Set(groups.list(arg.folderKey));
+        const name = await vscode.window.showInputBox({
+          prompt: `New sub-folder under "${arg.path}"`,
+          placeHolder: 'Folder name',
+          validateInput: v => {
+            const t = v.trim();
+            if (!t) return 'Folder name cannot be empty';
+            if (t.includes('/')) return '"/" isn\'t allowed in a folder name (sub-folders are added one level at a time)';
+            const fullNew = `${arg.path}/${t}`;
+            if (existingFolders.has(fullNew)) return `Folder "${fullNew}" already exists`;
+            return null;
+          },
+        });
+        if (!name) return;
+        try {
+          await groups.addFolder(arg.folderKey, `${arg.path}/${name.trim()}`);
+        } catch (e) {
+          vscode.window.showErrorMessage(`Add sub-folder failed: ${(e as Error).message}`);
+        }
+        return;
+      }
+
+      // Move-existing flow. Show every config in this workspace folder
+      // that isn't already in the target. We deliberately allow picking
+      // a config currently in some other folder — the action moves it.
+      const candidates = svc.list()
+        .filter((r): r is Extract<typeof r, { valid: true }> => r.valid && r.folderKey === arg.folderKey)
+        .map(r => r.config)
+        .filter(c => (c.group ?? '') !== arg.path);
+      if (candidates.length === 0) {
+        vscode.window.showInformationMessage(`No other configurations available to add to "${arg.path}".`);
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        candidates.map(c => ({
+          label: c.name,
+          description: c.group ? `currently in: ${c.group}` : 'currently top-level',
+          detail: c.type,
+          configId: c.id,
+        })),
+        { placeHolder: `Add a configuration to "${arg.path}"` },
+      );
+      if (!picked) return;
+      try {
+        await groups.moveConfig(arg.folderKey, picked.configId, arg.path);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Move failed: ${(e as Error).message}`);
       }
     }),
 

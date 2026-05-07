@@ -19,11 +19,21 @@ import { log } from '../utils/logger';
 export type Node =
   | { kind: 'folder'; folderKey: string; label: string }
   | { kind: 'typeGroup'; folderKey: string; type: RunConfig['type']; label: string; count: number }
-  // User-defined group (configs with the same `group` field). Folder icon,
-  // listed above type-groups. Right-click actions: run sequential/parallel,
-  // rename, delete (deletion only clears the field — configs survive).
-  | { kind: 'group'; folderKey: string; name: string; count: number }
+  // User-defined folder (configs whose `group` matches `path` or some
+  // descendant). Folder icon, listed BELOW the bare/ungrouped configs
+  // so users see their loose configs first. Right-click actions: run
+  // sequential/parallel, rename, delete (deletion only clears the
+  // field — configs survive). `count` is the recursive count of
+  // configs in this folder and all descendant folders, so the user
+  // sees the full subtree size at a glance.
+  | { kind: 'group'; folderKey: string; path: string; name: string; count: number }
   | { kind: 'config'; folderKey: string; config: RunConfig }
+  // Visual gap rendered between the ungrouped section and the folder
+  // section at the root. Empty label, no icon, non-interactive — just
+  // a thin row that creates breathing room. VS Code has no native
+  // separator for tree views, so we emit a TreeItem and lean on the
+  // theme to make it disappear.
+  | { kind: 'spacer'; folderKey: string }
   | { kind: 'invalid'; folderKey: string; entry: InvalidConfigEntry }
   // A dependency child under a config node. Four flavours:
   //   - rcm:   another run configuration defined in RCM.
@@ -36,7 +46,16 @@ export type Node =
   | { kind: 'depTask'; rootId: string; parentKey: string; ref: string; source: string; taskName: string; delaySeconds: number; depth: number }
   | { kind: 'depMissing'; rootId: string; parentKey: string; ref: string; delaySeconds: number; depth: number };
 
-export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
+// MIME type for drag transfers. Custom because we ship plain config
+// ids — VS Code's text/uri-list isn't applicable. The receiving side
+// is `handleDrop` further down; both sides see this same string.
+const DND_MIME = 'application/vnd.code.tree.runconfigurations.config';
+
+export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vscode.TreeDragAndDropController<Node> {
+  // VS Code asks the controller declaratively which MIME types to
+  // emit on drag and which to accept on drop.
+  readonly dragMimeTypes = [DND_MIME];
+  readonly dropMimeTypes = [DND_MIME];
   private emitter = new vscode.EventEmitter<Node | undefined>();
   readonly onDidChangeTreeData = this.emitter.event;
   // Tracks which config ids have an in-flight health probe, so we don't kick
@@ -98,14 +117,32 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       const item = new vscode.TreeItem(n.name, vscode.TreeItemCollapsibleState.Expanded);
       item.description = `(${n.count})`;
       item.iconPath = new vscode.ThemeIcon('folder');
-      // contextValue drives the right-click menu for group rows —
-      // package.json gates the Run/Rename/Delete actions on this value.
+      // contextValue drives the right-click menu for group rows. We
+      // also use it to gate the inline `+` button (Add subfolder /
+      // Add config). Encode the path as a TreeItem `id` so the
+      // command handler knows which node was clicked.
       item.contextValue = 'userGroup';
+      item.id = `group:${n.folderKey}:${n.path}`;
       item.tooltip = new vscode.MarkdownString(
-        `**Group: ${n.name}**\n\n${n.count} configuration${n.count === 1 ? '' : 's'}.\n\n` +
-        'Right-click to run all (sequential / parallel), rename, or delete the group. ' +
-        'Deleting the group keeps the configs — they just go back to the top level.',
+        `**Folder: ${n.path}**\n\n${n.count} configuration${n.count === 1 ? '' : 's'} (incl. sub-folders).\n\n` +
+        'Right-click to run all (sequential / parallel), rename, or delete the folder. ' +
+        'Click the **+** icon to add a sub-folder or another configuration here. ' +
+        'Deleting a folder keeps the configs — they just go back to the top level.',
       );
+      return item;
+    }
+    if (n.kind === 'spacer') {
+      // Visual gap separating ungrouped configs from the folders
+      // section. VS Code's tree API has no native separator; we emit
+      // an empty TreeItem and let it render as a blank row. The label
+      // is a single thin space (zero-width characters get collapsed
+      // by the tree's accessible-name logic, which would re-print the
+      // previous row's label as the alt-text — annoying for a screen
+      // reader). One real space is the smallest non-collapsing label.
+      const item = new vscode.TreeItem(' ', vscode.TreeItemCollapsibleState.None);
+      // contextValue blocks any right-click commands — nothing in
+      // package.json targets this value.
+      item.contextValue = 'spacer';
       return item;
     }
     if (n.kind === 'invalid') {
@@ -469,7 +506,27 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       return this.configsOfType(parent.folderKey, parent.type);
     }
     if (parent.kind === 'group') {
-      return this.configsInGroup(parent.folderKey, parent.name);
+      // Children are: every direct subfolder (rendered as another
+      // group node) followed by every config whose `group` field
+      // equals this exact path (i.e. directly belongs here, not in a
+      // descendant). Subfolders first so the hierarchy reads top-down.
+      const subFolders = this.groupSvc.childFolders(parent.folderKey, parent.path);
+      const out: Node[] = [];
+      for (const sub of subFolders) {
+        out.push({
+          kind: 'group',
+          folderKey: parent.folderKey,
+          path: sub,
+          // Display only the trailing segment so the tree row reads
+          // "API" rather than the redundant full "Backend/API".
+          name: sub.slice(parent.path.length + 1),
+          count: this.groupSvc.members(parent.folderKey, sub, { recursive: true }).length,
+        });
+      }
+      for (const cfg of this.configsInGroup(parent.folderKey, parent.path)) {
+        out.push(cfg);
+      }
+      return out;
     }
     if (parent.kind === 'config') {
       return this.depChildren(parent.config, parent.config.id, 1, parent.config.workspaceFolder);
@@ -479,6 +536,63 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       return this.depChildren(parent.config, parent.rootId, parent.depth + 1, parent.config.workspaceFolder);
     }
     return [];
+  }
+
+  // ------- Drag-and-drop --------------------------------------------------
+
+  // Drag side: encode the dragged config's identity into the transfer
+  // bag. We only support dragging individual config rows — folder rows
+  // are read-only as drag sources to keep the model simple (a folder
+  // move would imply renaming and rewriting every descendant; the
+  // user has the right-click "Rename folder" command for that).
+  handleDrag(source: readonly Node[], data: vscode.DataTransfer): void {
+    const draggable = source.filter((n): n is Extract<Node, { kind: 'config' }> => n.kind === 'config');
+    if (draggable.length === 0) return;
+    // We ship one entry per dragged config. Receiving side iterates.
+    const payload = draggable.map(n => ({
+      folderKey: n.folderKey,
+      configId: n.config.id,
+    }));
+    data.set(DND_MIME, new vscode.DataTransferItem(JSON.stringify(payload)));
+  }
+
+  // Drop side: figure out what folder the drop landed on and reassign
+  // each dragged config's `group`. Drop targets:
+  //   - group node     → set group to that node's path
+  //   - folder node    → top-level (clear group)
+  //   - typeGroup node → top-level (clear group; type-buckets only
+  //                      hold ungrouped configs by design)
+  //   - undefined      → top-level
+  //   - config node    → no-op (you don't drop a config onto another
+  //                      config; we'd have to invent semantics)
+  async handleDrop(target: Node | undefined, data: vscode.DataTransfer): Promise<void> {
+    const item = data.get(DND_MIME);
+    if (!item) return;
+    let payload: Array<{ folderKey: string; configId: string }>;
+    try { payload = JSON.parse(await item.asString()); }
+    catch { return; }
+    if (!Array.isArray(payload) || payload.length === 0) return;
+
+    // Compute destination path for the drop. "" = top-level / ungrouped.
+    let destPath = '';
+    if (target?.kind === 'group') destPath = target.path;
+    // typeGroup / folder / undefined / config → '' (top-level).
+
+    for (const entry of payload) {
+      // Reject moves that span workspace folders — configs live in a
+      // specific folder's run.json and the on-disk shape isn't
+      // designed to carry configs across folders.
+      if (target && 'folderKey' in target && target.folderKey !== entry.folderKey) {
+        log.warn(`Drop ignored: cross-folder moves aren't supported (${entry.folderKey} → ${target.folderKey})`);
+        continue;
+      }
+      try {
+        await this.groupSvc.moveConfig(entry.folderKey, entry.configId, destPath);
+      } catch (e) {
+        log.warn(`Drop failed for config ${entry.configId}: ${(e as Error).message}`);
+        vscode.window.showErrorMessage(`Move failed: ${(e as Error).message}`);
+      }
+    }
   }
 
   // Build child nodes for a config whose dependsOn list is non-empty. Each
@@ -580,18 +694,15 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
 
     const out: Node[] = [];
 
-    // User groups first — alphabetical so the list is stable across
-    // renames.
-    const groupNames = [...groupedByName.keys()].sort((a, b) => a.localeCompare(b));
-    for (const name of groupNames) {
-      out.push({
-        kind: 'group',
-        folderKey,
-        name,
-        count: groupedByName.get(name)!.length,
-      });
-    }
-
+    // Render order at the root level (top to bottom):
+    //   1. Type-buckets (groups of >1 of the same type) and bare
+    //      ungrouped configs — the "normal" stuff users want at a
+    //      glance, no folder click required.
+    //   2. Invalid entries — anomalies the user needs to fix.
+    //   3. A thin spacer row.
+    //   4. Top-level folders (groups). They live at the bottom so the
+    //      ungrouped section reads first; users with many folders
+    //      don't have to scroll past them to find a loose config.
     for (const [type, bucket] of byType) {
       if (bucket.length > 1) {
         out.push({
@@ -609,6 +720,28 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
     }
     for (const entry of invalid) {
       out.push({ kind: 'invalid', folderKey, entry });
+    }
+
+    // Top-level user folders (paths with no `/`). The recursive count
+    // includes everything below — this folder's configs plus all
+    // descendants — so the user sees the subtree size at a glance.
+    // We rely on the GroupService to enumerate folders so explicitly-
+    // created empty subfolders also show up.
+    const topFolders = this.groupSvc.childFolders(folderKey, '');
+    if (topFolders.length > 0 && out.length > 0) {
+      // Spacer only when both sections actually have content — no
+      // dangling blank row when the workspace has only folders, or
+      // only loose configs.
+      out.push({ kind: 'spacer', folderKey });
+    }
+    for (const path of topFolders) {
+      out.push({
+        kind: 'group',
+        folderKey,
+        path,
+        name: path,
+        count: this.groupSvc.members(folderKey, path, { recursive: true }).length,
+      });
     }
     return out;
   }

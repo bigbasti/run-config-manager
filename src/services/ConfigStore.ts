@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
 import type { RunFile, InvalidConfigEntry } from '../shared/types';
 import { parseRunFile, stringifyRunFile, RunConfigSchema } from '../shared/schema';
+import { deriveKnownFolders } from '../shared/folderPath';
 import { log } from '../utils/logger';
 import { migrateSpringBootConfig } from './migrateSpringBoot';
 
-const EMPTY: RunFile = { version: 1, configurations: [] };
+const EMPTY: RunFile = { version: 1, configurations: [], groups: [] };
 
 interface FolderEntry {
   folder: vscode.WorkspaceFolder;
@@ -79,10 +80,19 @@ export class ConfigStore {
     const migrated = migrateRaw(raw);
     const parsed = parseRunFile(migrated);
     if (parsed.ok) {
+      // Migration step: when an older run.json is missing the
+      // top-level `groups` array, derive it from every prefix of every
+      // config.group so empty / pre-existing folders still render.
+      // After the first save the file gains the field on disk.
+      if (!parsed.value.groups) {
+        parsed.value.groups = deriveKnownFolders(
+          parsed.value.configurations.map(c => c.group),
+        );
+      }
       entry.file = parsed.value;
       entry.invalid = [];
       entry.lastError = undefined;
-      log.debug(`Loaded ${uri.fsPath}: ${parsed.value.configurations.length} valid configuration(s)`);
+      log.debug(`Loaded ${uri.fsPath}: ${parsed.value.configurations.length} valid configuration(s), ${parsed.value.groups.length} folder(s)`);
       this.emitter.fire(key);
       return;
     }
@@ -130,7 +140,11 @@ export class ConfigStore {
       }
     }
 
-    entry.file = { version: 1, configurations: validList };
+    entry.file = {
+      version: 1,
+      configurations: validList,
+      groups: deriveKnownFolders(validList.map(c => c.group)),
+    };
     entry.invalid = invalidList;
     entry.lastError =
       invalidList.length > 0

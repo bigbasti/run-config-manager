@@ -6,19 +6,24 @@ import type { DebugService } from './DebugService';
 import type { DockerService } from './DockerService';
 import type { DependencyOrchestrator } from './DependencyOrchestrator';
 import { log } from '../utils/logger';
+import {
+  ancestorPaths,
+  isStrictDescendant,
+  isValidFolderPath,
+  splitFolderPath,
+} from '../shared/folderPath';
 
 // Per-config state during a sequential group run. The tree reads these via
 // `statusOfConfig()` and overlays the icon: queued shows a clock, starting
 // shows a spinner, others fall through to the config's own running state.
 export type GroupRunStatus = 'queued' | 'starting' | 'running' | 'failed' | 'skipped';
 
-// Groups are derived: there's no separate store. A group exists whenever at
-// least one config declares `group: <name>`. Consequences:
-//   - "List groups" scans configs and dedupes by name.
-//   - "Add to group" updates one config.
-//   - "Delete group" clears the field on every member (configs survive —
-//     the spec explicitly says delete removes the group, not the configs).
-//   - "Rename group" rewrites the field on every member.
+// Folders ("groups") are slash-separated paths stored on `config.group`.
+// To support empty / freshly-created folders we additionally persist the
+// full list of known paths in `RunFile.groups` — derived from configs
+// when missing on disk. RunConfigService.knownFolders / setKnownFolders
+// owns the persistence; this service handles the tree-shaped semantics
+// (parents, descendants, recursive members) and the run-all walk.
 export class GroupService {
   // configId → status while a sequential group run is in flight. Cleared as
   // soon as the config transitions to running (tree then reflects the
@@ -34,26 +39,51 @@ export class GroupService {
     return this.runStatus.get(configId);
   }
 
-  // Names of all groups in the given folder, sorted alphabetically.
+  // Every known folder path (sorted), including ancestors of paths
+  // referenced only via configs and explicitly-created empty folders.
+  // The union ensures freshly-created folders (without any members
+  // yet) still show up.
   list(folderKey: string): string[] {
-    const names = new Set<string>();
+    const out = new Set<string>();
+    for (const p of this.svc.knownFolders(folderKey)) {
+      for (const a of ancestorPaths(p)) out.add(a);
+    }
     for (const ref of this.svc.list()) {
       if (!ref.valid) continue;
       if (ref.folderKey !== folderKey) continue;
       const g = ref.config.group?.trim();
-      if (g) names.add(g);
+      if (!g) continue;
+      for (const a of ancestorPaths(g)) out.add(a);
     }
-    return [...names].sort((a, b) => a.localeCompare(b));
+    return [...out].sort((a, b) => a.localeCompare(b));
   }
 
-  // Configs belonging to the given group in a folder, in the order the
-  // service returned them (matches on-disk order — users' intent).
-  members(folderKey: string, groupName: string): RunConfig[] {
+  // Direct child folder paths of `parentPath` (or top-level when
+  // parentPath is empty). The tree provider uses this to build the
+  // nested folder hierarchy without recomputing it per render.
+  childFolders(folderKey: string, parentPath: string): string[] {
+    const all = this.list(folderKey);
+    const prefix = parentPath ? parentPath + '/' : '';
+    const depth = parentPath ? splitFolderPath(parentPath).length : 0;
+    return all.filter(p => {
+      if (!p.startsWith(prefix)) return false;
+      const segs = splitFolderPath(p);
+      return segs.length === depth + 1;
+    });
+  }
+
+  // Configs belonging to a folder.
+  // - recursive: when true, also include configs nested in sub-folders
+  //   so "Run all" on a parent folder walks the whole subtree.
+  members(folderKey: string, groupPath: string, opts?: { recursive?: boolean }): RunConfig[] {
     const out: RunConfig[] = [];
+    const recursive = opts?.recursive === true;
     for (const ref of this.svc.list()) {
       if (!ref.valid) continue;
       if (ref.folderKey !== folderKey) continue;
-      if (ref.config.group === groupName) out.push(ref.config);
+      const g = ref.config.group ?? '';
+      if (g === groupPath) { out.push(ref.config); continue; }
+      if (recursive && isStrictDescendant(g, groupPath)) out.push(ref.config);
     }
     return out;
   }
@@ -61,11 +91,88 @@ export class GroupService {
   async addToGroup(folderKey: string, configId: string, groupName: string): Promise<void> {
     const trimmed = groupName.trim();
     if (!trimmed) throw new Error('Group name cannot be empty.');
+    if (!isValidFolderPath(trimmed)) {
+      throw new Error('Folder paths use "/" as separator; segments cannot be empty or only whitespace.');
+    }
     const ref = this.svc.list().find(r => r.valid && r.folderKey === folderKey && r.config.id === configId);
     if (!ref || !ref.valid) throw new Error(`Config not found: ${configId}`);
     if (ref.config.group === trimmed) return; // no-op
     log.info(`Group: add "${ref.config.name}" to "${trimmed}"`);
+    // Make sure the folder (and all its ancestors) are marked as
+    // known so an empty subfolder created via "Add to group …" still
+    // renders even before another config joins.
+    await this.ensureFoldersExist(folderKey, [trimmed]);
     await this.svc.update(folderKey, { ...ref.config, group: trimmed });
+  }
+
+  // Move a config to a different folder (or back to top-level when
+  // newPath is empty). Used both by the right-click "Move…" command
+  // and the drag-and-drop controller.
+  async moveConfig(folderKey: string, configId: string, newPath: string): Promise<void> {
+    const trimmed = newPath.trim();
+    if (trimmed && !isValidFolderPath(trimmed)) {
+      throw new Error('Invalid folder path.');
+    }
+    const ref = this.svc.list().find(r => r.valid && r.folderKey === folderKey && r.config.id === configId);
+    if (!ref || !ref.valid) throw new Error(`Config not found: ${configId}`);
+    if ((ref.config.group ?? '') === trimmed) return;
+    log.info(`Group: move "${ref.config.name}" → "${trimmed || '(top level)'}"`);
+    if (trimmed) await this.ensureFoldersExist(folderKey, [trimmed]);
+    const next = trimmed
+      ? { ...ref.config, group: trimmed }
+      : (() => { const { group: _drop, ...rest } = ref.config; void _drop; return rest as RunConfig; })();
+    await this.svc.update(folderKey, next);
+  }
+
+  // Create a folder. Persists the path (and all ancestors) into
+  // RunFile.groups so the empty folder survives across reloads.
+  async addFolder(folderKey: string, path: string): Promise<void> {
+    const trimmed = path.trim();
+    if (!isValidFolderPath(trimmed)) {
+      throw new Error('Invalid folder path.');
+    }
+    log.info(`Group: create folder "${trimmed}"`);
+    await this.ensureFoldersExist(folderKey, [trimmed]);
+  }
+
+  // Remove a folder (and all its descendants) from the known list,
+  // and unassign every config whose group equals one of those paths.
+  // The configs themselves survive — "deleting a group keeps the
+  // configs" was explicit in the spec.
+  async deleteFolder(folderKey: string, path: string): Promise<void> {
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    log.info(`Group: delete folder "${trimmed}" (and any descendants)`);
+    // 1. Walk every config whose group sits in this subtree, drop the field.
+    for (const ref of this.svc.list()) {
+      if (!ref.valid) continue;
+      if (ref.folderKey !== folderKey) continue;
+      const g = ref.config.group ?? '';
+      if (g === trimmed || isStrictDescendant(g, trimmed)) {
+        const { group: _drop, ...rest } = ref.config;
+        void _drop;
+        await this.svc.update(folderKey, rest as RunConfig);
+      }
+    }
+    // 2. Strip the folder + descendants from the known list.
+    const known = this.svc.knownFolders(folderKey);
+    const next = known.filter(p => p !== trimmed && !isStrictDescendant(p, trimmed));
+    if (next.length !== known.length) {
+      await this.svc.setKnownFolders(folderKey, next);
+    }
+  }
+
+  // Internal: append the path + every ancestor to RunFile.groups (no
+  // duplicates). Used by addFolder, addToGroup, moveConfig.
+  private async ensureFoldersExist(folderKey: string, paths: string[]): Promise<void> {
+    const known = new Set(this.svc.knownFolders(folderKey));
+    let added = false;
+    for (const p of paths) {
+      for (const a of ancestorPaths(p)) {
+        if (!known.has(a)) { known.add(a); added = true; }
+      }
+    }
+    if (added) await this.svc.setKnownFolders(folderKey, [...known]);
   }
 
   async removeFromGroup(folderKey: string, configId: string): Promise<void> {
@@ -81,24 +188,50 @@ export class GroupService {
   async renameGroup(folderKey: string, oldName: string, newName: string): Promise<void> {
     const trimmed = newName.trim();
     if (!trimmed) throw new Error('Group name cannot be empty.');
-    if (trimmed === oldName) return;
-    const members = this.members(folderKey, oldName);
-    log.info(`Group: rename "${oldName}" → "${trimmed}" (${members.length} member(s))`);
-    for (const cfg of members) {
-      await this.svc.update(folderKey, { ...cfg, group: trimmed });
+    if (!isValidFolderPath(trimmed)) {
+      throw new Error('Folder paths use "/" as separator; segments cannot be empty.');
     }
+    if (trimmed === oldName) return;
+    // Renaming a folder also moves every descendant. "A/B" renamed to
+    // "C" → "A/B/X" becomes "C/X".
+    const renames: Array<{ from: string; to: string }> = [];
+    for (const ref of this.svc.list()) {
+      if (!ref.valid) continue;
+      if (ref.folderKey !== folderKey) continue;
+      const g = ref.config.group ?? '';
+      if (g === oldName) renames.push({ from: g, to: trimmed });
+      else if (isStrictDescendant(g, oldName)) {
+        renames.push({ from: g, to: trimmed + g.slice(oldName.length) });
+      }
+    }
+    log.info(`Group: rename "${oldName}" → "${trimmed}" (${renames.length} member(s))`);
+    for (const { from: _from } of renames) void _from; // satisfy ts noUnused
+    for (const ref of this.svc.list()) {
+      if (!ref.valid || ref.folderKey !== folderKey) continue;
+      const g = ref.config.group ?? '';
+      if (g === oldName) {
+        await this.svc.update(folderKey, { ...ref.config, group: trimmed });
+      } else if (isStrictDescendant(g, oldName)) {
+        await this.svc.update(folderKey, { ...ref.config, group: trimmed + g.slice(oldName.length) });
+      }
+    }
+    // Update the known-folders list: remove old prefixes, add new
+    // prefixes (so empty subfolders rename too).
+    const known = this.svc.knownFolders(folderKey);
+    const next = known.map(p => {
+      if (p === oldName) return trimmed;
+      if (isStrictDescendant(p, oldName)) return trimmed + p.slice(oldName.length);
+      return p;
+    });
+    await this.svc.setKnownFolders(folderKey, next);
   }
 
   // Delete the group by clearing the field on every member. Configs
   // survive — they just go back to the ungrouped top-level listing.
+  // Equivalent to deleteFolder; kept as a backward-compatible name
+  // for callers that still say "delete group".
   async deleteGroup(folderKey: string, groupName: string): Promise<void> {
-    const members = this.members(folderKey, groupName);
-    log.info(`Group: delete "${groupName}" (unassigning ${members.length} config(s))`);
-    for (const cfg of members) {
-      const { group: _drop, ...rest } = cfg;
-      void _drop;
-      await this.svc.update(folderKey, rest as RunConfig);
-    }
+    return this.deleteFolder(folderKey, groupName);
   }
 
   // Run every member of a group. Two modes:
@@ -128,12 +261,14 @@ export class GroupService {
       orchestrator: DependencyOrchestrator;
     },
   ): Promise<void> {
-    const members = this.members(folderKey, groupName);
+    // Recursive walk: running a parent folder runs everything in its
+    // subtree, matching the UX of "Run all" inside an IDE folder.
+    const members = this.members(folderKey, groupName, { recursive: true });
     if (members.length === 0) {
-      log.warn(`Group run: "${groupName}" has no members`);
+      log.warn(`Group run: "${groupName}" has no members (incl. subfolders)`);
       return;
     }
-    log.info(`Group run (${mode}): "${groupName}" — ${members.length} member(s)`);
+    log.info(`Group run (${mode}): "${groupName}" — ${members.length} member(s) including subfolders`);
 
     if (mode === 'parallel') {
       // Queue-state icon briefly blinks — we set all to 'starting' up

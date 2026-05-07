@@ -252,6 +252,11 @@
         "command": "runConfig.deleteGroup",
         "title": "Delete Group",
         "icon": "$(trash)"
+      },
+      {
+        "command": "runConfig.folder.addItem",
+        "title": "Add Sub-folder or Configuration…",
+        "icon": "$(add)"
       }
     ],
     "menus": {
@@ -472,6 +477,16 @@
           "command": "runConfig.deleteGroup",
           "when": "view == runConfigurations && viewItem == userGroup",
           "group": "2_edit@2"
+        },
+        {
+          "command": "runConfig.folder.addItem",
+          "when": "view == runConfigurations && viewItem == userGroup",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "runConfig.folder.addItem",
+          "when": "view == runConfigurations && viewItem == userGroup",
+          "group": "inline@0"
         },
         {
           "command": "runConfig.runGroupSequential",

@@ -2,9 +2,11 @@ import { Uri } from 'vscode';
 import { GroupService } from '../src/services/GroupService';
 import type { RunConfig } from '../src/shared/types';
 
-// Minimal fake — just the three methods GroupService uses.
+// Minimal fake — just the surface GroupService uses.
 class FakeSvc {
   private refs: Array<{ folderKey: string; config: RunConfig; valid: true }> = [];
+  // Per-folder known-folder list (mirrors RunFile.groups).
+  private folders = new Map<string, string[]>();
   seed(folderKey: string, configs: RunConfig[]) {
     for (const c of configs) this.refs.push({ folderKey, config: c, valid: true });
   }
@@ -15,6 +17,12 @@ class FakeSvc {
     this.refs[idx] = { folderKey, config: cfg, valid: true };
   }
   getAll() { return this.refs.map(r => r.config); }
+  knownFolders(folderKey: string): string[] {
+    return [...(this.folders.get(folderKey) ?? [])];
+  }
+  async setKnownFolders(folderKey: string, paths: string[]): Promise<void> {
+    this.folders.set(folderKey, [...new Set(paths)].sort());
+  }
 }
 
 function cfg(id: string, name: string, group?: string): RunConfig {
@@ -151,6 +159,101 @@ describe('GroupService', () => {
     // Member 'b' has no deps → falls through to exec.run directly.
     expect(execRunCalls).toContain('b');
     expect(orchRunCalls).not.toContain('b');
+  });
+
+  test('addFolder records the path and every ancestor', async () => {
+    await groups.addFolder('/ws', 'Backend/API/Internal');
+    expect(fake.knownFolders('/ws').sort()).toEqual([
+      'Backend', 'Backend/API', 'Backend/API/Internal',
+    ]);
+  });
+
+  test('addToGroup ensures parent folders exist', async () => {
+    fake.seed('/ws', [cfg('a', 'A')]);
+    await groups.addToGroup('/ws', 'a', 'Backend/API');
+    expect(fake.knownFolders('/ws').sort()).toEqual(['Backend', 'Backend/API']);
+    expect(fake.getAll()[0].group).toBe('Backend/API');
+  });
+
+  test('childFolders returns direct subfolders only', async () => {
+    fake.seed('/ws', [
+      cfg('a', 'A', 'Backend'),
+      cfg('b', 'B', 'Backend/API'),
+      cfg('c', 'C', 'Backend/API/Internal'),
+      cfg('d', 'D', 'Frontend'),
+    ]);
+    expect(groups.childFolders('/ws', '').sort()).toEqual(['Backend', 'Frontend']);
+    expect(groups.childFolders('/ws', 'Backend').sort()).toEqual(['Backend/API']);
+    expect(groups.childFolders('/ws', 'Backend/API').sort()).toEqual(['Backend/API/Internal']);
+    expect(groups.childFolders('/ws', 'Backend/API/Internal')).toEqual([]);
+  });
+
+  test('members(recursive) walks the entire subtree', () => {
+    fake.seed('/ws', [
+      cfg('a', 'A', 'Backend'),
+      cfg('b', 'B', 'Backend/API'),
+      cfg('c', 'C', 'Backend/API/Internal'),
+      cfg('d', 'D', 'Frontend'),
+    ]);
+    const flat = groups.members('/ws', 'Backend');
+    expect(flat.map(c => c.id)).toEqual(['a']);
+    const recursive = groups.members('/ws', 'Backend', { recursive: true });
+    expect(recursive.map(c => c.id).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  test('moveConfig reassigns the group field', async () => {
+    fake.seed('/ws', [cfg('a', 'A', 'Backend')]);
+    await groups.moveConfig('/ws', 'a', 'Backend/API');
+    expect(fake.getAll()[0].group).toBe('Backend/API');
+  });
+
+  test('moveConfig with empty path clears the group (back to top-level)', async () => {
+    fake.seed('/ws', [cfg('a', 'A', 'Backend')]);
+    await groups.moveConfig('/ws', 'a', '');
+    expect(fake.getAll()[0].group).toBeUndefined();
+  });
+
+  test('deleteFolder cascades: subfolders removed, configs ungrouped', async () => {
+    fake.seed('/ws', [
+      cfg('a', 'A', 'Backend'),
+      cfg('b', 'B', 'Backend/API'),
+      cfg('c', 'C', 'Backend/API/Internal'),
+      cfg('d', 'D', 'Frontend'),
+    ]);
+    await groups.addFolder('/ws', 'Backend/API/Internal');
+    await groups.deleteFolder('/ws', 'Backend');
+    const all = fake.getAll();
+    // Configs in the Backend subtree are ungrouped — Frontend untouched.
+    expect(all.find(c => c.id === 'a')?.group).toBeUndefined();
+    expect(all.find(c => c.id === 'b')?.group).toBeUndefined();
+    expect(all.find(c => c.id === 'c')?.group).toBeUndefined();
+    expect(all.find(c => c.id === 'd')?.group).toBe('Frontend');
+    // Backend + descendants removed from the known list.
+    expect(fake.knownFolders('/ws')).toEqual([]);
+  });
+
+  test('renameGroup rewrites every descendant path', async () => {
+    fake.seed('/ws', [
+      cfg('a', 'A', 'Backend'),
+      cfg('b', 'B', 'Backend/API'),
+      cfg('c', 'C', 'Backend/API/Internal'),
+    ]);
+    await groups.addFolder('/ws', 'Backend/API/Internal');
+    await groups.renameGroup('/ws', 'Backend', 'Server');
+    const all = fake.getAll();
+    expect(all.find(c => c.id === 'a')?.group).toBe('Server');
+    expect(all.find(c => c.id === 'b')?.group).toBe('Server/API');
+    expect(all.find(c => c.id === 'c')?.group).toBe('Server/API/Internal');
+    expect(fake.knownFolders('/ws').sort()).toEqual([
+      'Server', 'Server/API', 'Server/API/Internal',
+    ]);
+  });
+
+  test('addToGroup rejects invalid folder paths', async () => {
+    fake.seed('/ws', [cfg('a', 'A')]);
+    await expect(groups.addToGroup('/ws', 'a', '/leading')).rejects.toThrow(/separator/i);
+    await expect(groups.addToGroup('/ws', 'a', 'trailing/')).rejects.toThrow(/separator/i);
+    await expect(groups.addToGroup('/ws', 'a', 'A//B')).rejects.toThrow(/separator/i);
   });
 
   test('runGroup parallel: member with dependsOn also routes through orchestrator', async () => {
