@@ -608,6 +608,26 @@ export function App() {
               {busyActionId === 'recomputeClasspath' && pendingSaveRef.current ? 'Saving…' : 'Save'}
             </button>
           </div>
+          {/* HTTP Request configs get an extra "Execute" button so users
+              can fire the request without saving first. The button posts
+              the current form values to the extension, which runs them
+              through HttpRequestRunner exactly like a saved-and-clicked
+              run would. Hidden for every other config type — they have
+              long-running side effects that don't suit a try-without-
+              saving flow. */}
+          {values.type === 'http-request' && (
+            <div className="side-actions" style={{ marginTop: 6 }}>
+              <button
+                title="Run this HTTP request now using the current (possibly unsaved) form values."
+                onClick={() => {
+                  setError(null);
+                  post({ cmd: 'executeUnsaved', config: values as RunConfig });
+                }}
+              >
+                ▶ Execute
+              </button>
+            </div>
+          )}
           {(() => {
             const bt = buildToolForConfig(values);
             if (!bt) return null;

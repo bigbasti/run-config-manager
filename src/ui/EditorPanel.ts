@@ -16,6 +16,8 @@ import { RunConfigSchema } from '../shared/schema';
 import type { DockerService } from '../services/DockerService';
 import { BuildToolSettingsService } from '../services/BuildToolSettingsService';
 import { loadEnvFiles } from '../services/EnvFileLoader';
+import { runHttpRequest } from '../services/HttpRequestRunner';
+import { initLogger } from '../utils/logger';
 import { JdkInstallerService, type JdkPackage, CancelledError, ChecksumUnavailableError, jdkInstallDirName } from '../services/JdkInstallerService';
 import { TomcatInstallerService, type TomcatPackage } from '../services/TomcatInstallerService';
 import { MavenInstallerService, type MavenPackage } from '../services/MavenInstallerService';
@@ -570,6 +572,29 @@ export class EditorPanel {
           vscode.window.showErrorMessage(`Could not open ${msg.filePath}: ${(e as Error).message}`);
           log.warn(`openSettingsFile failed: ${(e as Error).message}`);
         }
+        return;
+      }
+      case 'executeUnsaved': {
+        // Fire an http-request config that the user hasn't saved yet.
+        // We bypass the registry/Execution path — that's geared toward
+        // saved configs with proper sanitization — and call the
+        // runner directly with whatever values the form has. The form
+        // adds a fake id when needed; for unsaved runs we just need
+        // type + typeOptions to match HttpRequestTypeOptions.
+        if (msg.config.type !== 'http-request') {
+          log.warn(`executeUnsaved called with non-http-request type: ${msg.config.type}`);
+          return;
+        }
+        log.info(`Execute (unsaved): ${msg.config.name || '(unnamed)'}`);
+        const channel = initLogger();
+        // sanitizeConfig fills in missing fields with safe defaults so
+        // a half-edited form doesn't crash the runner.
+        const safe = sanitizeConfig(msg.config);
+        if (safe.type !== 'http-request') return; // narrowing
+        runHttpRequest(safe, this.args.folder, channel).catch(e => {
+          log.error('executeUnsaved failed', e);
+          vscode.window.showErrorMessage(`Execute failed: ${(e as Error).message}`);
+        });
         return;
       }
       case 'pickEnvFile': {

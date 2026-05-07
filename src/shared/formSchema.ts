@@ -71,7 +71,18 @@ type BaseFieldMeta = {
 
 export type FormField =
   | ({ kind: 'text'; key: string; label: string; placeholder?: string } & BaseFieldMeta)
-  | ({ kind: 'textarea'; key: string; label: string; placeholder?: string; rows?: number } & BaseFieldMeta)
+  | ({
+      kind: 'textarea';
+      key: string;
+      label: string;
+      placeholder?: string;
+      rows?: number;
+      // When set, the textarea renders with a syntax-highlight overlay
+      // for the chosen language. Currently only 'json' and 'javascript'
+      // are wired in CodeTextarea.tsx — used by the HTTP Request
+      // adapter for the JSON body and the assert script.
+      language?: 'json' | 'javascript';
+    } & BaseFieldMeta)
   | ({ kind: 'number'; key: string; label: string; min?: number; max?: number } & BaseFieldMeta)
   | ({
       kind: 'select';

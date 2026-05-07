@@ -84,6 +84,12 @@ export type Outbound =
   | { cmd: 'listGradleDownloads' }
   | { cmd: 'downloadGradle'; version: string }
   | { cmd: 'cancelGradleDownload' }
+  // Run an http-request config without saving it first — sent by the
+  // form's "Execute" button. The extension performs the request with
+  // the current (possibly invalid) form values; output goes to the
+  // usual sink. Useful for "test this curl-style call before I commit
+  // the config to disk".
+  | { cmd: 'executeUnsaved'; config: RunConfig }
   | { cmd: 'pickEnvFile' }
   // Loads (or reloads) the listed .env files and reports per-file status
   // + parsed variables. Fired on init/edit/add/remove so the form pills

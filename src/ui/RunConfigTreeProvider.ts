@@ -639,6 +639,7 @@ function labelForType(type: RunConfig['type']): string {
     case 'gradle-task': return 'Gradle Task';
     case 'custom-command': return 'Custom Command';
     case 'docker': return 'Docker';
+    case 'http-request': return 'HTTP Requests';
     default: return type;
   }
 }
@@ -657,6 +658,7 @@ function iconForGroupType(type: string): string {
     case 'gradle-task': return 'gradle';
     case 'custom-command': return 'bash';
     case 'docker': return 'docker';
+    case 'http-request': return 'http-request';
     default: return 'npm';
   }
 }

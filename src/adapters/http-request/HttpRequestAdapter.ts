@@ -272,6 +272,7 @@ export class HttpRequestAdapter implements RuntimeAdapter {
           key: 'typeOptions.bodyRaw',
           label: 'JSON body',
           rows: 8,
+          language: 'json',
           placeholder: '{ "name": "Alice", "email": "alice@example.com" }',
           dependsOn: { key: 'typeOptions.bodyKind', equals: 'json' },
           help:
@@ -314,6 +315,7 @@ export class HttpRequestAdapter implements RuntimeAdapter {
           key: 'typeOptions.assertScript',
           label: 'Assert script (JavaScript, optional)',
           rows: 6,
+          language: 'javascript',
           placeholder: 'if ($status !== 200) throw new Error("expected 200");\nreturn { id: $response.id };',
           help:
             'Runs after the response arrives. Available bindings: ' +

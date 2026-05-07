@@ -3,6 +3,7 @@ import type { FormField } from '../../../src/shared/formSchema';
 import { getPath, setPath } from '../state';
 import { KvEditor } from './KvEditor';
 import { KvListEditor, type KvListRow } from './KvListEditor';
+import { CodeTextarea } from './CodeTextarea';
 import { FolderPathInput } from './FolderPathInput';
 import { SelectOrCustom } from './SelectOrCustom';
 import { CsvChecklist } from './CsvChecklist';
@@ -279,6 +280,21 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
         />
       );
     case 'textarea':
+      // When the schema asks for a language, render via the highlighted
+      // overlay component so JSON / assert-script editors show colors.
+      if (field.language) {
+        return (
+          <CodeTextarea
+            value={v ?? ''}
+            placeholder={field.placeholder ?? ''}
+            rows={field.rows ?? 3}
+            language={field.language}
+            onChange={set}
+            onFocus={h.focus}
+            onBlur={h.blur}
+          />
+        );
+      }
       return (
         <textarea
           value={v ?? ''}

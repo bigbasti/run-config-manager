@@ -449,26 +449,43 @@ function showResponsePanel(
     'rcm.httpResponse',
     `Response: ${cfg.name}`,
     vscode.ViewColumn.Beside,
-    { enableScripts: false, retainContextWhenHidden: false },
+    // Scripts on — the body section is interactive (JSON tree with
+    // click-to-collapse). Stays sandboxed by VS Code's webview CSP.
+    { enableScripts: true, retainContextWhenHidden: false },
   );
   const sizeLabel = formatBytes(response.body.length);
   const headerRows = Object.entries(response.headers)
     .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`)
     .join('');
-  const body = isJson ? prettifyBody(bodyText, true) : bodyText;
+
+  // Try to parse JSON for the tree view. If parsing fails (truncated
+  // response, content-type lied, etc.) we fall back to syntax-
+  // highlighted plain text — better than dumping unstyled bytes.
+  let parsedJson: unknown = undefined;
+  if (isJson) {
+    try { parsedJson = JSON.parse(bodyText); } catch { /* fall through */ }
+  }
+
+  const bodyHtml = parsedJson !== undefined
+    ? `<div id="json-root" class="json-root"></div>`
+    : isJson
+      ? `<pre class="code lang-json">${highlightedHtml(prettifyBody(bodyText, true), 'json')}</pre>`
+      : `<pre class="code">${escapeHtml(bodyText)}</pre>`;
+
+  // The script renders the JSON tree client-side so users can collapse
+  // / expand objects and arrays. The tree is built once from the
+  // serialized payload; nothing else runs in this webview, so no
+  // vscode.postMessage round-trips needed.
+  const scriptBlock = parsedJson !== undefined
+    ? `<script>
+const data = ${JSON.stringify(parsedJson).replace(/</g, '\\u003c')};
+${JSON_TREE_RENDERER}
+document.getElementById('json-root').appendChild(renderJsonTree(data));
+</script>`
+    : '';
+
   panel.webview.html = `<!doctype html>
-<html><head><meta charset="utf-8"><style>
-body { font-family: var(--vscode-editor-font-family, monospace); padding: 12px; color: var(--vscode-foreground); }
-h2 { margin: 0 0 4px 0; font-size: 1.2em; }
-.meta { opacity: 0.8; margin-bottom: 12px; }
-table { border-collapse: collapse; margin-bottom: 12px; }
-td { padding: 2px 8px; vertical-align: top; }
-td:first-child { opacity: 0.7; }
-pre { background: var(--vscode-editorWidget-background); padding: 8px; white-space: pre-wrap; word-break: break-word; }
-.status-2xx { color: var(--vscode-testing-iconPassed, #5cb85c); }
-.status-4xx { color: var(--vscode-editorWarning-foreground, #d9a800); }
-.status-5xx { color: var(--vscode-errorForeground, #f48771); }
-</style></head><body>
+<html><head><meta charset="utf-8"><style>${PANEL_STYLES}</style></head><body>
 <h2>${escapeHtml(method)} ${escapeHtml(url)}</h2>
 <div class="meta">
   <span class="status-${Math.floor(response.status / 100)}xx">${response.status} ${escapeHtml(statusText(response.status))}</span>
@@ -477,8 +494,120 @@ pre { background: var(--vscode-editorWidget-background); padding: 8px; white-spa
 <h3>Headers</h3>
 <table>${headerRows}</table>
 <h3>Body</h3>
-<pre>${escapeHtml(body)}</pre>
+${bodyHtml}
+${scriptBlock}
 </body></html>`;
+}
+
+// CSS for the response panel. Token classes mirror the names emitted
+// by CodeHighlight.ts in the form's CodeTextarea so the same VS Code
+// editor variables apply, themes follow.
+const PANEL_STYLES = `
+body { font-family: var(--vscode-editor-font-family, monospace); padding: 12px; color: var(--vscode-foreground); }
+h2 { margin: 0 0 4px 0; font-size: 1.2em; word-break: break-all; }
+h3 { margin: 12px 0 6px 0; font-size: 1em; opacity: 0.9; }
+.meta { opacity: 0.8; margin-bottom: 12px; }
+table { border-collapse: collapse; margin-bottom: 4px; }
+td { padding: 2px 8px; vertical-align: top; }
+td:first-child { opacity: 0.7; }
+.code { background: var(--vscode-editorWidget-background); padding: 8px; white-space: pre-wrap; word-break: break-word; border-radius: 2px; }
+.json-root { background: var(--vscode-editorWidget-background); padding: 8px; border-radius: 2px; line-height: 1.4em; }
+.json-row { display: block; }
+.json-toggle {
+  display: inline-block; width: 1em; cursor: pointer; user-select: none;
+  text-align: center; opacity: 0.7;
+}
+.json-toggle:hover { opacity: 1; }
+.json-children { padding-left: 1.4em; border-left: 1px dotted var(--vscode-panel-border, rgba(128,128,128,0.3)); margin-left: 0.4em; }
+.json-collapsed > .json-children { display: none; }
+.json-summary { opacity: 0.6; margin-left: 4px; font-style: italic; }
+.tok-string   { color: var(--vscode-debugTokenExpression-string,  var(--vscode-editor-foreground)); }
+.tok-number   { color: var(--vscode-debugTokenExpression-number,  #b5cea8); }
+.tok-boolean  { color: var(--vscode-debugTokenExpression-boolean, #569cd6); }
+.tok-null     { color: var(--vscode-debugTokenExpression-boolean, #569cd6); font-style: italic; }
+.tok-property { color: var(--vscode-debugTokenExpression-name,    #9cdcfe); }
+.tok-punctuation { color: var(--vscode-editor-foreground); opacity: 0.85; }
+.status-2xx { color: var(--vscode-testing-iconPassed, #5cb85c); }
+.status-4xx { color: var(--vscode-editorWarning-foreground, #d9a800); }
+.status-5xx { color: var(--vscode-errorForeground, #f48771); }
+`;
+
+// Inlined into the panel HTML. Pure DOM, no framework. Recursive
+// renderer that emits a clickable toggle for any object/array node.
+const JSON_TREE_RENDERER = `
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function span(cls, text) { return el('span', cls, text); }
+function renderJsonTree(value) {
+  // Top-level row — same as a child row but without the property label.
+  const row = el('div', 'json-row');
+  row.appendChild(renderValue(value, /*expanded*/true));
+  return row;
+}
+function renderValue(value, expanded) {
+  if (value === null) return span('tok-null', 'null');
+  if (typeof value === 'string') return span('tok-string', JSON.stringify(value));
+  if (typeof value === 'number') return span('tok-number', String(value));
+  if (typeof value === 'boolean') return span('tok-boolean', String(value));
+  if (Array.isArray(value)) return renderContainer(value, '[', ']', expanded, true);
+  if (typeof value === 'object') return renderContainer(value, '{', '}', expanded, false);
+  return span('', String(value));
+}
+function renderContainer(value, open, close, expanded, isArray) {
+  const wrap = el('span', 'json-container' + (expanded ? '' : ' json-collapsed'));
+  const entries = isArray ? value.map((v, i) => [i, v]) : Object.entries(value);
+
+  if (entries.length === 0) {
+    wrap.appendChild(span('tok-punctuation', open + close));
+    return wrap;
+  }
+
+  const toggle = el('span', 'json-toggle', expanded ? '▾' : '▸');
+  toggle.addEventListener('click', () => {
+    const collapsed = wrap.classList.toggle('json-collapsed');
+    toggle.textContent = collapsed ? '▸' : '▾';
+  });
+  wrap.appendChild(toggle);
+  wrap.appendChild(span('tok-punctuation', open));
+
+  // Inline summary shown when collapsed (e.g. "{ 3 keys }").
+  const summary = span('json-summary',
+    isArray ? entries.length + ' item' + (entries.length === 1 ? '' : 's')
+            : entries.length + ' key' + (entries.length === 1 ? '' : 's'));
+  wrap.appendChild(summary);
+
+  const children = el('div', 'json-children');
+  entries.forEach(([k, v], i) => {
+    const row = el('div', 'json-row');
+    if (!isArray) {
+      row.appendChild(span('tok-property', JSON.stringify(k)));
+      row.appendChild(span('tok-punctuation', ': '));
+    }
+    row.appendChild(renderValue(v, true));
+    if (i < entries.length - 1) row.appendChild(span('tok-punctuation', ','));
+    children.appendChild(row);
+  });
+  wrap.appendChild(children);
+  wrap.appendChild(span('tok-punctuation', close));
+  return wrap;
+}
+`;
+
+// Server-side highlight pass for the non-JSON-but-claims-JSON case.
+// We can't share the webview tokenizer (it's webview-only), and we
+// don't need exact parity — this is a fallback. Just colorize the
+// obvious shapes via regex.
+function highlightedHtml(text: string, _lang: 'json'): string {
+  return escapeHtml(text)
+    .replace(/&quot;((?:\\.|[^&\\])*?)&quot;(\s*:)/g, '<span class="tok-property">&quot;$1&quot;</span>$2')
+    .replace(/&quot;((?:\\.|[^&\\])*?)&quot;/g, '<span class="tok-string">&quot;$1&quot;</span>')
+    .replace(/\b(-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/g, '<span class="tok-number">$1</span>')
+    .replace(/\b(true|false)\b/g, '<span class="tok-boolean">$1</span>')
+    .replace(/\b(null)\b/g, '<span class="tok-null">$1</span>');
 }
 
 // ---------------------------------------------------------------------------
