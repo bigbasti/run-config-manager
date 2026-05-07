@@ -7,7 +7,8 @@ export type RunConfigType =
   | 'maven-goal'
   | 'gradle-task'
   | 'custom-command'
-  | 'docker';
+  | 'docker'
+  | 'http-request';
 
 export type PackageManager = 'npm' | 'yarn' | 'pnpm';
 
@@ -259,6 +260,77 @@ export interface CustomCommandTypeOptions {
   colorOutput?: boolean;
 }
 
+// HTTP Request — fire-and-log REST calls. Unlike the build-tool config
+// types this isn't a long-running process; ExecutionService special-
+// cases it to flash a status icon (green/yellow/red) for 3 seconds
+// based on the response code, then revert to the brand icon.
+export type HttpMethod =
+  | 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'CUSTOM';
+
+// Disable-able key/value row used for headers and query params. The
+// `enabled` flag lets users keep a row around (so it's there next time)
+// without sending it on this run — Postman / Bruno's UX.
+export interface HttpKvRow {
+  key: string;
+  value: string;
+  enabled: boolean;
+}
+
+export type HttpBodyKind = 'none' | 'json' | 'form-urlencoded' | 'raw' | 'xml';
+export type HttpAuthKind = 'none' | 'basic' | 'bearer' | 'apiKey' | 'oauth-client-credentials';
+// Where an API key gets injected — header (default) or query string.
+export type HttpApiKeyLocation = 'header' | 'query';
+// Where the response goes after the run finishes.
+export type HttpResponseSink = 'output' | 'panel';
+
+export interface HttpRequestTypeOptions {
+  url: string;
+  method: HttpMethod;
+  // Used only when method === 'CUSTOM'; ignored otherwise.
+  customMethod?: string;
+  // Query parameters. Appended to URL as `?k=v&...`. Keeps separate
+  // editing from inline-in-URL so users can disable rows individually.
+  queryParams: HttpKvRow[];
+  headers: HttpKvRow[];
+  // Body — only the fields matching `bodyKind` are read at run time.
+  bodyKind: HttpBodyKind;
+  bodyRaw: string;        // used by 'json', 'raw', 'xml'
+  bodyForm: HttpKvRow[];  // used by 'form-urlencoded'
+  // Auth — only the fields matching `authKind` are read at run time.
+  authKind: HttpAuthKind;
+  authBasic: { username: string; password: string };
+  authBearer: { token: string };
+  authApiKey: { name: string; value: string; location: HttpApiKeyLocation };
+  // OAuth 2 — client_credentials grant. The runner POSTs to
+  // `tokenUrl` with `grant_type=client_credentials` (plus client id /
+  // secret either as the Basic Authorization header or as form
+  // fields, depending on `clientAuth`), reads the access_token from
+  // the JSON response, and uses it as a Bearer on the actual request.
+  // Optional scope is added as a form field when present.
+  authOAuthClientCredentials: {
+    tokenUrl: string;
+    clientId: string;
+    clientSecret: string;
+    scope: string;
+    // 'header' = HTTP Basic with id:secret on the token request
+    //            (RFC 6749 §2.3.1 preferred form). 'body' = sends
+    //            client_id / client_secret as form fields.
+    clientAuth: 'header' | 'body';
+  };
+  // Network knobs.
+  timeoutMs: number;
+  followRedirects: boolean;
+  verifyTls: boolean;
+  // JS executed after the request completes. Receives `$response`,
+  // `$rawBody`, `$headers`, `$status`. Sandboxed via vm.runInNewContext
+  // with no `require()`. Return value gets logged to the response sink.
+  assertScript: string;
+  // Where the response (and assert result) lands. 'output' = the
+  // "Run Configurations" Output channel. 'panel' = a read-only webview
+  // that opens beside the editor.
+  responseSink: HttpResponseSink;
+}
+
 // Docker — quick-launch a named container. Unlike other types, Docker doesn't
 // compile / build / fork anything — it just delegates to `docker start` /
 // `docker stop`. Click-to-logs and running-state detection go through
@@ -282,7 +354,8 @@ export type RunConfig =
   | (RunConfigBase & { type: 'maven-goal'; typeOptions: MavenGoalTypeOptions })
   | (RunConfigBase & { type: 'gradle-task'; typeOptions: GradleTaskTypeOptions })
   | (RunConfigBase & { type: 'custom-command'; typeOptions: CustomCommandTypeOptions })
-  | (RunConfigBase & { type: 'docker'; typeOptions: DockerTypeOptions });
+  | (RunConfigBase & { type: 'docker'; typeOptions: DockerTypeOptions })
+  | (RunConfigBase & { type: 'http-request'; typeOptions: HttpRequestTypeOptions });
 
 export interface RunFile {
   version: 1;

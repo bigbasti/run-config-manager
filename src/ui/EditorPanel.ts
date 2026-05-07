@@ -143,7 +143,8 @@ export class EditorPanel {
       | 'maven-goal'
       | 'gradle-task'
       | 'custom-command'
-      | 'docker';
+      | 'docker'
+      | 'http-request';
 
     const baseCommon = {
       name: '',
@@ -195,6 +196,26 @@ export class EditorPanel {
         : { task: '', gradleCommand: './gradlew', colorOutput: true };
     } else if (type === 'custom-command') {
       typeDefaults = { command: '', cwd: '', shell: 'default', interactive: false, colorOutput: true };
+    } else if (type === 'http-request') {
+      typeDefaults = {
+        url: '',
+        method: 'GET',
+        queryParams: [],
+        headers: [],
+        bodyKind: 'none',
+        bodyRaw: '',
+        bodyForm: [],
+        authKind: 'none',
+        authBasic: { username: '', password: '' },
+        authBearer: { token: '' },
+        authApiKey: { name: '', value: '', location: 'header' },
+        authOAuthClientCredentials: { tokenUrl: '', clientId: '', clientSecret: '', scope: '', clientAuth: 'header' },
+        timeoutMs: 30_000,
+        followRedirects: true,
+        verifyTls: true,
+        assertScript: '',
+        responseSink: 'output',
+      };
     } else {
       typeDefaults = isStreaming ? { profiles: '' } : { buildTool: 'maven', profiles: '' };
     }
@@ -1453,6 +1474,53 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
       typeOptions: {
         containerId: to?.containerId ?? '',
         ...(to?.containerName ? { containerName: to.containerName } : {}),
+      },
+    };
+  }
+  if (cfg.type === 'http-request') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').HttpRequestTypeOptions> | undefined;
+    // Defaults match the form's first-render state. Empty-row arrays
+    // get filtered to drop trailing blanks the user might have left in
+    // the editor (`enabled` is always preserved as-is).
+    const cleanRows = (rows: import('../shared/types').HttpKvRow[] | undefined) =>
+      (rows ?? [])
+        .filter(r => r && (typeof r.key === 'string') && (r.key.trim() || r.value.trim()))
+        .map(r => ({ key: r.key, value: r.value, enabled: r.enabled !== false }));
+    return {
+      ...common,
+      type: 'http-request',
+      typeOptions: {
+        url: to?.url ?? '',
+        method: to?.method ?? 'GET',
+        ...(to?.customMethod ? { customMethod: to.customMethod } : {}),
+        queryParams: cleanRows(to?.queryParams),
+        headers: cleanRows(to?.headers),
+        bodyKind: to?.bodyKind ?? 'none',
+        bodyRaw: to?.bodyRaw ?? '',
+        bodyForm: cleanRows(to?.bodyForm),
+        authKind: to?.authKind ?? 'none',
+        authBasic: {
+          username: to?.authBasic?.username ?? '',
+          password: to?.authBasic?.password ?? '',
+        },
+        authBearer: { token: to?.authBearer?.token ?? '' },
+        authApiKey: {
+          name: to?.authApiKey?.name ?? '',
+          value: to?.authApiKey?.value ?? '',
+          location: to?.authApiKey?.location ?? 'header',
+        },
+        authOAuthClientCredentials: {
+          tokenUrl: to?.authOAuthClientCredentials?.tokenUrl ?? '',
+          clientId: to?.authOAuthClientCredentials?.clientId ?? '',
+          clientSecret: to?.authOAuthClientCredentials?.clientSecret ?? '',
+          scope: to?.authOAuthClientCredentials?.scope ?? '',
+          clientAuth: to?.authOAuthClientCredentials?.clientAuth ?? 'header',
+        },
+        timeoutMs: typeof to?.timeoutMs === 'number' ? to.timeoutMs : 30_000,
+        followRedirects: to?.followRedirects ?? true,
+        verifyTls: to?.verifyTls ?? true,
+        assertScript: to?.assertScript ?? '',
+        responseSink: to?.responseSink ?? 'output',
       },
     };
   }

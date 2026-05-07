@@ -114,6 +114,13 @@ export function buildCommandPreview(cfg: RunConfig, workspaceFolderPath?: string
     // will issue, with no cwd / programArgs suffix.
     const id = cfg.typeOptions.containerId?.trim() || '<container>';
     return `docker start ${id.slice(0, 12)}`;
+  } else if (cfg.type === 'http-request') {
+    // Preview as a curl-equivalent + the would-be URL/body so users can
+    // double-check what the request will look like before sending. We
+    // do NOT resolve ${env:VAR} references (resolution happens at
+    // run time and the form often references secrets we shouldn't echo
+    // here — keeping placeholders is the right default).
+    return renderHttpRequestPreview(cfg.typeOptions);
   } else {
     return `(unsupported type: ${(cfg as RunConfig).type})`;
   }
@@ -194,4 +201,99 @@ function joinPath(a: string, b: string): string {
   if (!b) return a;
   if (b.startsWith('/')) return b;
   return `${a}/${b}`;
+}
+
+// Render an HTTP Request's typeOptions as a multi-line, curl-ish summary
+// for the form's preview pane. Renders the full URL (with enabled query
+// params + apiKey-as-query appended), the resolved method, every
+// enabled header (with Authorization masked when it's auto-built), and
+// the body in its natural representation. Variables like ${env:TOKEN}
+// stay as-is — at form-edit time we don't want to leak secret values
+// even if they're set in the environment.
+function renderHttpRequestPreview(
+  to: import('./types').HttpRequestTypeOptions,
+): string {
+  const lines: string[] = [];
+  const method = to.method === 'CUSTOM' ? (to.customMethod?.trim() || '<METHOD>') : to.method;
+
+  // URL with query-string appended. We avoid `new URL()` so unresolved
+  // ${env:VAR} placeholders (which would fail URL parsing) survive
+  // intact. Manual concat is fine for a preview.
+  const queryParts: string[] = [];
+  for (const row of to.queryParams ?? []) {
+    if (!row.enabled) continue;
+    if (!row.key.trim()) continue;
+    queryParts.push(`${encURI(row.key)}=${encURI(row.value)}`);
+  }
+  if (to.authKind === 'apiKey'
+      && to.authApiKey?.location === 'query'
+      && to.authApiKey.name.trim()) {
+    queryParts.push(`${encURI(to.authApiKey.name)}=${encURI(to.authApiKey.value)}`);
+  }
+  const sep = (to.url ?? '').includes('?') ? '&' : '?';
+  const fullUrl = (to.url || '<url>') + (queryParts.length ? sep + queryParts.join('&') : '');
+
+  lines.push(`${method} ${fullUrl}`);
+
+  // Headers (auto-built + user). Auto-built Content-Type and
+  // Authorization echo for clarity; the secret is masked.
+  const autoHeaders: Array<[string, string]> = [];
+  if (to.bodyKind === 'json') autoHeaders.push(['Content-Type', 'application/json']);
+  else if (to.bodyKind === 'form-urlencoded') autoHeaders.push(['Content-Type', 'application/x-www-form-urlencoded']);
+  else if (to.bodyKind === 'xml') autoHeaders.push(['Content-Type', 'application/xml']);
+  else if (to.bodyKind === 'raw') autoHeaders.push(['Content-Type', 'text/plain']);
+
+  if (to.authKind === 'basic') {
+    autoHeaders.push(['Authorization', `Basic ${maskValue(to.authBasic?.username || '?')}…`]);
+  } else if (to.authKind === 'bearer') {
+    autoHeaders.push(['Authorization', `Bearer ${maskValue(to.authBearer?.token || '')}`]);
+  } else if (to.authKind === 'oauth-client-credentials') {
+    autoHeaders.push(['Authorization', 'Bearer (fetched from token endpoint at run time)']);
+  } else if (to.authKind === 'apiKey' && to.authApiKey?.location === 'header'
+             && to.authApiKey.name.trim()) {
+    autoHeaders.push([to.authApiKey.name, maskValue(to.authApiKey.value)]);
+  }
+
+  for (const [k, v] of autoHeaders) lines.push(`  ${k}: ${v}`);
+  for (const row of to.headers ?? []) {
+    if (!row.enabled) continue;
+    if (!row.key.trim()) continue;
+    lines.push(`  ${row.key}: ${row.value}`);
+  }
+
+  // Body
+  if (to.bodyKind === 'json' || to.bodyKind === 'raw' || to.bodyKind === 'xml') {
+    const body = (to.bodyRaw ?? '').trim();
+    if (body) {
+      lines.push('');
+      lines.push(body);
+    }
+  } else if (to.bodyKind === 'form-urlencoded') {
+    const parts: string[] = [];
+    for (const row of to.bodyForm ?? []) {
+      if (!row.enabled) continue;
+      if (!row.key.trim()) continue;
+      parts.push(`${encURI(row.key)}=${encURI(row.value)}`);
+    }
+    if (parts.length) {
+      lines.push('');
+      lines.push(parts.join('&'));
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// Lightweight encoder that leaves ${...} placeholders alone so the
+// preview stays readable when the user references env vars.
+function encURI(s: string): string {
+  return s.replace(/[^A-Za-z0-9${}._~:/?@!$&'()*+,;=-]/g, c => encodeURIComponent(c));
+}
+
+function maskValue(v: string): string {
+  if (!v) return '••••••••';
+  // If it's an unresolved ${env:VAR} placeholder, keep it visible —
+  // there's no secret to leak yet.
+  if (/^\$\{[^}]+\}$/.test(v.trim())) return v;
+  return '••••••••';
 }

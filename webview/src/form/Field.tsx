@@ -2,6 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import type { FormField } from '../../../src/shared/formSchema';
 import { getPath, setPath } from '../state';
 import { KvEditor } from './KvEditor';
+import { KvListEditor, type KvListRow } from './KvListEditor';
 import { FolderPathInput } from './FolderPathInput';
 import { SelectOrCustom } from './SelectOrCustom';
 import { CsvChecklist } from './CsvChecklist';
@@ -349,6 +350,16 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
           onChange={set}
           onFocus={h.focus}
           onBlur={h.blur}
+        />
+      );
+    case 'kvList':
+      return (
+        <KvListEditor
+          value={(v as KvListRow[]) ?? []}
+          onChange={set}
+          onFocus={h.focus}
+          onBlur={h.blur}
+          placeholder={field.placeholder}
         />
       );
     case 'folderPath': {

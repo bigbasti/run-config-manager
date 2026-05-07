@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import type { AdapterRegistry } from '../adapters/AdapterRegistry';
 import type { RunConfig } from '../shared/types';
-import { log } from '../utils/logger';
+import { log, initLogger } from '../utils/logger';
+import { runHttpRequest } from './HttpRequestRunner';
 import { resolveProjectUri } from '../utils/paths';
 import { gradleModulePrefix } from '../adapters/spring-boot/findBuildRoot';
 import { makeRunContext, resolveConfig } from '../utils/resolveVars';
@@ -58,6 +59,14 @@ export class ExecutionService {
   // as a yellow sync-spin in the tree. Mutually exclusive with started and
   // failed while active.
   private rebuilding = new Set<string>();
+  // Transient flash for http-request configs: after the request finishes
+  // we surface the response class on the tree row for 3 seconds, then
+  // clear back to the brand icon. 'success' = 2xx (green check),
+  // 'warn' = 4xx (yellow warning), 'error' = 5xx or assert/network
+  // failure (red error). Using a 3-state enum (instead of leaning on
+  // started/failed) so the existing long-running config state machine
+  // isn't disturbed.
+  private httpFlash = new Map<string, 'success' | 'warn' | 'error'>();
   private emitter = new vscode.EventEmitter<string>();
   readonly onRunningChanged = this.emitter.event;
   private taskEndSub: vscode.Disposable;
@@ -84,6 +93,13 @@ export class ExecutionService {
 
   isRebuilding(configId: string): boolean {
     return this.rebuilding.has(configId);
+  }
+
+  // Reads the post-run flash state for an http-request config. Tree
+  // provider checks this on every render to pick the right transient
+  // icon. Returns undefined when not flashing.
+  httpFlashOf(configId: string): 'success' | 'warn' | 'error' | undefined {
+    return this.httpFlash.get(configId);
   }
 
   // Reveal the integrated terminal for the given running config. VS Code
@@ -116,6 +132,15 @@ export class ExecutionService {
     const adapter = this.registry.get(cfg.type);
     if (!adapter) {
       vscode.window.showErrorMessage(`No adapter for type: ${cfg.type}`);
+      return undefined;
+    }
+
+    // HTTP Request configs bypass the entire ShellExecution machinery —
+    // the request is performed in-process, results stream to the user's
+    // chosen sink, and the tree row flashes a status icon for 3s
+    // before reverting to the brand icon.
+    if (cfg.type === 'http-request') {
+      await this.runHttpRequest(cfg, folder);
       return undefined;
     }
 
@@ -349,6 +374,60 @@ export class ExecutionService {
       log.error(`Failed to start ${cfg.name}`, e);
       vscode.window.showErrorMessage(`Failed to start "${cfg.name}": ${(e as Error).message}`);
       return undefined;
+    }
+  }
+
+  // Performs an http-request config in-process: HttpRequestRunner does
+  // the actual work; we own the tree-state lifecycle (running spinner →
+  // 3s flash → idle). Note we deliberately do NOT add the config to
+  // `this.running` past the await — http-request isn't a long-lived
+  // process, so the running state is purely transient for the duration
+  // of the request. The 3-second post-flash is its own separate state
+  // visualized through `httpFlash`.
+  private async runHttpRequest(
+    cfg: Extract<RunConfig, { type: 'http-request' }>,
+    folder: vscode.WorkspaceFolder,
+  ): Promise<void> {
+    // Mark "preparing" so the tree shows a spinner while we wait. We
+    // don't push into `this.running` because there's no long-lived
+    // execution to track — the request finishes in milliseconds (or
+    // up to timeoutMs) and we're done.
+    this.preparing.add(cfg.id);
+    this.httpFlash.delete(cfg.id);
+    this.emitter.fire(cfg.id);
+    try {
+      const channel = initLogger();
+      const result = await runHttpRequest(cfg, folder, channel);
+      this.preparing.delete(cfg.id);
+      // Map outcome → flash class.
+      const flash: 'success' | 'warn' | 'error' =
+        result.outcome.kind === 'success' ? 'success'
+        : result.outcome.kind === 'client-error' ? 'warn'
+        : 'error';
+      this.httpFlash.set(cfg.id, flash);
+      this.emitter.fire(cfg.id);
+      // Auto-clear the flash after 3 seconds. Re-running the config
+      // before then immediately overrides the flash via the prep path
+      // above, so users don't see stale state.
+      setTimeout(() => {
+        // Only clear if still set to the same flash we wrote — a
+        // newer run would have replaced it already.
+        if (this.httpFlash.get(cfg.id) === flash) {
+          this.httpFlash.delete(cfg.id);
+          this.emitter.fire(cfg.id);
+        }
+      }, 3000);
+    } catch (e) {
+      this.preparing.delete(cfg.id);
+      this.httpFlash.set(cfg.id, 'error');
+      this.emitter.fire(cfg.id);
+      log.error(`http-request "${cfg.name}"`, e);
+      setTimeout(() => {
+        if (this.httpFlash.get(cfg.id) === 'error') {
+          this.httpFlash.delete(cfg.id);
+          this.emitter.fire(cfg.id);
+        }
+      }, 3000);
     }
   }
 

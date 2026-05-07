@@ -242,6 +242,87 @@ export const TomcatTypeOptionsSchema = z
     }
   });
 
+// HTTP Request — schema mirrors HttpRequestTypeOptions in types.ts.
+// Disable-able rows are kept verbatim so the UI's checkbox state
+// round-trips through save without losing rows the user toggled off.
+const HttpKvRowSchema = z.object({
+  key: z.string(),
+  value: z.string(),
+  enabled: z.boolean(),
+});
+export const HttpMethodSchema = z.enum([
+  'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'CUSTOM',
+]);
+export const HttpBodyKindSchema = z.enum(['none', 'json', 'form-urlencoded', 'raw', 'xml']);
+export const HttpAuthKindSchema = z.enum(['none', 'basic', 'bearer', 'apiKey', 'oauth-client-credentials']);
+export const HttpApiKeyLocationSchema = z.enum(['header', 'query']);
+export const HttpResponseSinkSchema = z.enum(['output', 'panel']);
+
+export const HttpRequestTypeOptionsSchema = z
+  .object({
+    url: z.string(),
+    method: HttpMethodSchema,
+    customMethod: z.string().optional(),
+    queryParams: z.array(HttpKvRowSchema),
+    headers: z.array(HttpKvRowSchema),
+    bodyKind: HttpBodyKindSchema,
+    bodyRaw: z.string(),
+    bodyForm: z.array(HttpKvRowSchema),
+    authKind: HttpAuthKindSchema,
+    authBasic: z.object({ username: z.string(), password: z.string() }),
+    authBearer: z.object({ token: z.string() }),
+    authApiKey: z.object({
+      name: z.string(),
+      value: z.string(),
+      location: HttpApiKeyLocationSchema,
+    }),
+    authOAuthClientCredentials: z.object({
+      tokenUrl: z.string(),
+      clientId: z.string(),
+      clientSecret: z.string(),
+      scope: z.string(),
+      clientAuth: z.enum(['header', 'body']),
+    }),
+    timeoutMs: z.number().int().min(1).max(600_000),
+    followRedirects: z.boolean(),
+    verifyTls: z.boolean(),
+    assertScript: z.string(),
+    responseSink: HttpResponseSinkSchema,
+  })
+  .superRefine((opts, ctx) => {
+    if (!opts.url.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'URL is required',
+        path: ['url'],
+      });
+    }
+    if (opts.method === 'CUSTOM' && !(opts.customMethod ?? '').trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Custom method is required when method = CUSTOM',
+        path: ['customMethod'],
+      });
+    }
+    if (opts.authKind === 'oauth-client-credentials') {
+      const oc = opts.authOAuthClientCredentials;
+      if (!oc.tokenUrl.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Token endpoint URL is required for OAuth client credentials',
+          path: ['authOAuthClientCredentials', 'tokenUrl'],
+        });
+      }
+      if (!oc.clientId.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Client ID is required for OAuth client credentials',
+          path: ['authOAuthClientCredentials', 'clientId'],
+        });
+      }
+    }
+  });
+
 export const DockerTypeOptionsSchema = z
   .object({
     containerId: z.string(),
@@ -302,6 +383,11 @@ export const RunConfigSchema = z.discriminatedUnion('type', [
     ...commonFields,
     type: z.literal('docker'),
     typeOptions: DockerTypeOptionsSchema,
+  }),
+  z.object({
+    ...commonFields,
+    type: z.literal('http-request'),
+    typeOptions: HttpRequestTypeOptionsSchema,
   }),
 ]);
 

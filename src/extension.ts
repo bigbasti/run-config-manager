@@ -14,6 +14,7 @@ import { MavenGoalAdapter } from './adapters/maven-goal/MavenGoalAdapter';
 import { GradleTaskAdapter } from './adapters/gradle-task/GradleTaskAdapter';
 import { CustomCommandAdapter } from './adapters/custom-command/CustomCommandAdapter';
 import { DockerAdapter } from './adapters/docker/DockerAdapter';
+import { HttpRequestAdapter } from './adapters/http-request/HttpRequestAdapter';
 import { DockerService } from './services/DockerService';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { NativeRunnerTreeProvider } from './ui/NativeRunnerTreeProvider';
@@ -58,6 +59,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.register(new GradleTaskAdapter());
   registry.register(new CustomCommandAdapter());
   registry.register(new DockerAdapter(docker));
+  registry.register(new HttpRequestAdapter());
   log.debug(`Registered adapters: ${registry.all().map(a => a.type).join(', ')}`);
 
   const store = new ConfigStore();

@@ -256,6 +256,22 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node> {
       // config without claiming we'll do it for them.
       item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
       item.description = 'Stale — re-create to fix';
+    } else if (this.exec.httpFlashOf(n.config.id)) {
+      // Post-run flash for http-request configs: 3-second window where
+      // we override the brand icon with the response-class indicator.
+      // ExecutionService schedules the cleanup; we just render whatever
+      // it's currently storing.
+      const flash = this.exec.httpFlashOf(n.config.id)!;
+      if (flash === 'success') {
+        item.iconPath = new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green'));
+        item.description = '2xx';
+      } else if (flash === 'warn') {
+        item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+        item.description = '4xx';
+      } else {
+        item.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
+        item.description = 'Failed';
+      }
     } else {
       // Idle — show the brand icon so the user can visually scan npm /
       // Angular / Spring Boot / Gradle / etc. at a glance. Brand icon

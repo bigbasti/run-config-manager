@@ -1,6 +1,17 @@
 // Declarative form description shared between extension and webview.
 
 type BaseFieldMeta = {
+  // Render this field grouped on the same horizontal row as its
+  // sibling in the list:
+  //   'next'     — pair with the next field; this one sits on the left
+  //                at its natural width, the next field expands.
+  //                (Used: Method ←→ URL on HTTP Request.)
+  //   'previous' — pair with the previous field; this one sits on the
+  //                right at its natural width, the previous field
+  //                expands.
+  // When the partner field is hidden via `dependsOn`, the lonely field
+  // falls back to a normal full-width row.
+  inlineWith?: 'next' | 'previous';
   help?: string;
   examples?: string[];
   // Purely cosmetic: shows a red asterisk next to the label and a
@@ -88,6 +99,13 @@ export type FormField =
     } & BaseFieldMeta)
   | ({ kind: 'boolean'; key: string; label: string } & BaseFieldMeta)
   | ({ kind: 'kv'; key: string; label: string } & BaseFieldMeta)
+  // Like `kv`, but the underlying value is an ordered list of
+  // {key, value, enabled} rows instead of a flat Record. Used by the
+  // HTTP Request adapter for headers / query params / form fields,
+  // where the user wants to keep multiple identical-keyed rows around
+  // and toggle them on/off without losing the row. The webview ships
+  // an `KvListEditor` component that renders the per-row checkbox.
+  | ({ kind: 'kvList'; key: string; label: string; placeholder?: string } & BaseFieldMeta)
   | ({
       kind: 'folderPath';
       key: string;
