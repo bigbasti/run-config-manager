@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { RuntimeAdapter, DetectionResult } from '../RuntimeAdapter';
+import type { RuntimeAdapter, DetectionResult, StreamingPatch } from '../RuntimeAdapter';
 import type { RunConfig } from '../../shared/types';
 import type { FormField, FormSchema } from '../../shared/formSchema';
 import { readPackageJsonInfo } from './detectPackageJson';
@@ -7,6 +7,8 @@ import { splitArgs } from './splitArgs';
 import { log } from '../../utils/logger';
 import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 import { detectNpmPort } from '../../services/detectProjectPort';
+import { probeNodesStreaming, readNodes, nodeOption } from './probeNodesStreaming';
+import * as path from 'path';
 
 export class NpmAdapter implements RuntimeAdapter {
   readonly type = 'npm' as const;
@@ -39,11 +41,17 @@ export class NpmAdapter implements RuntimeAdapter {
         typeOptions: {
           scriptName: info.defaultScript,
           packageManager: info.packageManager,
+          nodePath: '',
         },
         ...(port ? { port } : {}),
       },
       context: { scripts: info.scripts },
     };
+  }
+
+  async detectStreaming(folder: vscode.Uri, emit: (p: StreamingPatch) => void): Promise<void> {
+    void folder;
+    await probeNodesStreaming(emit, 'npm');
   }
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
@@ -90,6 +98,27 @@ export class NpmAdapter implements RuntimeAdapter {
       ],
       typeSpecific: [
         scriptField,
+        {
+          kind: 'selectOrCustom',
+          key: 'typeOptions.nodePath',
+          label: 'Node',
+          options: readNodes(context.nodes).map(nodeOption),
+          placeholder: '/path/to/node-home',
+          help:
+            '`node` runtime to use for this configuration.\n\n' +
+            'Auto-detected from `$NODE_HOME` / `$NVM_DIR`, `node` on `PATH`, the extension\'s own ' +
+            'install root, version managers (`nvm`, `volta`, `asdf`, `fnm`, `n`), and standard ' +
+            'install locations. The selected Node\'s `bin` directory is prepended to `PATH` at ' +
+            'launch, so `npm` / `yarn` / `pnpm` and any binary they spawn (Node itself ' +
+            'included) come from this install.\n\n' +
+            'Leave blank to use whatever `node` is on `PATH` when VS Code started.\n\n' +
+            '`nvm` users: when `nvm` is detected on your system, the cloud-icon installer routes ' +
+            'through `nvm install` instead of downloading a standalone tarball, so the install ' +
+            'lands in your existing nvm pool (`~/.nvm/versions/node/`).\n\n' +
+            'Click ☁ to download a fresh Node from `nodejs.org`.',
+          examples: ['/usr/local/lib/node_modules/node-v20', '~/.nvm/versions/node/v20.10.0'],
+          action: { id: 'openNodeDownload', label: '☁', title: 'Download and install a Node from nodejs.org', inline: true },
+        },
         {
           kind: 'select',
           key: 'typeOptions.packageManager',
@@ -152,15 +181,22 @@ export class NpmAdapter implements RuntimeAdapter {
   // Setting FORCE_COLOR=1 (Node standard) + CLICOLOR_FORCE=1 (Unix standard)
   // + COLORTERM=truecolor flips those auto-detect checks back on for the
   // overwhelming majority of CLIs.
-  async prepareLaunch(): Promise<{ env?: Record<string, string> }> {
-    return {
-      env: {
-        FORCE_COLOR: '1',
-        CLICOLOR_FORCE: '1',
-        COLORTERM: 'truecolor',
-        npm_config_color: 'always',
-      },
+  async prepareLaunch(cfg: RunConfig): Promise<{ env?: Record<string, string> }> {
+    const env: Record<string, string> = {
+      FORCE_COLOR: '1',
+      CLICOLOR_FORCE: '1',
+      COLORTERM: 'truecolor',
+      npm_config_color: 'always',
     };
+    if (cfg.type === 'npm' && cfg.typeOptions.nodePath) {
+      // Windows Node ships node.exe at the install root, not in bin/.
+      const binDir = process.platform === 'win32'
+        ? cfg.typeOptions.nodePath
+        : path.join(cfg.typeOptions.nodePath, 'bin');
+      const sep = process.platform === 'win32' ? ';' : ':';
+      env.PATH = `${binDir}${sep}${process.env.PATH ?? ''}`;
+    }
+    return { env };
   }
 
   buildCommand(cfg: RunConfig): { command: string; args: string[] } {

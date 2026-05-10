@@ -288,6 +288,13 @@ export class GroupService {
       // members silently fail to reach running state.
       orchestrator: DependencyOrchestrator;
     },
+    // When true, debuggable configs (java/spring-boot/quarkus/tomcat
+    // — anything DebugService.debug accepts) attach the debugger as
+    // they start. Non-debuggable members (docker, npm, custom, etc.)
+    // start normally — same effect as if the user had clicked Debug
+    // on each one individually, where the action no-ops gracefully
+    // for non-debuggable types.
+    options?: { debug?: boolean },
   ): Promise<void> {
     // Recursive walk: running a parent folder runs everything in its
     // subtree, matching the UX of "Run all" inside an IDE folder.
@@ -296,7 +303,10 @@ export class GroupService {
       log.warn(`Group run: "${groupName}" has no members (incl. subfolders)`);
       return;
     }
-    log.info(`Group run (${mode}): "${groupName}" — ${members.length} member(s) including subfolders`);
+    const debug = options?.debug === true;
+    log.info(
+      `Group run (${mode}${debug ? ', debug' : ''}): "${groupName}" — ${members.length} member(s) including subfolders`,
+    );
 
     if (mode === 'parallel') {
       // Queue-state icon briefly blinks — we set all to 'starting' up
@@ -306,7 +316,7 @@ export class GroupService {
       this.emitter.fire();
       await Promise.all(members.map(async cfg => {
         try {
-          await this.startOne(cfg, folder, deps);
+          await this.startOne(cfg, folder, deps, debug);
         } catch (e) {
           log.error(`Group run (parallel): "${cfg.name}" failed`, e);
           this.runStatus.set(cfg.id, 'failed');
@@ -336,7 +346,7 @@ export class GroupService {
       this.runStatus.set(cfg.id, 'starting');
       this.emitter.fire();
       try {
-        await this.startOne(cfg, folder, deps);
+        await this.startOne(cfg, folder, deps, debug);
         await this.waitUntilRunning(cfg, deps);
         this.runStatus.set(cfg.id, 'running');
         this.emitter.fire();
@@ -360,15 +370,51 @@ export class GroupService {
     }, 1500);
   }
 
+  // Stop every running member of a folder (recursive — sub-folders
+  // included). Each member is stopped via the same path as the
+  // sidebar's individual Stop button: ExecutionService.stop /
+  // DebugService.stop / DockerService.stopContainer. Non-running
+  // members are skipped silently.
+  async stopGroup(
+    folderKey: string,
+    groupName: string,
+    deps: { exec: ExecutionService; dbg: DebugService; docker: DockerService },
+  ): Promise<void> {
+    const members = this.members(folderKey, groupName, { recursive: true });
+    if (members.length === 0) return;
+    log.info(`Group stop: "${groupName}" — ${members.length} member(s) including subfolders`);
+    // Independent stops can race freely.
+    await Promise.all(members.map(async cfg => {
+      try {
+        if (cfg.type === 'docker') {
+          if (deps.docker.isRunning(cfg.typeOptions.containerId)) {
+            await deps.docker.stopContainer(cfg.typeOptions.containerId);
+          }
+          return;
+        }
+        if (deps.dbg.isRunning(cfg.id)) await deps.dbg.stop(cfg.id);
+        if (deps.exec.isRunning(cfg.id)) await deps.exec.stop(cfg.id);
+      } catch (e) {
+        log.error(`Group stop: "${cfg.name}" failed`, e);
+      }
+    }));
+  }
+
   private async startOne(
     cfg: RunConfig,
     folder: vscode.WorkspaceFolder,
     deps: { exec: ExecutionService; dbg: DebugService; docker: DockerService; orchestrator: DependencyOrchestrator },
+    debug: boolean,
   ): Promise<void> {
     // Route through the orchestrator when the member has declared
     // dependencies — mirrors what `runConfig.run` does for individual
     // clicks. This ensures deps are started (and waited on) before the
     // member itself is kicked off, even during a group run.
+    //
+    // Note: dependency chains run in non-debug mode even under a
+    // debug-group invocation. The `debug` flag applies to the member
+    // itself; deps stay in their normal launch mode (matching what
+    // happens for an individual debug click).
     if ((cfg.dependsOn?.length ?? 0) > 0) {
       // Short-circuit: if already running, the orchestrator's
       // startRcmConfig would no-op, but avoid the plan walk too.
@@ -384,6 +430,14 @@ export class GroupService {
       return;
     }
     if (deps.exec.isRunning(cfg.id) || deps.dbg.isRunning(cfg.id)) return;
+    if (debug) {
+      // DebugService.debug returns false for types that don't support
+      // debugging (npm, custom-command, etc.). Falling back to a
+      // normal run keeps the "run all" semantics intact — every
+      // member starts, debuggable ones get the debugger attached.
+      const ok = await deps.dbg.debug(cfg, folder);
+      if (ok) return;
+    }
     await deps.exec.run(cfg, folder);
   }
 

@@ -250,6 +250,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           schema: adapter.getFormSchema({ ...detectionContext, dependencyOptions }),
           docker,
           dependencyOptions,
+          streaming: buildStreamingPayload(adapter, { ...detectionContext, dependencyOptions }),
         }, context, svc);
       } else {
         log.info(`Edit invalid entry: "${arg.entry.name}"`);
@@ -268,6 +269,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           schema: adapter.getFormSchema({ ...detectionContext, dependencyOptions }),
           docker,
           dependencyOptions,
+          streaming: buildStreamingPayload(adapter, { ...detectionContext, dependencyOptions }),
         }, context, svc);
       }
     }),
@@ -394,6 +396,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         initialFieldErrors,
         docker,
         dependencyOptions,
+        streaming: buildStreamingPayload(adapter, { ...(detection?.context ?? {}), dependencyOptions }),
       }, context, svc);
     }),
 
@@ -580,11 +583,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // display). Commands operate on the path.
     vscode.commands.registerCommand('runConfig.runGroupSequential', async (arg: any) => {
       if (!arg || arg.kind !== 'group') return;
-      await runGroup(arg.folderKey, arg.path, 'sequential', groups, store, exec, dbg, docker, orchestrator, svc);
+      await runGroup(arg.folderKey, arg.path, 'sequential', false, groups, store, exec, dbg, docker, orchestrator, svc);
     }),
     vscode.commands.registerCommand('runConfig.runGroupParallel', async (arg: any) => {
       if (!arg || arg.kind !== 'group') return;
-      await runGroup(arg.folderKey, arg.path, 'parallel', groups, store, exec, dbg, docker, orchestrator, svc);
+      await runGroup(arg.folderKey, arg.path, 'parallel', false, groups, store, exec, dbg, docker, orchestrator, svc);
+    }),
+    vscode.commands.registerCommand('runConfig.debugGroupSequential', async (arg: any) => {
+      if (!arg || arg.kind !== 'group') return;
+      await runGroup(arg.folderKey, arg.path, 'sequential', true, groups, store, exec, dbg, docker, orchestrator, svc);
+    }),
+    vscode.commands.registerCommand('runConfig.debugGroupParallel', async (arg: any) => {
+      if (!arg || arg.kind !== 'group') return;
+      await runGroup(arg.folderKey, arg.path, 'parallel', true, groups, store, exec, dbg, docker, orchestrator, svc);
+    }),
+    vscode.commands.registerCommand('runConfig.stopGroup', async (arg: any) => {
+      if (!arg || arg.kind !== 'group') return;
+      const folder = store.getFolder(arg.folderKey);
+      if (!folder) return;
+      await groups.stopGroup(arg.folderKey, arg.path, { exec, dbg, docker });
     }),
     vscode.commands.registerCommand('runConfig.renameGroup', async (arg: any) => {
       if (!arg || arg.kind !== 'group') return;
@@ -817,32 +834,7 @@ async function addConfig(
       seedDefaults: seedDefaults as Partial<RunConfig>,
       schema,
       dependencyOptions,
-      streaming: {
-        adapter,
-        initialContext: { dependencyOptions },
-        // Fields that have their options populated by detection — the webview
-        // shows spinners in these fields until schemaUpdate messages arrive.
-        pending: [
-          // Spring Boot
-          'typeOptions.mainClass',
-          'typeOptions.classpath',
-          'typeOptions.profiles',
-          'typeOptions.gradleCommand',
-          'typeOptions.buildRoot',
-          // Shared Java
-          'typeOptions.jdkPath',
-          'typeOptions.gradlePath',
-          'typeOptions.mavenPath',
-          // Tomcat-specific
-          'typeOptions.tomcatHome',
-          'typeOptions.artifactPath',
-          'typeOptions.artifactKind',
-          // Quarkus-specific
-          'typeOptions.profile',
-          // Docker
-          'typeOptions.containerId',
-        ],
-      },
+      streaming: buildStreamingPayload(adapter, { dependencyOptions }),
       docker,
     }, context, svc);
     return;
@@ -900,6 +892,7 @@ async function runGroup(
   folderKey: string,
   name: string,
   mode: 'sequential' | 'parallel',
+  debug: boolean,
   groups: GroupService,
   store: ConfigStore,
   exec: ExecutionService,
@@ -910,7 +903,7 @@ async function runGroup(
 ): Promise<void> {
   const folder = store.getFolder(folderKey);
   if (!folder) return;
-  await groups.runGroup(folderKey, name, mode, folder, { exec, dbg, docker, orchestrator });
+  await groups.runGroup(folderKey, name, mode, folder, { exec, dbg, docker, orchestrator }, { debug });
 }
 
 async function runBuildActionFor(
@@ -1013,6 +1006,49 @@ async function buildEditContext(
   } catch {
     return {};
   }
+}
+
+// Fields whose options come from streaming detection. The webview shows
+// spinners on these keys until schemaUpdate messages arrive. Used to seed
+// the EditorPanel.streaming.pending list in both create and edit flows so
+// the JDK / Node / Tomcat / etc. dropdowns refresh against the user's
+// current environment when reopening an existing config.
+const STREAMING_PENDING_FIELDS = [
+  // Spring Boot
+  'typeOptions.mainClass',
+  'typeOptions.classpath',
+  'typeOptions.profiles',
+  'typeOptions.gradleCommand',
+  'typeOptions.buildRoot',
+  // Shared Java
+  'typeOptions.jdkPath',
+  'typeOptions.gradlePath',
+  'typeOptions.mavenPath',
+  // Tomcat-specific
+  'typeOptions.tomcatHome',
+  'typeOptions.artifactPath',
+  'typeOptions.artifactKind',
+  // Quarkus-specific
+  'typeOptions.profile',
+  // Docker
+  'typeOptions.containerId',
+  // npm
+  'typeOptions.nodePath',
+];
+
+// Builds the EditorPanel `streaming` payload, used by both the create
+// and edit flows. Only returns a value when the adapter actually
+// supports streaming detection — caller passes the result through.
+function buildStreamingPayload(
+  adapter: import('./adapters/RuntimeAdapter').RuntimeAdapter,
+  initialContext: Record<string, unknown>,
+) {
+  if (!adapter.detectStreaming) return undefined;
+  return {
+    adapter,
+    initialContext,
+    pending: STREAMING_PENDING_FIELDS,
+  };
 }
 
 // Snapshot the "Depends on" candidates at edit-open time: other run configs
@@ -1230,6 +1266,7 @@ function mergeAutoCreateDefaults(
       typeOptions: {
         scriptName: typeOptions.scriptName ?? 'start',
         packageManager: typeOptions.packageManager ?? 'npm',
+        nodePath: typeOptions.nodePath ?? '',
       },
     };
   }

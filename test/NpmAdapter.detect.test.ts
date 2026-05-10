@@ -71,3 +71,35 @@ describe('NpmAdapter.detect', () => {
     expect((result!.defaults.typeOptions as any).scriptName).toBe('');
   });
 });
+
+describe('NpmAdapter form schema — Node field', () => {
+  test('includes typeOptions.nodePath as the second typeSpecific field, with options from context.nodes', () => {
+    const adapter = new NpmAdapter();
+    const schema = adapter.getFormSchema({
+      scripts: ['start', 'build'],
+      nodes: [
+        { path: '/opt/node-20', version: '20.10.0' },
+        { path: '/opt/node-18' },
+      ],
+    });
+    const node = schema.typeSpecific.find(f => f.key === 'typeOptions.nodePath');
+    expect(node).toBeDefined();
+    expect(node!.kind).toBe('selectOrCustom');
+    // First typeSpecific field after Script.
+    expect(schema.typeSpecific[0].key).toBe('typeOptions.scriptName');
+    expect(schema.typeSpecific[1].key).toBe('typeOptions.nodePath');
+    // Options reflect both detected paths.
+    const opts = (node as any).options as Array<{ value: string; label: string }>;
+    expect(opts.map(o => o.value)).toEqual(['/opt/node-20', '/opt/node-18']);
+    expect(opts[0].label).toBe('/opt/node-20 — v20.10.0');
+    expect(opts[1].label).toBe('/opt/node-18');
+  });
+
+  test('renders an empty options list when no nodes detected', () => {
+    const adapter = new NpmAdapter();
+    const schema = adapter.getFormSchema({ scripts: ['start'] });
+    const node = schema.typeSpecific.find(f => f.key === 'typeOptions.nodePath');
+    expect(node).toBeDefined();
+    expect((node as any).options).toEqual([]);
+  });
+});

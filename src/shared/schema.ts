@@ -7,6 +7,9 @@ export const JavaBuildToolSchema = z.enum(['maven', 'gradle']);
 export const NpmTypeOptionsSchema = z.object({
   scriptName: z.string().min(1),
   packageManager: PackageManagerSchema,
+  // Missing in configs predating this field — Zod's default fills in
+  // ''  (which the runtime treats as "use node from PATH").
+  nodePath: z.string().default(''),
 });
 
 export const SpringBootLaunchModeSchema = z.enum(['maven', 'gradle', 'java-main']);

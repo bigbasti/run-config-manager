@@ -171,7 +171,7 @@ describe('checkConfigHealth', () => {
       env: {},
       programArgs: '',
       vmArgs: '',
-      typeOptions: { scriptName: 'start', packageManager: 'npm' },
+      typeOptions: { scriptName: 'start', packageManager: 'npm', nodePath: '' },
     };
     const r = await checkConfigHealth(cfg, folder);
     expect(r.healthy).toBe(true);

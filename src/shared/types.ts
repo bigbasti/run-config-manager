@@ -15,6 +15,13 @@ export type PackageManager = 'npm' | 'yarn' | 'pnpm';
 export interface NpmTypeOptions {
   scriptName: string;
   packageManager: PackageManager;
+  // Absolute path to a Node install directory (the one containing
+  // `bin/node`, or `node.exe` directly on Windows). Empty string means
+  // "use whatever `node` is on PATH when VS Code launched."
+  // The selected install's bin directory is prepended to PATH at run
+  // time so npm / yarn / pnpm and any binary they spawn (Node itself
+  // included) come from this install.
+  nodePath: string;
 }
 
 // Maven by default. Gradle wrapper (./gradlew bootRun) is the other option.

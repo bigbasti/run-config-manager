@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code.",
-  "version": "0.6.3",
+  "version": "0.6.5",
   "publisher": "SebastianGross",
   "license": "MIT",
   "repository": {
@@ -244,6 +244,21 @@
         "icon": "$(run-above)"
       },
       {
+        "command": "runConfig.debugGroupSequential",
+        "title": "Debug All Sequentially",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "runConfig.debugGroupParallel",
+        "title": "Debug All in Parallel",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "runConfig.stopGroup",
+        "title": "Stop All",
+        "icon": "$(debug-stop)"
+      },
+      {
         "command": "runConfig.renameGroup",
         "title": "Rename Group…",
         "icon": "$(edit)"
@@ -467,6 +482,21 @@
           "command": "runConfig.runGroupParallel",
           "when": "view == runConfigurations && viewItem == userGroup",
           "group": "1_run@2"
+        },
+        {
+          "command": "runConfig.debugGroupSequential",
+          "when": "view == runConfigurations && viewItem == userGroup",
+          "group": "1_run@3"
+        },
+        {
+          "command": "runConfig.debugGroupParallel",
+          "when": "view == runConfigurations && viewItem == userGroup",
+          "group": "1_run@4"
+        },
+        {
+          "command": "runConfig.stopGroup",
+          "when": "view == runConfigurations && viewItem == userGroup",
+          "group": "1_run@5"
         },
         {
           "command": "runConfig.renameGroup",

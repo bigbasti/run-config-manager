@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { execFile, spawn } from 'child_process';
 import { log } from '../../utils/logger';
+import { userInstallRoot } from '../../services/archiveInstall';
 
 // Detected JDK installation: an absolute directory containing `bin/java`.
 // `version` is filled in by a separate probe (release file → java -version)
@@ -78,6 +79,13 @@ export async function detectJdks(): Promise<string[]> {
 
   // 6. Version-manager directories.
   for (const p of await scanVersionManagerDirs()) found.push(p);
+
+  // 6b. Extension's own install root — anything we put in
+  //     ~/.rcm/jdks/ via JdkInstallerService appears automatically.
+  for (const candidate of await listChildDirs(userInstallRoot('jdks'))) {
+    found.push(candidate);
+    found.push(path.join(candidate, 'Contents', 'Home'));
+  }
 
   // 7. Fixed filesystem probes.
   for (const p of await scanFixedRoots()) found.push(p);

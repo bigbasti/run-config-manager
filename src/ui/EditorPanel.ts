@@ -22,6 +22,9 @@ import { JdkInstallerService, type JdkPackage, CancelledError, ChecksumUnavailab
 import { TomcatInstallerService, type TomcatPackage } from '../services/TomcatInstallerService';
 import { MavenInstallerService, type MavenPackage } from '../services/MavenInstallerService';
 import { GradleInstallerService, type GradleVersion as GradleVersionPkg } from '../services/GradleInstallerService';
+import { NodeInstallerService, type NodeVersion as NodeVersionPkg } from '../services/NodeInstallerService';
+import { NvmInstallerService } from '../services/NvmInstallerService';
+import { detectNvm, type NvmInstall } from '../adapters/npm/detectNvm';
 import { probeJdkVersion } from '../adapters/spring-boot/detectJdks';
 
 interface OpenArgs {
@@ -80,6 +83,16 @@ export class EditorPanel {
   private readonly mavenPackages = new Map<number, MavenPackage[]>();
   private readonly gradleInstaller = new GradleInstallerService();
   private gradleVersions: GradleVersionPkg[] | undefined;
+  private readonly nodeInstaller = new NodeInstallerService();
+  private nodeVersions: NodeVersionPkg[] | undefined;
+  // Result of detectNvm() captured during the most recent
+  // listNodeDownloads. downloadNode reads this to decide whether to
+  // route through nvm or the standalone tarball installer.
+  private nvmInstall: NvmInstall | undefined;
+  // Held for cancel(): set to NvmInstallerService when an nvm install
+  // is in flight, undefined otherwise. Standalone downloads cancel via
+  // the persistent NodeInstallerService.cancel(), unchanged.
+  private activeNvmInstaller: NvmInstallerService | undefined;
   // Cumulative detection context for the currently-open form. Starts from
   // args.streaming?.initialContext, grows as streaming patches arrive, and
   // is mutated by action handlers (loadTasks / loadGoals) so subsequent
@@ -164,7 +177,7 @@ export class EditorPanel {
     const isStreaming = Boolean(this.args.streaming);
     let typeDefaults: Record<string, unknown>;
     if (type === 'npm') {
-      typeDefaults = { scriptName: '', packageManager: 'npm' };
+      typeDefaults = { scriptName: '', packageManager: 'npm', nodePath: '' };
     } else if (type === 'tomcat') {
       // Seed only the non-detected fields. tomcatHome / jdkPath / artifactPath
       // all come from streaming detection and pre-filling them would poison
@@ -255,7 +268,13 @@ export class EditorPanel {
     }
 
     // If streaming detection is enabled, kick it off now (non-blocking).
-    if (this.args.streaming && this.args.mode === 'create') {
+    // Runs in both create and edit modes — JDK / Node / Tomcat install
+    // lists reflect the user's *current* environment, not project state,
+    // so an edit-mode form needs the same up-to-date dropdowns. The
+    // webview merges defaultsPatch via mergeBlanks (configPatch handler),
+    // so a saved jdkPath/nodePath/etc. stays put even when detection
+    // emits its first-found path as the default.
+    if (this.args.streaming) {
       this.runStreamingDetection().catch(e => log.error('streaming detection', e));
     }
   }
@@ -1058,6 +1077,121 @@ export class EditorPanel {
         this.gradleInstaller.cancel();
         return;
       }
+      case 'listNodeDownloads': {
+        log.debug('listNodeDownloads');
+        try {
+          const versions = await this.nodeInstaller.listVersions();
+          this.nodeVersions = versions;
+          this.nvmInstall = await detectNvm();
+          const installerKind: 'nvm' | 'download' = this.nvmInstall.available ? 'nvm' : 'download';
+          // When nvm is available, show the user where nvm will land
+          // the install (NVM_DIR). When falling back to standalone, show
+          // the extension's install root.
+          const installRoot = this.nvmInstall.available
+            ? this.nvmInstall.nvmDir!
+            : this.nodeInstaller.getInstallRoot();
+          log.info(`listNodeDownloads: installerKind=${installerKind}, installRoot=${installRoot}`);
+          this.panel.webview.postMessage({
+            cmd: 'nodeDownloadList',
+            versions: versions.map(toNodeDto),
+            installRoot,
+            installerKind,
+          } satisfies Inbound);
+        } catch (e) {
+          log.warn(`listNodeDownloads failed: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'nodeDownloadError',
+            message: `Could not load Node versions: ${(e as Error).message}`,
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'downloadNode': {
+        log.info(`downloadNode: ${msg.version}`);
+        const v = (this.nodeVersions ?? []).find(x => x.version === msg.version);
+        if (!v) {
+          this.panel.webview.postMessage({
+            cmd: 'nodeDownloadError',
+            message: 'Node version not found — please refresh the dialog.',
+          } satisfies Inbound);
+          return;
+        }
+        try {
+          // Route to the right installer based on the cached detect.
+          let result: { nodeHome: string; version: string };
+          if (this.nvmInstall?.available) {
+            const svc = new NvmInstallerService(
+              this.nvmInstall.nvmDir!,
+              this.nvmInstall.nvmShPath!,
+            );
+            this.activeNvmInstaller = svc;
+            try {
+              result = await svc.install(v.version, p => {
+                this.panel.webview.postMessage({
+                  cmd: 'nodeDownloadProgress',
+                  state: 'installing',
+                  fraction: null,
+                  detail: p.detail,
+                } satisfies Inbound);
+              });
+            } finally {
+              this.activeNvmInstaller = undefined;
+            }
+          } else {
+            result = await this.nodeInstaller.install(v, p => {
+              this.panel.webview.postMessage({
+                cmd: 'nodeDownloadProgress',
+                state: p.state,
+                fraction: p.fraction,
+                ...(p.detail ? { detail: p.detail } : {}),
+              } satisfies Inbound);
+            });
+          }
+
+          // Push the new install into context so the dropdown picks
+          // it up without a re-detect. Same shape regardless of installer.
+          const existing = (this.context.nodes as Array<{ path: string; version?: string }> | undefined) ?? [];
+          if (!existing.some(n => n.path === result.nodeHome)) {
+            this.context.nodes = [
+              ...existing,
+              { path: result.nodeHome, version: result.version.replace(/^v/, '') },
+            ];
+            if (this.args.adapter) {
+              const schema = this.args.adapter.getFormSchema(this.context);
+              this.panel.webview.postMessage({ cmd: 'schemaUpdate', schema } satisfies Inbound);
+            }
+          }
+          this.panel.webview.postMessage({
+            cmd: 'nodeDownloadComplete',
+            nodeHome: result.nodeHome,
+            version: result.version,
+          } satisfies Inbound);
+          this.panel.webview.postMessage({
+            cmd: 'configPatch',
+            patch: { typeOptions: { nodePath: result.nodeHome } } as any,
+            force: true,
+          } satisfies Inbound);
+        } catch (e) {
+          const cancelled = e instanceof CancelledError;
+          log.warn(`downloadNode: ${cancelled ? 'cancelled' : 'failed'}: ${(e as Error).message}`);
+          this.panel.webview.postMessage({
+            cmd: 'nodeDownloadError',
+            message: cancelled ? 'Download cancelled.' : (e as Error).message,
+            ...(cancelled ? { cancelled: true } : {}),
+          } satisfies Inbound);
+        }
+        return;
+      }
+      case 'cancelNodeDownload': {
+        log.debug('cancelNodeDownload');
+        // Cancel whichever installer is currently running.
+        if (this.activeNvmInstaller) {
+          this.activeNvmInstaller.cancel();
+        } else {
+          this.nodeInstaller.cancel();
+        }
+        return;
+      }
       case 'refreshContainers': {
         if (!this.args.docker) return;
         log.debug('Docker refresh containers');
@@ -1289,6 +1423,16 @@ function toGradleDto(v: GradleVersionPkg) {
   };
 }
 
+function toNodeDto(v: NodeVersionPkg) {
+  return {
+    version: v.version,
+    filename: v.filename,
+    isLts: v.isLts,
+    currentLts: v.currentLts,
+    current: v.current,
+  };
+}
+
 function makeNonce(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let out = '';
@@ -1497,6 +1641,7 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
       typeOptions: {
         scriptName: to?.scriptName ?? '',
         packageManager: to?.packageManager ?? 'npm',
+        nodePath: to?.nodePath ?? '',
       },
     };
   }

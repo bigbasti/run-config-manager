@@ -84,6 +84,9 @@ export type Outbound =
   | { cmd: 'listGradleDownloads' }
   | { cmd: 'downloadGradle'; version: string }
   | { cmd: 'cancelGradleDownload' }
+  | { cmd: 'listNodeDownloads' }
+  | { cmd: 'downloadNode'; version: string }
+  | { cmd: 'cancelNodeDownload' }
   // Run an http-request config without saving it first — sent by the
   // form's "Execute" button. The extension performs the request with
   // the current (possibly invalid) form values; output goes to the
@@ -261,6 +264,29 @@ export type Inbound =
     }
   | { cmd: 'gradleDownloadComplete'; gradleHome: string; version: string }
   | { cmd: 'gradleDownloadError'; message: string; cancelled?: boolean }
+  | {
+      cmd: 'nodeDownloadList';
+      versions: NodeVersionDto[];
+      // For 'nvm', the path the dialog displays is NVM_DIR; for 'download',
+      // it's userInstallRoot('nodes'). Both are absolute paths.
+      installRoot: string;
+      // Tells the dialog which installer is in flight. Set per-call by
+      // EditorPanel after running detectNvm() at list-fetch time.
+      // Optional during the staged rollout — `undefined` means
+      // standalone download (legacy behavior).
+      installerKind?: 'nvm' | 'download';
+    }
+  | {
+      cmd: 'nodeDownloadProgress';
+      // 'installing' is used by the nvm path (single-phase, with a
+      // live-output detail string). The other three are emitted by
+      // the standalone-download path.
+      state: 'downloading' | 'verifying' | 'extracting' | 'installing';
+      fraction: number | null;
+      detail?: string;
+    }
+  | { cmd: 'nodeDownloadComplete'; nodeHome: string; version: string }
+  | { cmd: 'nodeDownloadError'; message: string; cancelled?: boolean }
   | { cmd: 'envFilePicked'; path: string }
   // Reply to `loadEnvFiles`. Per-file status with variables so the UI can
   // render orange "missing" rows and feed the eye-icon dialog.
@@ -303,6 +329,18 @@ export interface GradleVersionDto {
   installDirName: string;
   // True when this is the most recent GA release (the "current" flag
   // from services.gradle.org). The dialog can highlight it.
+  current: boolean;
+}
+
+// DTO for a Node release. Mirrors NodeVersion (NodeInstallerService) minus
+// the URLs the webview never needs to know about.
+export interface NodeVersionDto {
+  version: string;
+  filename: string;
+  isLts: boolean;
+  // True for the latest LTS line in the listing. Dialog highlights it.
+  currentLts: boolean;
+  // True for the most recent GA across the whole listing.
   current: boolean;
 }
 

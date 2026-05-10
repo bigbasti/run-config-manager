@@ -10,7 +10,7 @@ const base: RunConfig = {
   env: {},
   programArgs: '',
   vmArgs: '',
-  typeOptions: { scriptName: 'start', packageManager: 'npm' },
+  typeOptions: { scriptName: 'start', packageManager: 'npm', nodePath: '' },
 };
 
 describe('buildCommandPreview', () => {

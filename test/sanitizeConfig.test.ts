@@ -30,6 +30,7 @@ describe('sanitizeConfig', () => {
     expect(out.type).toBe('npm');
     expect((out.typeOptions as any).scriptName).toBe('');
     expect((out.typeOptions as any).packageManager).toBe('npm');
+    expect((out.typeOptions as any).nodePath).toBe('');
     expect(RunConfigSchema.safeParse({ ...out, typeOptions: { ...out.typeOptions, scriptName: 'start' } }).success).toBe(true);
   });
 

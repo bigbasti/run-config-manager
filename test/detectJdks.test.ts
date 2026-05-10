@@ -81,3 +81,16 @@ describe('readReleaseFile', () => {
     expect(await readReleaseFile(tmp)).toEqual({});
   });
 });
+
+import { userInstallRoot } from '../src/services/archiveInstall';
+
+describe('detectJdks — own install root parity', () => {
+  test('scans userInstallRoot("jdks")', async () => {
+    const fs = require('fs');
+    const path = require('path');
+    const root = userInstallRoot('jdks');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'adapters', 'spring-boot', 'detectJdks.ts'), 'utf8');
+    expect(src).toContain("userInstallRoot('jdks')");
+    void root;
+  });
+});

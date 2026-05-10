@@ -14,7 +14,7 @@ const minimal = {
   env: {},
   programArgs: '',
   vmArgs: '',
-  typeOptions: { scriptName: 'start', packageManager: 'npm' as const },
+  typeOptions: { scriptName: 'start', packageManager: 'npm' as const, nodePath: '' },
 };
 
 describe('RunConfigService', () => {

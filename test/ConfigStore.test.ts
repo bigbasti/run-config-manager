@@ -16,7 +16,7 @@ const runJsonContents = (name: string) => JSON.stringify({
     env: {},
     programArgs: '',
     vmArgs: '',
-    typeOptions: { scriptName: 'start', packageManager: 'npm' },
+    typeOptions: { scriptName: 'start', packageManager: 'npm', nodePath: '' },
   }],
 });
 
@@ -51,7 +51,7 @@ describe('ConfigStore', () => {
         env: {},
         programArgs: '',
         vmArgs: '',
-        typeOptions: { scriptName: 'start', packageManager: 'npm' },
+        typeOptions: { scriptName: 'start', packageManager: 'npm', nodePath: '' },
       }],
     });
     __writeFs('/ws/legacy/.vscode/run.json', legacy);
@@ -100,7 +100,7 @@ describe('ConfigStore', () => {
         env: {},
         programArgs: '',
         vmArgs: '',
-        typeOptions: { scriptName: 'start', packageManager: 'npm' },
+        typeOptions: { scriptName: 'start', packageManager: 'npm', nodePath: '' },
       }],
     });
     // Reload from disk and verify content.

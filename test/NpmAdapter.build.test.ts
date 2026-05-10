@@ -13,7 +13,7 @@ function cfg(overrides: Partial<RunConfig> = {}): RunConfig {
     env: {} as Record<string, string>,
     programArgs: '',
     vmArgs: '',
-    typeOptions: { scriptName: 'start', packageManager: 'npm' as const },
+    typeOptions: { scriptName: 'start', packageManager: 'npm' as const, nodePath: '' },
   };
   return { ...base, ...overrides } as RunConfig;
 }
@@ -32,7 +32,7 @@ describe('NpmAdapter.buildCommand', () => {
 
   test('uses yarn executable when packageManager is yarn', () => {
     const r = adapter.buildCommand(cfg({
-      typeOptions: { scriptName: 'dev', packageManager: 'yarn' },
+      typeOptions: { scriptName: 'dev', packageManager: 'yarn', nodePath: '' },
     }));
     expect(r.command).toBe('yarn');
     expect(r.args).toEqual(['run', 'dev']);
@@ -40,7 +40,7 @@ describe('NpmAdapter.buildCommand', () => {
 
   test('uses pnpm executable when packageManager is pnpm', () => {
     const r = adapter.buildCommand(cfg({
-      typeOptions: { scriptName: 'dev', packageManager: 'pnpm' },
+      typeOptions: { scriptName: 'dev', packageManager: 'pnpm', nodePath: '' },
     }));
     expect(r.command).toBe('pnpm');
     expect(r.args).toEqual(['run', 'dev']);
@@ -93,11 +93,55 @@ describe('NpmAdapter.getFormSchema', () => {
   });
 });
 
+describe('NpmAdapter.prepareLaunch — PATH prepend', () => {
+  const adapter = new NpmAdapter();
+  const baseCfg: any = {
+    type: 'npm',
+    typeOptions: { scriptName: 'start', packageManager: 'npm', nodePath: '' },
+    env: {}, programArgs: '', vmArgs: '', name: 'x', id: 'i', projectPath: '', workspaceFolder: '',
+  };
+
+  test('does not touch PATH when nodePath is blank', async () => {
+    const out = await adapter.prepareLaunch(baseCfg);
+    expect(out.env?.PATH).toBeUndefined();
+  });
+
+  test('prepends nodePath/bin on POSIX', async () => {
+    const origPlatform = process.platform;
+    const origPath = process.env.PATH;
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    process.env.PATH = '/usr/bin:/bin';
+    try {
+      const cfg = { ...baseCfg, typeOptions: { ...baseCfg.typeOptions, nodePath: '/opt/node-20' } };
+      const out = await adapter.prepareLaunch(cfg);
+      expect(out.env?.PATH).toBe('/opt/node-20/bin:/usr/bin:/bin');
+    } finally {
+      Object.defineProperty(process, 'platform', { value: origPlatform });
+      process.env.PATH = origPath;
+    }
+  });
+
+  test('prepends nodePath itself on Windows (node.exe lives at root)', async () => {
+    const origPlatform = process.platform;
+    const origPath = process.env.PATH;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    process.env.PATH = 'C:\\Windows';
+    try {
+      const cfg = { ...baseCfg, typeOptions: { ...baseCfg.typeOptions, nodePath: 'C:\\nodejs' } };
+      const out = await adapter.prepareLaunch(cfg);
+      expect(out.env?.PATH).toBe('C:\\nodejs;C:\\Windows');
+    } finally {
+      Object.defineProperty(process, 'platform', { value: origPlatform });
+      process.env.PATH = origPath;
+    }
+  });
+});
+
 describe('NpmAdapter.getDebugConfig', () => {
   const folder = { uri: { fsPath: '/ws/app' } as any, name: 'app', index: 0 };
 
   test('produces pwa-node launch config with runtimeExecutable matching package manager', () => {
-    const r = adapter.getDebugConfig(cfg({ typeOptions: { scriptName: 'dev', packageManager: 'pnpm' } }), folder as any);
+    const r = adapter.getDebugConfig(cfg({ typeOptions: { scriptName: 'dev', packageManager: 'pnpm', nodePath: '' } }), folder as any);
     expect(r.type).toBe('pwa-node');
     expect(r.request).toBe('launch');
     expect(r.runtimeExecutable).toBe('pnpm');

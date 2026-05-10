@@ -36,7 +36,7 @@ function npmCfg(scriptName: string, projectPath = ''): RunConfig {
     env: {},
     programArgs: '',
     vmArgs: '',
-    typeOptions: { scriptName, packageManager: 'npm' },
+    typeOptions: { scriptName, packageManager: 'npm', nodePath: '' },
   };
 }
 

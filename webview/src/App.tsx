@@ -10,9 +10,10 @@ import { JdkDownloadDialog } from './JdkDownloadDialog';
 import { TomcatDownloadDialog } from './TomcatDownloadDialog';
 import { MavenDownloadDialog } from './MavenDownloadDialog';
 import { GradleDownloadDialog } from './GradleDownloadDialog';
+import { NodeDownloadDialog } from './NodeDownloadDialog';
 import { LoadingDialog } from './LoadingDialog';
 import type { EnvFileStatus } from './form/EnvFileList';
-import type { TomcatVersionDto, MavenVersionDto, GradleVersionDto } from '../../src/shared/protocol';
+import type { TomcatVersionDto, MavenVersionDto, GradleVersionDto, NodeVersionDto } from '../../src/shared/protocol';
 import type { JdkPackageDto } from '../../src/shared/protocol';
 
 declare function acquireVsCodeApi(): { postMessage(msg: Outbound): void; getState<T>(): T; setState<T>(s: T): void };
@@ -111,6 +112,11 @@ export function App() {
     versions: GradleVersionDto[];
     installRoot: string;
   } | null>(null);
+  const [nodeDialog, setNodeDialog] = useState<{
+    versions: NodeVersionDto[];
+    installRoot: string;
+    installerKind: 'nvm' | 'download';
+  } | null>(null);
   // "Pending" flag set the instant the user clicks a cloud button.
   // Renders an immediate loading dialog so the UI doesn't appear frozen
   // while the extension fetches the version list (foojay / Apache /
@@ -118,7 +124,7 @@ export function App() {
   // DNS). Cleared when the actual list reply arrives, OR by an error
   // reply, OR by the user clicking Cancel on the loading shell.
   const [loadingDialog, setLoadingDialog] = useState<
-    null | 'jdk' | 'tomcat' | 'maven' | 'gradle'
+    null | 'jdk' | 'tomcat' | 'maven' | 'gradle' | 'node'
   >(null);
   // Mirror of loadingDialog readable from the empty-deps message handler
   // below (which captures stale state otherwise). Updated in lockstep.
@@ -311,6 +317,13 @@ export function App() {
           versions: msg.versions,
           installRoot: msg.installRoot,
         });
+      } else if (msg.cmd === 'nodeDownloadList') {
+        setLoadingDialog(prev => (prev === 'node' ? null : prev));
+        setNodeDialog({
+          versions: msg.versions,
+          installRoot: msg.installRoot,
+          installerKind: msg.installerKind ?? 'download',
+        });
       } else if (
         msg.cmd === 'jdkPackageList'
         || msg.cmd === 'jdkDownloadProgress'
@@ -328,6 +341,9 @@ export function App() {
         || msg.cmd === 'gradleDownloadProgress'
         || msg.cmd === 'gradleDownloadComplete'
         || msg.cmd === 'gradleDownloadError'
+        || msg.cmd === 'nodeDownloadProgress'
+        || msg.cmd === 'nodeDownloadComplete'
+        || msg.cmd === 'nodeDownloadError'
       ) {
         // If the loading shell is still up (i.e. the listing fetch failed
         // before the real dialog mounted), the *DownloadError reply has
@@ -345,6 +361,9 @@ export function App() {
           setLoadingDialog(null);
           setError(msg.message);
         } else if (msg.cmd === 'gradleDownloadError' && cur === 'gradle') {
+          setLoadingDialog(null);
+          setError(msg.message);
+        } else if (msg.cmd === 'nodeDownloadError' && cur === 'node') {
           setLoadingDialog(null);
           setError(msg.message);
         }
@@ -511,6 +530,11 @@ export function App() {
       post({ cmd: 'listGradleDownloads' });
       return;
     }
+    if (actionId === 'openNodeDownload') {
+      setLoadingDialog('node');
+      post({ cmd: 'listNodeDownloads' });
+      return;
+    }
   };
 
   const runTestVariables = () => {
@@ -673,6 +697,13 @@ export function App() {
           onClose={() => setLoadingDialog(null)}
         />
       )}
+      {loadingDialog === 'node' && !nodeDialog && (
+        <LoadingDialog
+          title="Download Node.js"
+          detail="Fetching versions from nodejs.org…"
+          onClose={() => setLoadingDialog(null)}
+        />
+      )}
       {jdkDialog && (
         <JdkDownloadDialog
           distros={jdkDialog.distros}
@@ -722,6 +753,19 @@ export function App() {
             return () => { dialogSubscribersRef.current.delete(handler); };
           }}
           onClose={() => setGradleDialog(null)}
+        />
+      )}
+      {nodeDialog && (
+        <NodeDownloadDialog
+          versions={nodeDialog.versions}
+          installRoot={nodeDialog.installRoot}
+          installerKind={nodeDialog.installerKind}
+          post={post}
+          onMessage={handler => {
+            dialogSubscribersRef.current.add(handler);
+            return () => { dialogSubscribersRef.current.delete(handler); };
+          }}
+          onClose={() => setNodeDialog(null)}
         />
       )}
     </>

@@ -13,7 +13,7 @@ const cfg: RunConfig = {
   env: {},
   programArgs: '',
   vmArgs: '',
-  typeOptions: { scriptName: 'start', packageManager: 'npm' },
+  typeOptions: { scriptName: 'start', packageManager: 'npm', nodePath: '' },
 };
 
 const folder = { uri: Uri.file('/ws/a'), name: 'a', index: 0 };
