@@ -484,10 +484,11 @@ export function App() {
       return;
     }
     const projectPath = (values.projectPath as string | undefined) ?? '';
-    const to = (values.typeOptions as { mavenPath?: string; gradlePath?: string } | undefined) ?? {};
+    const to = (values.typeOptions as { mavenPath?: string; gradlePath?: string; pythonPath?: string } | undefined) ?? {};
     const mavenPath = buildTool === 'maven' ? (to.mavenPath ?? '') : '';
     const gradlePath = buildTool === 'gradle' ? (to.gradlePath ?? '') : '';
-    const key = `${buildTool}::${projectPath}::${mavenPath}::${gradlePath}`;
+    const pythonPath = buildTool === 'pip' ? (to.pythonPath ?? '') : '';
+    const key = `${buildTool}::${projectPath}::${mavenPath}::${gradlePath}::${pythonPath}`;
     if (lastSettingsKeyRef.current === key) return;
     lastSettingsKeyRef.current = key;
     setSettingsLoading(true);
@@ -497,6 +498,7 @@ export function App() {
       projectPath,
       ...(mavenPath ? { mavenPath } : {}),
       ...(gradlePath ? { gradlePath } : {}),
+      ...(pythonPath ? { pythonPath } : {}),
     });
   }, [values, settings]);
 
@@ -564,6 +566,32 @@ export function App() {
     if (actionId === 'openNodeDownload') {
       setLoadingDialog('node');
       post({ cmd: 'listNodeDownloads' });
+      return;
+    }
+    if (actionId === 'createVenv') {
+      // Python: create a .venv under the project path using the
+      // currently-selected interpreter. Extension responds by spawning
+      // the venv-create in a fresh terminal, then re-runs detection so
+      // the new venv shows up in the dropdown.
+      const to = (values.typeOptions as { pythonPath?: string } | undefined) ?? {};
+      const projectPath = (values.projectPath as string | undefined) ?? '';
+      post({
+        cmd: 'createVenv',
+        pythonPath: to.pythonPath ?? '',
+        projectPath,
+      });
+      return;
+    }
+    if (actionId.startsWith('pipInstall:')) {
+      // Field action format: 'pipInstall:<package-name>'. Extracts the
+      // package and runs pip install in a fresh terminal.
+      const pkg = actionId.slice('pipInstall:'.length);
+      const to = (values.typeOptions as { pythonPath?: string } | undefined) ?? {};
+      post({
+        cmd: 'pipInstall',
+        pythonPath: to.pythonPath ?? '',
+        package: pkg,
+      });
       return;
     }
   };

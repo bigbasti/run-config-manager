@@ -50,7 +50,32 @@ export class NpmAdapter implements RuntimeAdapter {
   }
 
   async detectStreaming(folder: vscode.Uri, emit: (p: StreamingPatch) => void): Promise<void> {
-    void folder;
+    // Phase 1: synchronous-feeling — read package.json scripts immediately
+    // so the Script dropdown is populated on first paint. Without this,
+    // the create flow opens an empty Script select because the streaming
+    // path bypasses adapter.detect() (which is what populates scripts on
+    // the legacy non-streaming path). Detected scripts AND the chosen
+    // package manager flow into the form via contextPatch + defaultsPatch.
+    try {
+      const info = await readPackageJsonInfo(folder);
+      if (info) {
+        const port = await safeNpmPort(folder, info.defaultScript);
+        emit({
+          contextPatch: { scripts: info.scripts },
+          defaultsPatch: {
+            typeOptions: {
+              scriptName: info.defaultScript,
+              packageManager: info.packageManager,
+            },
+            ...(port !== undefined ? { port } : {}),
+          } as any,
+        });
+      }
+    } catch (e) {
+      log.debug(`npm detectStreaming: package.json probe failed: ${(e as Error).message}`);
+    }
+
+    // Phase 2: Node interpreter probe (paths first, versions enriched).
     await probeNodesStreaming(emit, 'npm');
   }
 
@@ -228,5 +253,18 @@ export class NpmAdapter implements RuntimeAdapter {
       console: 'integratedTerminal',
       skipFiles: ['<node_internals>/**'],
     };
+  }
+}
+
+// Wrapper around detectNpmPort that swallows errors and returns
+// `undefined` so the streaming detect path stays best-effort. Mirrors
+// the try/catch the legacy `detect()` path uses.
+async function safeNpmPort(folder: vscode.Uri, defaultScript: string): Promise<number | undefined> {
+  try {
+    const detected = await detectNpmPort(folder, defaultScript);
+    return detected ?? undefined;
+  } catch (e) {
+    log.debug(`safeNpmPort: ${(e as Error).message}`);
+    return undefined;
   }
 }

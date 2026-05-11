@@ -1,5 +1,23 @@
 import type { RunConfig } from './types';
 
+// Mirrors FRAMEWORK_M_TARGET in src/adapters/python/buildPythonCommand.ts.
+// Duplicated rather than imported because this preview file is shared
+// with the webview, whose tsconfig doesn't have node typings; the build
+// helper imports `path` and `process`, neither of which is available
+// in the webview build. The map is small and stable — keep both copies
+// in sync when adding new frameworks.
+const PYTHON_FRAMEWORK_M_TARGET: Record<string, string | null> = {
+  django: 'django',
+  flask: 'flask',
+  uvicorn: 'uvicorn',
+  gunicorn: 'gunicorn',
+  celery: 'celery',
+  fastapi: 'uvicorn',
+  starlette: 'uvicorn',
+  typer: null,
+  click: null,
+};
+
 // Renders what we'll actually execute at run time, so the user isn't surprised
 // when they hit Run. Mirrors ExecutionService.buildCwd + the adapter
 // buildCommand paths — when those change, this must too.
@@ -135,9 +153,31 @@ export function buildCommandPreview(cfg: RunConfig, workspaceFolderPath?: string
       const mod = to.moduleName?.trim() || '<module>';
       base = `${py}${interp} -m ${mod}${pa}`;
     } else if (to.launchMode === 'framework') {
-      const fw = to.framework || '<framework>';
       const cmd = to.frameworkCommand?.trim() || '';
-      base = `${py}${interp} -m ${fw}${cmd ? ` ${cmd}` : ''}${pa}`;
+      // Mirror buildPythonCommand's framework-routing rules so the preview
+      // matches what actually executes — fastapi → uvicorn, typer/click
+      // pass through with no `-m`, etc.
+      // Script-style framework commands (`manage.py runserver`, etc.)
+      // run directly — no `-m`. This is how Django configs work, since
+      // `manage.py` loads DJANGO_SETTINGS_MODULE the way `-m django` does not.
+      const firstToken = cmd.split(/\s+/)[0] ?? '';
+      if (firstToken.endsWith('.py')) {
+        base = `${py}${interp} ${cmd}${pa}`;
+      } else if (!to.framework) {
+        base = `${py}${interp} -m <framework>${cmd ? ` ${cmd}` : ''}${pa}`;
+      } else {
+        const target = PYTHON_FRAMEWORK_M_TARGET[to.framework];
+        if (target === null) {
+          // typer / click — verbatim user command after the interpreter.
+          base = `${py}${interp}${cmd ? ` ${cmd}` : ''}${pa}`;
+        } else if (target === undefined) {
+          // Unknown framework — fall back to the framework name itself.
+          // (Keep this in sync with the same branch in buildPythonCommand.)
+          base = `${py}${interp} -m ${to.framework}${cmd ? ` ${cmd}` : ''}${pa}`;
+        } else {
+          base = `${py}${interp} -m ${target}${cmd ? ` ${cmd}` : ''}${pa}`;
+        }
+      }
     } else if (to.launchMode === 'pytest') {
       const args = to.pytestArgs?.trim() || '<args>';
       base = `${py}${interp} -m pytest ${args}`;

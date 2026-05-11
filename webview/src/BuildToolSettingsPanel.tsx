@@ -12,7 +12,7 @@ import type { Inbound } from '../../src/shared/protocol';
 type Settings = Extract<Inbound, { cmd: 'buildToolSettings' }>;
 
 interface Props {
-  buildTool: 'maven' | 'gradle' | 'npm';
+  buildTool: 'maven' | 'gradle' | 'npm' | 'pip';
   // The most recent settings reply for this buildTool, or null while we wait
   // for the first response after the panel was requested.
   data: Settings | null;
@@ -27,12 +27,18 @@ export function BuildToolSettingsPanel({ buildTool, data, loading, onOpenFile }:
   // panel at least tells the user which file would open.
   if (buildTool === 'npm' && data && !hasAnyData(data)) return null;
   if (buildTool === 'npm' && !loading && !data) return null;
+  // Same hide-when-empty rule for pip — most users don't have a corp
+  // proxy and the panel would just say "—" everywhere.
+  if (buildTool === 'pip' && data && !hasAnyData(data)) return null;
+  if (buildTool === 'pip' && !loading && !data) return null;
 
   const title = buildTool === 'maven'
     ? 'Maven Settings'
     : buildTool === 'gradle'
       ? 'Gradle Settings'
-      : 'npm Proxy Settings';
+      : buildTool === 'pip'
+        ? 'pip Proxy Settings'
+        : 'npm Proxy Settings';
 
   return (
     <section
@@ -58,13 +64,17 @@ function hasAnyData(data: Settings): boolean {
   return data.proxyHost !== null
     || data.proxyPort !== null
     || data.nonProxyHosts !== null
+    || (data.indexUrl !== undefined && data.indexUrl !== null)
     || Boolean(data.activeFilePath)
     || Boolean(data.sourceLabel);
 }
 
 function Body({ data, onOpenFile }: { data: Settings; onOpenFile: (p: string) => void }) {
   const hasAnyProxy = data.proxyHost !== null || data.proxyPort !== null || data.nonProxyHosts !== null;
-  const isEnvSourced = data.buildTool === 'npm';
+  // npm and pip surface their proxy values from env vars / pip config
+  // rather than a single "active file"; both render the same way (no
+  // file-actions row, source label instead of file path).
+  const isEnvSourced = data.buildTool === 'npm' || data.buildTool === 'pip';
   // Env-sourced configs (npm) don't have a file path to show; surface the
   // `sourceLabel` row instead so the user can see which env var we picked.
   const sourceRowLabel = isEnvSourced ? 'Source' : 'Active file';
@@ -89,6 +99,14 @@ function Body({ data, onOpenFile }: { data: Settings; onOpenFile: (p: string) =>
         <div style={{ wordBreak: 'break-all' }}>
           {data.nonProxyHosts ?? <span style={{ opacity: 0.6 }}>—</span>}
         </div>
+        {data.buildTool === 'pip' && (
+          <>
+            <div style={{ opacity: 0.7 }}>Index URL</div>
+            <div style={{ wordBreak: 'break-all' }}>
+              {data.indexUrl ?? <span style={{ opacity: 0.6 }}>(default — pypi.org)</span>}
+            </div>
+          </>
+        )}
       </div>
 
       {!hasAnyProxy && !data.note && !isEnvSourced && (
@@ -213,12 +231,13 @@ function OverriddenList({
 // mount the panel at all.
 // Accepts `unknown` for values so callers don't have to widen their union
 // types — the function only reads `type` and `typeOptions.buildTool`.
-export function buildToolForConfig(values: unknown): 'maven' | 'gradle' | 'npm' | null {
+export function buildToolForConfig(values: unknown): 'maven' | 'gradle' | 'npm' | 'pip' | null {
   const v = (values ?? {}) as { type?: unknown; typeOptions?: { buildTool?: unknown } };
   const type = typeof v.type === 'string' ? v.type : undefined;
   if (type === 'maven-goal') return 'maven';
   if (type === 'gradle-task') return 'gradle';
   if (type === 'npm') return 'npm';
+  if (type === 'python') return 'pip';
   const bt = typeof v.typeOptions?.buildTool === 'string' ? v.typeOptions.buildTool : undefined;
   if (type === 'spring-boot' || type === 'quarkus' || type === 'java' || type === 'tomcat') {
     return bt === 'gradle' ? 'gradle' : bt === 'maven' ? 'maven' : null;

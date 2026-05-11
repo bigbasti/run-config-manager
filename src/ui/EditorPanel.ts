@@ -16,6 +16,7 @@ import { RunConfigSchema } from '../shared/schema';
 import type { DockerService } from '../services/DockerService';
 import { BuildToolSettingsService } from '../services/BuildToolSettingsService';
 import { loadEnvFiles } from '../services/EnvFileLoader';
+import { runPythonInTerminal } from '../services/runInTerminal';
 import { runHttpRequest } from '../services/HttpRequestRunner';
 import { initLogger } from '../utils/logger';
 import { JdkInstallerService, type JdkPackage, CancelledError, ChecksumUnavailableError, jdkInstallDirName } from '../services/JdkInstallerService';
@@ -574,6 +575,7 @@ export class EditorPanel {
           const info = await this.settingsSvc.load(msg.buildTool, projectRoot, {
             mavenPath: msg.mavenPath,
             gradlePath: msg.gradlePath,
+            pythonPath: msg.pythonPath,
           });
           this.panel.webview.postMessage({
             cmd: 'buildToolSettings',
@@ -583,6 +585,7 @@ export class EditorPanel {
             proxyHost: info.proxyHost,
             proxyPort: info.proxyPort,
             nonProxyHosts: info.nonProxyHosts,
+            ...(info.indexUrl !== undefined ? { indexUrl: info.indexUrl } : {}),
             overriddenFiles: info.overriddenFiles,
             ...(info.note ? { note: info.note } : {}),
             searchedPaths: info.searchedPaths,
@@ -1216,6 +1219,33 @@ export class EditorPanel {
         }
         return;
       }
+      case 'createVenv': {
+        // Resolve the project root from the workspace folder + the
+        // form's projectPath, then spawn `<py> -m venv .venv` in a
+        // fresh terminal so the user can see progress + errors.
+        // After it completes, the existing detect-on-form-edit cycle
+        // will pick up the new venv on the next form interaction.
+        log.info(`createVenv: pythonPath="${msg.pythonPath}" projectPath="${msg.projectPath}"`);
+        const projectRoot = resolveProjectUri(this.args.folder, msg.projectPath ?? '');
+        runPythonInTerminal(
+          msg.pythonPath,
+          ['-m', 'venv', '.venv'],
+          projectRoot.fsPath,
+          'Create .venv',
+        );
+        return;
+      }
+      case 'pipInstall': {
+        log.info(`pipInstall: pythonPath="${msg.pythonPath}" package="${msg.package}"`);
+        const projectRoot = resolveProjectUri(this.args.folder, '');
+        runPythonInTerminal(
+          msg.pythonPath,
+          ['-m', 'pip', 'install', msg.package],
+          projectRoot.fsPath,
+          `pip install ${msg.package}`,
+        );
+        return;
+      }
       case 'refreshContainers': {
         if (!this.args.docker) return;
         log.debug('Docker refresh containers');
@@ -1751,3 +1781,4 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
   const never: never = cfg;
   throw new Error(`sanitize: unsupported config type: ${(never as any).type}`);
 }
+

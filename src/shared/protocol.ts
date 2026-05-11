@@ -36,7 +36,7 @@ export type Outbound =
   // project-root fallback) changes so the panel stays in sync.
   | {
       cmd: 'loadBuildToolSettings';
-      buildTool: 'maven' | 'gradle' | 'npm';
+      buildTool: 'maven' | 'gradle' | 'npm' | 'pip';
       projectPath: string;
       // Absolute path of the currently-selected Maven / Gradle installation
       // (whichever matches `buildTool`). The service uses it to locate
@@ -44,6 +44,10 @@ export type Outbound =
       // form changes which proxy config is active.
       mavenPath?: string;
       gradlePath?: string;
+      // Absolute path of the currently-selected Python interpreter home.
+      // Used by buildTool='pip' to run `<py>/pip config list` for that
+      // specific interpreter (different venvs can have different proxies).
+      pythonPath?: string;
     }
   // Open the active settings file in a new editor tab. The path comes from
   // the preceding `buildToolSettings` reply so the webview doesn't need to
@@ -87,6 +91,16 @@ export type Outbound =
   | { cmd: 'listNodeDownloads' }
   | { cmd: 'downloadNode'; version: string }
   | { cmd: 'cancelNodeDownload' }
+  // Python: create a .venv under the project path using the chosen
+  // interpreter. Extension spawns `<py> -m venv .venv` in a fresh
+  // terminal so the user can watch the output, then re-fires streaming
+  // detection so the new venv appears in the runtime dropdown.
+  | { cmd: 'createVenv'; pythonPath: string; projectPath: string }
+  // Python: install a single PyPI package into the chosen interpreter.
+  // Spawns `<py> -m pip install <package>` in a fresh terminal. Used
+  // by the missing-module hint and by the framework-import advisory's
+  // [Install <pkg>] button.
+  | { cmd: 'pipInstall'; pythonPath: string; package: string }
   // Run an http-request config without saving it first — sent by the
   // form's "Execute" button. The extension performs the request with
   // the current (possibly invalid) form values; output goes to the
@@ -154,7 +168,7 @@ export type Inbound =
   // under the save/cancel buttons uses this directly.
   | {
       cmd: 'buildToolSettings';
-      buildTool: 'maven' | 'gradle' | 'npm';
+      buildTool: 'maven' | 'gradle' | 'npm' | 'pip';
       activeFilePath?: string;
       // Human-readable label for where the values were read from. Used for
       // env-var sources that don't have a file path to show — e.g.
@@ -166,6 +180,10 @@ export type Inbound =
       // Raw nonProxyHosts string from the active file / NO_PROXY env var.
       // Null when not set.
       nonProxyHosts: string | null;
+      // pip-specific: the package index URL (`global.index-url` from
+      // `pip config list`) when set. Null otherwise. Other build tools
+      // leave this null.
+      indexUrl?: string | null;
       // Lower-precedence files that exist on disk but are shadowed by the
       // active file. Lets the UI show "your user-home file is winning —
       // these other files exist but aren't being read". Empty when the

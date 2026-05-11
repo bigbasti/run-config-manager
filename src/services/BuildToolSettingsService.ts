@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import { log } from '../utils/logger';
+import { detectPipProxy } from '../adapters/python/detectPipProxy';
 
 // Reads the "active" Maven settings.xml or Gradle gradle.properties for a
 // project and extracts the proxy host/port so the user can see — right in
@@ -51,7 +52,10 @@ export interface OverriddenFile {
 }
 
 export interface BuildToolSettingsInfo {
-  buildTool: 'maven' | 'gradle' | 'npm';
+  buildTool: 'maven' | 'gradle' | 'npm' | 'pip';
+  // pip-only: package index URL when set in pip config / env. Surfaced
+  // by the panel under "Index URL". Other build tools leave this null.
+  indexUrl?: string | null;
   // Active file the user would edit. Absent when nothing was found on disk,
   // in which case `searchedPaths` lists where we looked. For npm this is
   // always absent — proxy config comes from environment variables, not a
@@ -97,18 +101,64 @@ export interface LoadOptions {
   // project gradle.properties exists, and surfaced so a different install
   // can shift which file is "active" in the UI.
   gradlePath?: string;
+  // Absolute path of the selected Python interpreter home. Used by
+  // buildTool='pip' to run `<py>/pip config list` for that specific
+  // interpreter. Different venvs can have different proxies.
+  pythonPath?: string;
 }
 
 export class BuildToolSettingsService {
   // Entry point used by EditorPanel's loadBuildToolSettings handler.
   async load(
-    buildTool: 'maven' | 'gradle' | 'npm',
+    buildTool: 'maven' | 'gradle' | 'npm' | 'pip',
     projectRoot: vscode.Uri,
     options: LoadOptions = {},
   ): Promise<BuildToolSettingsInfo> {
     if (buildTool === 'maven') return this.loadMaven(options.mavenPath);
     if (buildTool === 'npm') return this.loadNpm();
+    if (buildTool === 'pip') return this.loadPip(options.pythonPath);
     return this.loadGradle(projectRoot, options.gradlePath);
+  }
+
+  // pip projects: read effective pip config for the selected interpreter
+  // (`<py> -m pip config list`), merged with the standard HTTP proxy env
+  // vars. Returns the same shape as the other build tools so the panel
+  // can render uniformly. Empty source returns no-op data so the panel
+  // hides itself.
+  private async loadPip(pythonPath?: string): Promise<BuildToolSettingsInfo> {
+    const result = await detectPipProxy(pythonPath ?? '');
+
+    if (result.source === 'none') {
+      return {
+        buildTool: 'pip',
+        proxyHost: null,
+        proxyPort: null,
+        nonProxyHosts: null,
+        indexUrl: null,
+        overriddenFiles: [],
+        searchedPaths: [],
+      };
+    }
+
+    // Decompose the proxy URL into host/port for the existing panel
+    // columns; surface the full URL via the sourceLabel so the user sees
+    // both representations.
+    const { host, port } = parseProxyUrl(result.proxyUrl ?? '');
+    const labelParts: string[] = [];
+    if (result.source === 'pip') labelParts.push('pip config');
+    else if (result.source === 'env') labelParts.push('HTTP_PROXY / HTTPS_PROXY env');
+    else if (result.source === 'mixed') labelParts.push('pip config + env');
+
+    return {
+      buildTool: 'pip',
+      sourceLabel: labelParts.join(' '),
+      proxyHost: host,
+      proxyPort: port,
+      nonProxyHosts: result.noProxy,
+      indexUrl: result.indexUrl,
+      overriddenFiles: [],
+      searchedPaths: [],
+    };
   }
 
   // npm projects don't have a universal "settings file" the way Maven and

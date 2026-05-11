@@ -6,6 +6,7 @@ import { detectPythons } from './detectPythons';
 import { probePythonsStreaming, readPythons, pythonOption } from './probePythonsStreaming';
 import { findEntryPoints, type ScriptEntryPoint, type ModuleEntryPoint } from './findEntryPoints';
 import { detectFrameworks, type FrameworkHit } from './detectFrameworks';
+import { findAsgiApps, findDjangoProject, type AsgiAppHit, type DjangoProject } from './findAsgiApps';
 import { detectPythonPort } from './detectPythonPort';
 import { detectPipProxy, type PipProxyInfo } from './detectPipProxy';
 import { buildPythonCommand } from './buildPythonCommand';
@@ -49,19 +50,49 @@ export class PythonAdapter implements RuntimeAdapter {
   async detectStreaming(folder: vscode.Uri, emit: (p: StreamingPatch) => void): Promise<void> {
     // Phase 1: synchronous-feeling — emit entry points + frameworks + port
     // immediately, then kick off the python-version probes.
-    const [entryPoints, frameworks] = await Promise.all([
+    const [entryPoints, frameworks, asgiApps, djangoProject] = await Promise.all([
       findEntryPoints(folder),
       detectFrameworks(folder),
+      findAsgiApps(folder),
+      findDjangoProject(folder),
     ]);
     const primaryFramework = frameworks[0]?.name ?? '';
     const port = await detectPythonPort(folder, primaryFramework);
+    // Pre-fill framework + frameworkCommand when a framework is detected.
+    // Prefer a project-specific ASGI/WSGI app reference (`module:attr`)
+    // over the static "app:main --reload" boilerplate, which is wrong for
+    // virtually every real project. Falls back to the static suggestion
+    // when no app instance was found in the source tree.
+    // mergeBlanks semantics in the webview means a saved config's existing
+    // values are preserved.
+    const frameworkDefault = primaryFramework
+      ? FRAMEWORK_COMMANDS[primaryFramework]
+      : undefined;
+    const frameworkCommand = pickFrameworkCommandDefault(
+      primaryFramework,
+      asgiApps,
+      djangoProject,
+      frameworkDefault?.commands[0] ?? '',
+    );
+    const defaultsPatch: Record<string, unknown> = {};
+    if (port !== undefined) defaultsPatch.port = port;
+    if (primaryFramework) {
+      defaultsPatch.typeOptions = {
+        framework: primaryFramework,
+        ...(frameworkCommand ? { frameworkCommand } : {}),
+      };
+    }
     emit({
       contextPatch: {
         entryPoints,
         frameworks,
+        asgiApps,
+        djangoProject,
         ...(port !== undefined ? { detectedPort: port } : {}),
       },
-      ...(port !== undefined ? { defaultsPatch: { port } as any } : {}),
+      ...(Object.keys(defaultsPatch).length > 0
+        ? { defaultsPatch: defaultsPatch as any }
+        : {}),
     });
 
     // Phase 2 + 3: pythons.
@@ -78,6 +109,8 @@ export class PythonAdapter implements RuntimeAdapter {
     const entryPoints = (context.entryPoints as { scripts: ScriptEntryPoint[]; modules: ModuleEntryPoint[] } | undefined)
       ?? { scripts: [], modules: [] };
     const frameworks = (context.frameworks as FrameworkHit[] | undefined) ?? [];
+    const asgiApps = (context.asgiApps as AsgiAppHit[] | undefined) ?? [];
+    const djangoProject = context.djangoProject as DjangoProject | undefined;
     const pipProxy = context.pipProxy as PipProxyInfo | undefined;
 
     const launchModeField: FormField = {
@@ -102,19 +135,94 @@ export class PythonAdapter implements RuntimeAdapter {
       ? `**Detected frameworks:** ${frameworks.map(f => `\`${f.name}\``).join(', ')}\n\n`
       : '';
 
-    const proxyInfo: FormField | null = pipProxy && pipProxy.source !== 'none' ? {
-      kind: 'info',
-      key: 'pipProxyInfo',
-      label: 'Effective pip proxy',
-      content: {
-        rows: [
-          { label: 'Proxy', value: pipProxy.proxyUrl ?? '(none)' },
-          { label: 'Index URL', value: pipProxy.indexUrl ?? '(default)' },
-          { label: 'No-proxy', value: pipProxy.noProxy ?? '(none)' },
-          { label: 'Source', value: pipProxy.source },
-        ],
-      },
-    } : null;
+    // pip-proxy info is rendered in the persistent BuildToolSettingsPanel
+    // under the form's Save/Cancel row (same place Maven/Gradle proxies
+    // appear). It re-fetches whenever pythonPath changes via the
+    // `loadBuildToolSettings` webview round-trip — no inline field here.
+    void pipProxy;
+
+    // No-venv hint: when none of the detected pythons live under the
+    // project (i.e. no `.venv` / `venv` / `env` exists), show an info
+    // banner with a [Create .venv] button. Common for fresh clones where
+    // the user hasn't run `python -m venv .venv` yet — without it,
+    // `pip install <fw>` would dump packages into the system interpreter.
+    //
+    // Detection of "is a project venv" is conservative: any path that
+    // contains the project root as a prefix counts. Misses uv/poetry-
+    // managed venvs that live outside the project tree (e.g.
+    // `~/.cache/pypoetry/virtualenvs/<name>/`) — those are still
+    // selectable, just not recognized as "the project venv".
+    const projectPath = (context.projectPath as string | undefined) ?? '';
+    const hasProjectVenv = pythons.some(p =>
+      /[\\/](\.venv|venv|env)([\\/]|$)/.test(p.path),
+    );
+    const noVenvHint: FormField | null = (!hasProjectVenv && pythons.length === 0)
+      ? null  // No pythons at all — don't suggest venv creation; user has nothing to create one with.
+      : !hasProjectVenv
+        ? {
+            kind: 'info',
+            key: 'noVenvHint',
+            label: 'No project venv',
+            content: {
+              banner: {
+                kind: 'warning',
+                text:
+                  'No virtual environment found in this project. Without one, ' +
+                  '`pip install` would write to the system interpreter — usually not what you want. ' +
+                  'Click below to create a `.venv` using the selected interpreter.',
+              },
+            },
+            action: {
+              id: 'createVenv',
+              label: 'Create .venv',
+              busyLabel: 'Creating .venv…',
+              title: 'Run `<python> -m venv .venv` in the project root',
+            },
+          }
+        : null;
+
+    // Framework-import advisory: when launchMode='framework' and a framework
+    // is picked, hint at the missing module so the user can pre-emptively
+    // install it. Only fires when a runtime probe didn't find the module —
+    // we surface a banner that maps the framework to its required `-m`
+    // target. The actual probe runs at launch time (B); this is just the
+    // up-front hint.
+    const frameworkImportHint: FormField | null = (() => {
+      // Static map mirrors buildPythonCommand.FRAMEWORK_M_TARGET — duplicated
+      // here because that file uses node-only imports the form-schema path
+      // can't reach.
+      const target: Record<string, string | null> = {
+        django: 'django', flask: 'flask', uvicorn: 'uvicorn',
+        gunicorn: 'gunicorn', celery: 'celery',
+        fastapi: 'uvicorn', starlette: 'uvicorn',
+        typer: null, click: null,
+      };
+      const detected = frameworks[0]?.name ?? '';
+      const importTarget = detected ? target[detected] : undefined;
+      if (!importTarget) return null;
+      return {
+        kind: 'info',
+        key: 'frameworkImportHint',
+        label: `Missing package?`,
+        content: {
+          banner: {
+            kind: 'muted',
+            text:
+              `${detected === importTarget ? detected : `${detected} runs through ${importTarget}`}` +
+              ` — make sure \`${importTarget}\` is installed in the chosen interpreter. ` +
+              `If it isn't, the run will fail with \`ModuleNotFoundError\`. ` +
+              `Click below to install it now.`,
+          },
+        },
+        action: {
+          id: `pipInstall:${importTarget}`,
+          label: `Install ${importTarget}`,
+          busyLabel: `Installing ${importTarget}…`,
+          title: `Run \`<python> -m pip install ${importTarget}\` in a fresh terminal`,
+        },
+        dependsOn: { key: 'typeOptions.launchMode', equals: 'framework' },
+      };
+    })();
 
     return {
       common: [
@@ -151,6 +259,7 @@ export class PythonAdapter implements RuntimeAdapter {
             'Leave blank to use whatever `python3` is on `PATH` when VS Code started.',
           examples: ['/proj/.venv', '~/.pyenv/versions/3.12.1'],
         },
+        ...(noVenvHint ? [noVenvHint] : []),
         launchModeField,
         {
           kind: 'selectOrCustom',
@@ -182,11 +291,12 @@ export class PythonAdapter implements RuntimeAdapter {
           help: fwBadge + 'Framework to run. The framework command select below offers framework-specific options.',
           dependsOn: { key: 'typeOptions.launchMode', equals: 'framework' },
         },
+        ...(frameworkImportHint ? [frameworkImportHint] : []),
         {
           kind: 'selectOrCustom',
           key: 'typeOptions.frameworkCommand',
           label: 'Framework command',
-          options: buildFrameworkCommandOptions(frameworks),
+          options: buildFrameworkCommandOptions(frameworks, asgiApps, djangoProject),
           placeholder: 'runserver',
           help: 'Command passed to the framework. The dropdown is scoped to the selected framework above; pick `Custom…` to type your own.',
           dependsOn: { key: 'typeOptions.launchMode', equals: 'framework' },
@@ -248,7 +358,6 @@ export class PythonAdapter implements RuntimeAdapter {
           examples: ['-O', '-W default', '-Xfaulthandler'],
           inspectable: true,
         },
-        ...(proxyInfo ? [proxyInfo] : []),
         dependsOnField((context.dependencyOptions as any[] | undefined) ?? []),
         closeTerminalOnExitField(),
       ],
@@ -336,9 +445,143 @@ export class PythonAdapter implements RuntimeAdapter {
   }
 }
 
-function buildFrameworkCommandOptions(frameworks: FrameworkHit[]): Array<{ value: string; label: string; group?: string }> {
-  const out: Array<{ value: string; label: string; group?: string }> = [];
+// Picks the best default value for the `frameworkCommand` field given
+// the detected primary framework + any project-specific app instances
+// found by findAsgiApps + django manage.py probe. The static suggestion
+// (e.g. "app:main --reload") is the last-resort fallback — it's almost
+// never correct for real projects.
+function pickFrameworkCommandDefault(
+  primaryFramework: string,
+  asgiApps: AsgiAppHit[],
+  djangoProject: DjangoProject | null,
+  staticFallback: string,
+): string {
+  if (!primaryFramework) return staticFallback;
+  if (primaryFramework === 'django' && djangoProject) {
+    // `manage.py runserver` auto-loads DJANGO_SETTINGS_MODULE — what
+    // every Django tutorial uses. `python -m django runserver` would
+    // require the user to set the env var explicitly.
+    return `${djangoProject.managePy} runserver`;
+  }
+  const matchingApp = asgiApps.find(a => a.framework === primaryFramework);
+  if (matchingApp) {
+    if (primaryFramework === 'fastapi' || primaryFramework === 'starlette') {
+      return `${matchingApp.ref} --reload`;
+    }
+    if (primaryFramework === 'flask') {
+      return `--app ${matchingApp.module} run`;
+    }
+    if (primaryFramework === 'celery') {
+      return `-A ${matchingApp.module} worker --loglevel=info`;
+    }
+  }
+  return staticFallback;
+}
+
+function buildFrameworkCommandOptions(
+  frameworks: FrameworkHit[],
+  asgiApps: AsgiAppHit[],
+  djangoProject: DjangoProject | undefined,
+): Array<{ value: string; label: string; group?: string; description?: string }> {
+  const out: Array<{ value: string; label: string; group?: string; description?: string }> = [];
   for (const f of frameworks) {
+    // Project-specific suggestions FIRST — values derived from actual
+    // source-scan hits, not the static "app:main --reload" boilerplate.
+    if (f.name === 'django' && djangoProject) {
+      // Django: route through manage.py so DJANGO_SETTINGS_MODULE
+      // auto-loads. `python -m django <subcmd>` would require the user
+      // to set the env var manually.
+      const mp = djangoProject.managePy;
+      out.push(
+        { value: `${mp} runserver`,             label: `${mp} runserver`,            group: 'django', description: 'detected' },
+        { value: `${mp} runserver 0.0.0.0:8000`, label: `${mp} runserver 0.0.0.0:8000`, group: 'django', description: 'detected (all interfaces)' },
+        { value: `${mp} migrate`,               label: `${mp} migrate`,              group: 'django', description: 'detected' },
+        { value: `${mp} makemigrations`,        label: `${mp} makemigrations`,       group: 'django', description: 'detected' },
+        { value: `${mp} shell`,                 label: `${mp} shell`,                group: 'django', description: 'detected' },
+        { value: `${mp} createsuperuser`,       label: `${mp} createsuperuser`,      group: 'django', description: 'detected' },
+        { value: `${mp} test`,                  label: `${mp} test`,                 group: 'django', description: 'detected' },
+        { value: `${mp} collectstatic`,         label: `${mp} collectstatic`,        group: 'django', description: 'detected' },
+      );
+    }
+    // ASGI/WSGI app instances — `<module>:<attr>` for FastAPI / Flask /
+    // Starlette, and `-A <module>` for Celery.
+    const projectAppsForFramework = asgiApps.filter(a => a.framework === f.name);
+    for (const a of projectAppsForFramework) {
+      if (f.name === 'fastapi' || f.name === 'starlette') {
+        out.push({
+          value: `${a.ref} --reload`,
+          label: `${a.ref} --reload`,
+          group: f.name,
+          description: 'detected (with auto-reload)',
+        });
+        out.push({
+          value: a.ref,
+          label: a.ref,
+          group: f.name,
+          description: 'detected',
+        });
+      } else if (f.name === 'flask') {
+        // Flask CLI takes `--app <module>` not `<module>:<attr>` —
+        // `flask --app <module>` looks for the FIRST Flask instance
+        // by convention; if multiple, the user's explicit `<attr>`
+        // (`<module>:<attr>`) variant disambiguates.
+        out.push({
+          value: `--app ${a.module} run`,
+          label: `--app ${a.module} run`,
+          group: f.name,
+          description: 'detected',
+        });
+        out.push({
+          value: `--app ${a.module} run --debug`,
+          label: `--app ${a.module} run --debug`,
+          group: f.name,
+          description: 'detected (debug mode)',
+        });
+      } else if (f.name === 'celery') {
+        out.push({
+          value: `-A ${a.module} worker --loglevel=info`,
+          label: `-A ${a.module} worker --loglevel=info`,
+          group: 'celery',
+          description: 'detected (worker)',
+        });
+        out.push({
+          value: `-A ${a.module} beat`,
+          label: `-A ${a.module} beat`,
+          group: 'celery',
+          description: 'detected (beat)',
+        });
+        out.push({
+          value: `-A ${a.module} flower`,
+          label: `-A ${a.module} flower`,
+          group: 'celery',
+          description: 'detected (flower monitor)',
+        });
+      }
+    }
+    // Gunicorn doesn't have its own ctor — it RUNS WSGI/ASGI apps.
+    // Reuse the FastAPI/Flask/Starlette hits as candidates.
+    if (f.name === 'gunicorn') {
+      const wsgiCandidates = asgiApps.filter(a =>
+        a.framework === 'fastapi' || a.framework === 'flask' || a.framework === 'starlette',
+      );
+      for (const a of wsgiCandidates) {
+        out.push({
+          value: `${a.ref} -b 0.0.0.0:8000`,
+          label: `${a.ref} -b 0.0.0.0:8000`,
+          group: 'gunicorn',
+          description: `detected (${a.framework})`,
+        });
+        out.push({
+          value: `${a.ref} -w 4 -b 0.0.0.0:8000`,
+          label: `${a.ref} -w 4 -b 0.0.0.0:8000`,
+          group: 'gunicorn',
+          description: `detected (${a.framework}, 4 workers)`,
+        });
+      }
+    }
+    // Generic fallback suggestions from the static spec — useful when
+    // detection didn't find anything (CLI-only frameworks, or projects
+    // where the instance lives somewhere we don't scan).
     const spec = FRAMEWORK_COMMANDS[f.name];
     if (!spec) continue;
     for (const cmd of spec.commands) {

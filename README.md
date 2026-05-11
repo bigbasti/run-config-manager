@@ -24,7 +24,8 @@ Configurations are stored in `.vscode/run.json` so you can commit them and share
 
 | Type | What it runs |
 |---|---|
-| **npm / Node.js** | Any `package.json` script, with your choice of npm, yarn, or pnpm |
+| **npm / Node.js** | Any `package.json` script, with your choice of npm, yarn, or pnpm. Auto-detects installed Node interpreters (system, nvm, volta, asdf, fnm, n, the extension's own install root) and lets you pin one per config. |
+| **Python** | Five launch modes — script, module (`-m`), framework, pytest, custom. Detects venvs (`.venv` / `venv` / `env` / `$VIRTUAL_ENV`) plus pyenv / asdf / rye / uv / mise / conda. Pre-fills entry-point scripts (`if __name__ == "__main__":`) and importable modules (`__main__.py`). |
 | **Spring Boot** | Maven, Gradle, or direct Java launch — auto-detects your project setup |
 | **Quarkus** | Maven or Gradle dev mode with Live Coding |
 | **Tomcat** | Deploys your WAR or exploded directory to a managed Tomcat instance |
@@ -32,6 +33,7 @@ Configurations are stored in `.vscode/run.json` so you can commit them and share
 | **Maven Goal** | Any Maven phase or plugin goal, saved as a one-click button |
 | **Gradle Task** | Any Gradle task from your build, saved as a one-click button |
 | **Docker** | Start / stop a local container — container details auto-detected |
+| **HTTP Request** | curl-style HTTP requests with auth, headers, body, and JS post-response assertions |
 | **Custom Command** | Any shell command — pipes, globs, environment variables, all supported |
 
 ## Key features
@@ -56,7 +58,11 @@ Configurations are stored in `.vscode/run.json` so you can commit them and share
 
 **Multi-root workspace support** — Works across multi-folder workspaces. Each folder has its own set of configurations. Stop All in the title bar stops every running configuration at once.
 
-**Shareable configs** — Commit `.vscode/run.json` and your teammates open the same sidebar with the same configured run commands, ready to use.
+**Linger mode for crash diagnosis** — A per-config "Close terminal as soon as process ends" toggle (default on, matching the original behavior). Switch it off and the integrated terminal stays open after the process exits — Stop button included — so you can scroll back through the logs of a crashed run before dismissing it with any keypress, like VS Code's built-in launcher.
+
+**Live command preview** — A read-only line at the bottom of the form shows the exact command the extension will execute, including resolved `cd <projectPath>` prefix, interpreter args, framework invocation, etc. Updates as you edit the form so you can verify before saving.
+
+**Shareable configs** — Commit `.vscode/run.json` and your teammates open the same sidebar with the same configured run commands, ready to use. The on-disk format is versioned and migrated forward automatically — older configs work after extension upgrades without manual intervention.
 
 ## Advanced workflows
 
@@ -68,11 +74,13 @@ Set dependencies on any config via the "Depends on" field in the Advanced sectio
 
 ### Groups
 
-Right-click any configuration and choose **Add to Group…** to bundle it with others — the picker lets you pick an existing group or create a new one inline. Groups show as folder nodes in the sidebar with their members underneath.
+Right-click any configuration and choose **Add to Group…** to bundle it with others — the picker lets you pick an existing group or create a new one inline. Groups show as folder nodes in the sidebar with their members underneath, and folders can be nested (drag-and-drop a group onto another to nest, drag back to root to flatten).
 
 Right-click a group to:
-- **Run All Sequentially** — starts one member, waits for it to reach running, then the next. Members with their own `dependsOn` chains still have their dependencies started first. Any member's failure aborts the rest, which stay visible as "skipped" so you can see where it broke.
-- **Run All in Parallel** — dispatches every member at once.
+- **Run All Sequentially** — starts one member, waits for it to reach running, then the next. Members with their own `dependsOn` chains still have their dependencies started first. Any member's failure aborts the rest, which stay visible as "skipped" so you can see where it broke. Recurses into sub-folders.
+- **Run All in Parallel** — dispatches every member at once. Recurses into sub-folders.
+- **Debug All Sequentially** / **Debug All in Parallel** — same flows but routes debuggable configs (Java / Spring Boot / Quarkus / Python / npm) through the debugger automatically, while non-debuggable members fall back to a normal run so the whole group still starts.
+- **Stop All** — terminates every running member, including those in sub-folders.
 - **Rename** / **Delete** — deleting a group unassigns its members; the configs themselves stay, just ungrouped.
 
 Queued and currently-starting members are overlaid with clock and spinner icons so the pipeline is readable at a glance.
@@ -116,6 +124,42 @@ When you enable a feature that needs a specific prerequisite in your project, th
 - **Tomcat → Reloadable context + WAR artifact**: warns that reloadable only takes effect for exploded deployments, not packaged WARs.
 
 Warnings are gated on the feature actually being enabled, so the form stays clean until the user opts in.
+
+### Python adapter
+
+A first-class Python config type with the same auto-detection ergonomics as the JVM types:
+
+- **Five launch modes**, each with a focused form:
+  - **Script** — runs `python path/to/script.py`. Dropdown lists every `.py` file in the project with `if __name__ == "__main__":`; user can also type a path or pick a different file via the picker.
+  - **Module** — runs `python -m mypkg.cli`. Dropdown lists every package containing `__main__.py`.
+  - **Framework** — runs the framework's own command. Pre-fills launchMode and the command list when a known framework is detected (Django, FastAPI, Flask, uvicorn, gunicorn, Celery, Typer, Starlette, Click).
+  - **Pytest** — runs `python -m pytest <args>`. Free-form selection field for test paths, `-k` filters, etc.
+  - **Custom** — anything appended to the interpreter (`-c "..."` style).
+- **Interpreter detection** — finds project venvs (`.venv` / `venv` / `env`), `$VIRTUAL_ENV`, version-manager installs (`pyenv`, `asdf`, `rye`, `uv`, `mise`, `conda`), Homebrew + Apple framework Python, system Python, Windows installs. Project venvs win the default-selection race so freshly-opened projects pick the user's venv automatically.
+- **Framework detection** — parses `pyproject.toml` (PEP 621 + Poetry), `requirements*.txt`, `setup.cfg`. Walks up to four parent directories when no metadata exists at the project root (catches monorepo / examples-collection layouts where a single `requirements.txt` covers many subprojects). Falls back to scanning import statements in `*.py` if no metadata is found.
+- **Port auto-fill** — picks the right default per framework (`flask` → 5000, `django` / `fastapi` / `uvicorn` / `gunicorn` / `starlette` → 8000) and parses Procfile lines for explicit `--port` overrides. Switching frameworks in the form re-fills the port if it's still blank.
+- **One-click debug** — wires up `debugpy` automatically. The interpreter args are hoisted ahead of `-m debugpy` so user `vmArgs` (`-O`, `-W default`, etc.) take effect; the debug port is threaded consistently between attach and launch so non-default ports work. If `debugpy` isn't installed in the chosen interpreter, the run surfaces a clear error with the exact `pip install debugpy` command.
+- **Pip proxy info** — the Advanced section shows the effective pip proxy (`pip config list` merged with `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` env vars) so corporate-proxied runs are debuggable. Re-evaluates when the user picks a different interpreter.
+
+### Node version management
+
+The npm / Node config gains an interpreter selector and a built-in installer dialog:
+
+- **Detection** of every Node install on the box: nvm, volta, asdf, fnm, n, Homebrew, system Node, the extension's own install root.
+- **PATH prepend at launch** — selecting a Node install prepends its `bin/` to PATH so `npm` / `yarn` / `pnpm` and any binary they spawn (Node itself included) come from that install. Standard convention used by every Node version manager.
+- **nvm-aware installer** — clicking the cloud icon next to the Node field on Linux / macOS routes through `nvm install <version>` instead of downloading a standalone tarball, so the new install lands in the user's existing `~/.nvm/versions/node/` pool. Live nvm output streams into the dialog. On Windows (or any host without nvm), the dialog falls back to downloading the standalone tarball from `nodejs.org`, verifies SHA-256, extracts to `~/.rcm/nodes/`.
+
+### Live status detection
+
+The "Started" signal in the sidebar is driven by per-runtime regex patterns matching the canonical "ready" log line for each framework:
+
+- **Spring Boot:** `Started <App> in N seconds`, `Tomcat started on port: …`, Netty/Jetty/Undertow variants.
+- **Quarkus:** `Listening on: http://…`, `Profile dev activated. Live Coding activated.`
+- **Tomcat:** `Server startup in [N] milliseconds`.
+- **npm dev servers:** Angular CLI, Vite, webpack-dev-server, Next.js, Express, plus a generic `listening on port N` fallback.
+- **Python:** Flask's `* Running on http://…`, Django's `Starting development server at …`, `Uvicorn running on http://…` / `Application startup complete.`, gunicorn's `Listening at: http://…`, Celery's `celery@host ready.`
+
+Failure patterns are equally specific — Spring Boot's `APPLICATION FAILED TO START`, port-bind errors (`EADDRINUSE`, `Address already in use`), Python tracebacks / `ModuleNotFoundError`, gunicorn worker errors, Maven/Gradle `BUILD FAIL*`, etc. — so the tree flips to red the moment a startup goes wrong, instead of waiting for the process to die.
 
 ### Stale-config detection
 

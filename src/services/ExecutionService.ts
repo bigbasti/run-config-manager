@@ -15,6 +15,7 @@ import {
 } from './readyPatterns';
 import { makePrettifier } from './prettyOutput';
 import { loadEnvFiles } from './EnvFileLoader';
+import { runPythonInTerminal } from './runInTerminal';
 
 interface Entry {
   execution: vscode.TaskExecution;
@@ -323,6 +324,13 @@ export class ExecutionService {
     // through.
     const terminalRef: { current?: RunTerminal } = {};
 
+    // Rolling buffer of recent output. Used by the python adapter to
+    // recognize ModuleNotFoundError on failed exits so we can offer a
+    // one-click `pip install` toast. Capped so a long-running process
+    // doesn't grow this unbounded.
+    let recentOutput = '';
+    const RECENT_OUTPUT_CAP = 8 * 1024;
+
     const execution2: vscode.ShellExecution | vscode.CustomExecution = useShellExecution
       ? new vscode.ShellExecution(command, args, { cwd, env: strictEnv })
       : new vscode.CustomExecution(async () => {
@@ -339,6 +347,12 @@ export class ExecutionService {
           keepOpenOnExit: resolvedCfg.closeTerminalOnExit === false,
           prettifier: makePrettifier(resolvedCfg, { cwd }),
           onOutput: chunk => {
+            // Capture recent output for post-exit error analysis (Python
+            // missing-module detection). Keep only the trailing 8 KB —
+            // the relevant traceback / error fits comfortably in that
+            // window and cap stays cheap.
+            recentOutput = (recentOutput + chunk).slice(-RECENT_OUTPUT_CAP);
+
             // Priority: failure > ready > rebuild. If a chunk happens to
             // contain both (e.g. a dev server prints an error line right
             // before it announces a new compile), the most-decisive signal
@@ -360,8 +374,12 @@ export class ExecutionService {
               markRebuilding(`matched rebuild pattern ${patternLabel(rebuildHit)}`);
             }
           },
-          onExit: () => {
-            // Handled by onDidEndTask listener; no-op here.
+          onExit: (code) => {
+            // Python ModuleNotFoundError → offer a one-click install. Only
+            // fires on non-zero exits to avoid noise on graceful shutdowns.
+            if (code !== 0 && resolvedCfg.type === 'python') {
+              maybeOfferPythonInstall(resolvedCfg, recentOutput);
+            }
           },
         });
         terminalRef.current = runTerminal;
@@ -627,4 +645,37 @@ async function startRebuildWatcher(
   );
   log.info(`Started rebuild watcher: ${gradleBinary} ${args.join(' ')} (cwd ${buildRoot})`);
   return vscode.tasks.executeTask(vsTask);
+}
+
+// Scans recent output of a failed Python config for
+// `ModuleNotFoundError: No module named 'X'`. When matched, shows a
+// VS Code error toast offering a one-click `pip install X` run. The
+// install runs in a fresh integrated terminal so the user can see
+// progress and decide whether to re-run their config afterward.
+function maybeOfferPythonInstall(cfg: RunConfig, recentOutput: string): void {
+  if (cfg.type !== 'python') return;
+  const m = recentOutput.match(/ModuleNotFoundError: No module named ['"]([\w.-]+)['"]/);
+  if (!m) return;
+  const pkg = m[1];
+  // Some imports map to PyPI names that differ (PIL → Pillow, cv2 →
+  // opencv-python, etc.). For the common framework cases (uvicorn,
+  // django, flask, fastapi, gunicorn, celery) the import name IS the
+  // PyPI name, so a straight pip-install of the matched name works.
+  const interpreterDisplay = cfg.typeOptions.pythonPath || '(system python on PATH)';
+  vscode.window.showErrorMessage(
+    `Python: '${pkg}' is not installed in ${interpreterDisplay}. The configuration "${cfg.name}" failed to start.`,
+    `Install '${pkg}'`,
+    'Dismiss',
+  ).then(choice => {
+    if (choice !== `Install '${pkg}'`) return;
+    runPythonInTerminal(
+      cfg.typeOptions.pythonPath,
+      ['-m', 'pip', 'install', pkg],
+      // No specific cwd needed for a global install; let the terminal
+      // pick its default (the workspace root). Using project root here
+      // would require resolving cfg.projectPath; not worth it.
+      '',
+      `pip install ${pkg}`,
+    );
+  });
 }

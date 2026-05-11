@@ -59,6 +59,29 @@ describe('buildPythonCommand', () => {
     }));
     expect(out.args).toEqual(['-m', 'gunicorn', 'app:app', '-b', '0.0.0.0:8000']);
   });
+  test('framework: fastapi routes through uvicorn', () => {
+    const out = buildPythonCommand(cfg({
+      launchMode: 'framework', framework: 'fastapi', frameworkCommand: 'app:main --reload',
+    }));
+    expect(out.args).toEqual(['-m', 'uvicorn', 'app:main', '--reload']);
+  });
+  test('framework: starlette routes through uvicorn', () => {
+    const out = buildPythonCommand(cfg({
+      launchMode: 'framework', framework: 'starlette', frameworkCommand: 'app:main',
+    }));
+    expect(out.args).toEqual(['-m', 'uvicorn', 'app:main']);
+  });
+  test('framework: typer passes command through (no -m)', () => {
+    const out = buildPythonCommand(cfg({
+      launchMode: 'framework', framework: 'typer', frameworkCommand: 'cli.py run',
+    }));
+    expect(out.args).toEqual(['cli.py', 'run']);
+  });
+  test('framework launchMode with empty framework throws', () => {
+    expect(() => buildPythonCommand(cfg({
+      launchMode: 'framework', framework: '', frameworkCommand: 'app:main --reload',
+    }))).toThrow(/no framework picked/);
+  });
   test('pytest mode', () => {
     const out = buildPythonCommand(cfg({ launchMode: 'pytest', pytestArgs: 'tests/foo.py -k smoke' }));
     expect(out.args).toEqual(['-m', 'pytest', 'tests/foo.py', '-k', 'smoke']);
