@@ -4,6 +4,7 @@ export type RunConfigType =
   | 'tomcat'
   | 'quarkus'
   | 'java'
+  | 'python'
   | 'maven-goal'
   | 'gradle-task'
   | 'custom-command'
@@ -238,6 +239,56 @@ export interface JavaTypeOptions {
   colorOutput?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Python
+// ---------------------------------------------------------------------------
+
+// Five launch modes. The form changes shape based on this — see the
+// PythonAdapter form schema for the per-mode field list.
+//   script    — run a .py file: `python path/to/script.py [args]`
+//   module    — run a package via -m: `python -m mypkg.cli [args]`
+//   framework — run a detected framework (django/uvicorn/flask/...)
+//   pytest    — run pytest with free-form selection args
+//   custom    — free-form args appended to the interpreter
+export type PythonLaunchMode = 'script' | 'module' | 'framework' | 'pytest' | 'custom';
+
+// Frameworks v1 detects. Empty string when no framework is selected.
+export type PythonFramework =
+  | ''
+  | 'django'
+  | 'fastapi'
+  | 'flask'
+  | 'uvicorn'
+  | 'gunicorn'
+  | 'celery'
+  | 'typer'
+  | 'starlette'
+  | 'click';
+
+export interface PythonTypeOptions {
+  launchMode: PythonLaunchMode;
+  // Absolute path to a Python install directory (containing bin/python on
+  // POSIX, or python.exe on Windows). Empty string means "use whatever
+  // python3 / python is on PATH at launch time."
+  pythonPath: string;
+  // Used when launchMode === 'script'. Path relative to projectPath.
+  scriptPath: string;
+  // Used when launchMode === 'module'. Dotted module name, e.g. 'mypkg.cli'.
+  moduleName: string;
+  // Used when launchMode === 'framework'.
+  framework: PythonFramework;
+  // Used when launchMode === 'framework'. Argument string passed to the
+  // framework's invocation (`runserver`, `app:main --reload`, etc.).
+  frameworkCommand: string;
+  // Used when launchMode === 'pytest'. Free-form argument string.
+  pytestArgs: string;
+  // Used when launchMode === 'custom'. Free-form argument string appended
+  // verbatim to the interpreter command.
+  customArgs: string;
+  // Optional override of the project root (defaults to projectPath).
+  buildRoot: string;
+}
+
 // Maven Goal — one-click execution of a phase + optional plugin goal chain,
 // e.g. "clean install", "liquibase:dropAll -Durl=…". supportsDebug=false.
 export interface MavenGoalTypeOptions {
@@ -368,6 +419,7 @@ export type RunConfig =
   | (RunConfigBase & { type: 'tomcat'; typeOptions: TomcatTypeOptions })
   | (RunConfigBase & { type: 'quarkus'; typeOptions: QuarkusTypeOptions })
   | (RunConfigBase & { type: 'java'; typeOptions: JavaTypeOptions })
+  | (RunConfigBase & { type: 'python'; typeOptions: PythonTypeOptions })
   | (RunConfigBase & { type: 'maven-goal'; typeOptions: MavenGoalTypeOptions })
   | (RunConfigBase & { type: 'gradle-task'; typeOptions: GradleTaskTypeOptions })
   | (RunConfigBase & { type: 'custom-command'; typeOptions: CustomCommandTypeOptions })

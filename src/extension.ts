@@ -10,6 +10,7 @@ import { SpringBootAdapter } from './adapters/spring-boot/SpringBootAdapter';
 import { TomcatAdapter } from './adapters/tomcat/TomcatAdapter';
 import { QuarkusAdapter } from './adapters/quarkus/QuarkusAdapter';
 import { JavaAdapter } from './adapters/java/JavaAdapter';
+import { PythonAdapter } from './adapters/python/PythonAdapter';
 import { MavenGoalAdapter } from './adapters/maven-goal/MavenGoalAdapter';
 import { GradleTaskAdapter } from './adapters/gradle-task/GradleTaskAdapter';
 import { CustomCommandAdapter } from './adapters/custom-command/CustomCommandAdapter';
@@ -56,6 +57,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.register(new TomcatAdapter());
   registry.register(new QuarkusAdapter());
   registry.register(new JavaAdapter());
+  registry.register(new PythonAdapter());
   registry.register(new MavenGoalAdapter());
   registry.register(new GradleTaskAdapter());
   registry.register(new CustomCommandAdapter());
@@ -1034,6 +1036,8 @@ const STREAMING_PENDING_FIELDS = [
   'typeOptions.containerId',
   // npm
   'typeOptions.nodePath',
+  // python
+  'typeOptions.pythonPath',
 ];
 
 // Builds the EditorPanel `streaming` payload, used by both the create

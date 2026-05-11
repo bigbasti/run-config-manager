@@ -121,6 +121,31 @@ export function buildCommandPreview(cfg: RunConfig, workspaceFolderPath?: string
     // run time and the form often references secrets we shouldn't echo
     // here — keeping placeholders is the right default).
     return renderHttpRequestPreview(cfg.typeOptions);
+  } else if (cfg.type === 'python') {
+    const to = cfg.typeOptions;
+    const py = to.pythonPath
+      ? `${to.pythonPath.replace(/[/\\]$/, '')}/bin/python3`
+      : 'python3';
+    const interp = cfg.vmArgs?.trim() ? ` ${cfg.vmArgs.trim()}` : '';
+    const pa = cfg.programArgs?.trim() ? ` ${cfg.programArgs.trim()}` : '';
+    if (to.launchMode === 'script') {
+      const script = to.scriptPath?.trim() || '<script.py>';
+      base = `${py}${interp} ${script}${pa}`;
+    } else if (to.launchMode === 'module') {
+      const mod = to.moduleName?.trim() || '<module>';
+      base = `${py}${interp} -m ${mod}${pa}`;
+    } else if (to.launchMode === 'framework') {
+      const fw = to.framework || '<framework>';
+      const cmd = to.frameworkCommand?.trim() || '';
+      base = `${py}${interp} -m ${fw}${cmd ? ` ${cmd}` : ''}${pa}`;
+    } else if (to.launchMode === 'pytest') {
+      const args = to.pytestArgs?.trim() || '<args>';
+      base = `${py}${interp} -m pytest ${args}`;
+    } else {
+      // custom
+      const args = to.customArgs?.trim() || '<args>';
+      base = `${py}${interp} ${args}`;
+    }
   } else {
     return `(unsupported type: ${(cfg as RunConfig).type})`;
   }
@@ -136,7 +161,8 @@ export function buildCommandPreview(cfg: RunConfig, workspaceFolderPath?: string
     cfg.type === 'tomcat' ||
     cfg.type === 'maven-goal' ||
     cfg.type === 'gradle-task' ||
-    cfg.type === 'custom-command';
+    cfg.type === 'custom-command' ||
+    cfg.type === 'python';
   const args = (cfg.programArgs ?? '').trim();
   const withArgs = !programArgsApplied && args ? `${base} -- ${args}` : base;
 

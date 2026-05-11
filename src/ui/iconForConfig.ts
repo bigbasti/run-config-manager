@@ -49,6 +49,7 @@ function computeBrand(cfg: RunConfig, folder: vscode.WorkspaceFolder | undefined
     case 'tomcat':      return 'tomcat';
     case 'quarkus':     return 'quarkus';
     case 'java':        return 'java';
+    case 'python':      return 'python';
     case 'maven-goal':  return 'maven';
     case 'gradle-task': return 'gradle';
     case 'custom-command': return 'bash';

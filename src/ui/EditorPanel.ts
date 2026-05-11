@@ -155,6 +155,7 @@ export class EditorPanel {
       | 'tomcat'
       | 'quarkus'
       | 'java'
+      | 'python'
       | 'maven-goal'
       | 'gradle-task'
       | 'custom-command'
@@ -203,6 +204,20 @@ export class EditorPanel {
       typeDefaults = isStreaming
         ? { debugPort: 5005, colorOutput: true }
         : { buildTool: 'maven', debugPort: 5005, colorOutput: true };
+    } else if (type === 'python') {
+      // pythonPath comes from streaming detection; leave blank in streaming
+      // mode so mergeBlanks doesn't shadow the detected interpreter.
+      typeDefaults = {
+        launchMode: 'script',
+        pythonPath: '',
+        scriptPath: '',
+        moduleName: '',
+        framework: '',
+        frameworkCommand: '',
+        pytestArgs: '',
+        customArgs: '',
+        buildRoot: '',
+      };
     } else if (type === 'maven-goal') {
       typeDefaults = { goal: '', colorOutput: true };
     } else if (type === 'gradle-task') {
@@ -307,8 +322,17 @@ export class EditorPanel {
       }
     };
 
-    const projectUri = this.args.seedDefaults?.projectPath
-      ? vscode.Uri.joinPath(this.args.folder.uri, this.args.seedDefaults.projectPath)
+    // In create mode the projectPath comes from seedDefaults (the
+    // wizard's project picker). In edit mode the user's saved
+    // projectPath lives on `existing` — fall back to that so streaming
+    // detection scans the right subdirectory. Without this, edit-mode
+    // detection walked the workspace root and missed entry points /
+    // pyproject in nested-project layouts (e.g. monorepos with
+    // apps/api / packages/cli).
+    const projectPath =
+      this.args.seedDefaults?.projectPath ?? this.args.existing?.projectPath ?? '';
+    const projectUri = projectPath
+      ? vscode.Uri.joinPath(this.args.folder.uri, projectPath)
       : this.args.folder.uri;
     await s.adapter.detectStreaming(projectUri, emit);
   }
@@ -1700,6 +1724,24 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
         verifyTls: to?.verifyTls ?? true,
         assertScript: to?.assertScript ?? '',
         responseSink: to?.responseSink ?? 'output',
+      },
+    };
+  }
+  if (cfg.type === 'python') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').PythonTypeOptions> | undefined;
+    return {
+      ...common,
+      type: 'python',
+      typeOptions: {
+        launchMode: (to?.launchMode ?? 'script') as import('../shared/types').PythonLaunchMode,
+        pythonPath: to?.pythonPath ?? '',
+        scriptPath: to?.scriptPath ?? '',
+        moduleName: to?.moduleName ?? '',
+        framework: (to?.framework ?? '') as import('../shared/types').PythonFramework,
+        frameworkCommand: to?.frameworkCommand ?? '',
+        pytestArgs: to?.pytestArgs ?? '',
+        customArgs: to?.customArgs ?? '',
+        buildRoot: to?.buildRoot ?? '',
       },
     };
   }

@@ -91,6 +91,32 @@ export function readyPatternsFor(cfg: RunConfig): RegExp[] {
       /running on https?:\/\//i,
     ];
   }
+  if (cfg.type === 'python') {
+    return [
+      // Flask dev server final line: ` * Running on http://127.0.0.1:5000`.
+      /\* Running on https?:\/\//i,
+      // Django runserver: `Starting development server at http://127.0.0.1:8000/`
+      // and `Quit the server with CONTROL-C.` (the latter is the very last line).
+      /Starting development server at https?:\/\//i,
+      /Quit the server with CONTROL-C/i,
+      // FastAPI / uvicorn: `Uvicorn running on http://0.0.0.0:8000` and
+      // `Application startup complete.`
+      /Uvicorn running on https?:\/\//i,
+      /Application startup complete/i,
+      // gunicorn: `Listening at: http://0.0.0.0:8000` and `Booting worker with pid: …`
+      /Listening at: https?:\/\//i,
+      // Starlette via uvicorn already covered. Generic "Listening on ..." form.
+      /Listening on https?:\/\//i,
+      // Celery worker: `celery@host ready.`
+      /celery@\S+ ready/i,
+      // Generic Python server conventions used by typer/click apps that
+      // wrap a server.
+      /server (is )?(running|listening) on/i,
+      /listening (on )?(port |:)\d+/i,
+      // Generic "...running on http(s)://..." form for ad-hoc framework wrappers.
+      /running on https?:\/\//i,
+    ];
+  }
   return [];
 }
 
@@ -179,6 +205,28 @@ export function failurePatternsFor(cfg: RunConfig): RegExp[] {
       /npm ERR!/,
       // Port already in use — Node throws this before the server binds.
       /Error: listen EADDRINUSE/,
+    ];
+  }
+  if (cfg.type === 'python') {
+    return [
+      // Uncaught exception traceback header — every Python crash starts here.
+      /^Traceback \(most recent call last\):/m,
+      // ImportError / ModuleNotFoundError on startup.
+      /^ModuleNotFoundError:/m,
+      /^ImportError:/m,
+      // Port already in use — common across Flask/Django/uvicorn.
+      /Address already in use/,
+      /OSError: \[Errno 98\]/,
+      // Django: `Error: That port is already in use.`
+      /That port is already in use/i,
+      // Flask CLI: `Error: While importing 'app', an ImportError was raised`
+      /^Error: (While importing|Could not (?:import|locate))/m,
+      // uvicorn: `ERROR:    Application startup failed. Exiting.`
+      /Application startup failed/i,
+      // gunicorn: `[ERROR] Worker (pid:…) was sent SIGTERM!` (boot failure).
+      /\[ERROR\] (?:Worker .* was sent|Connection in use)/,
+      // Celery: `consumer: Cannot connect to …` (broker unreachable).
+      /consumer: Cannot connect to /i,
     ];
   }
   return [];

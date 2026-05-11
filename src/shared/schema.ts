@@ -139,6 +139,24 @@ export const JavaTypeOptionsSchema = z
     }
   });
 
+export const PythonLaunchModeSchema = z.enum(['script', 'module', 'framework', 'pytest', 'custom']);
+export const PythonFrameworkSchema = z.enum([
+  '', 'django', 'fastapi', 'flask', 'uvicorn',
+  'gunicorn', 'celery', 'typer', 'starlette', 'click',
+]);
+
+export const PythonTypeOptionsSchema = z.object({
+  launchMode: PythonLaunchModeSchema,
+  pythonPath: z.string().default(''),
+  scriptPath: z.string().default(''),
+  moduleName: z.string().default(''),
+  framework: PythonFrameworkSchema.default(''),
+  frameworkCommand: z.string().default(''),
+  pytestArgs: z.string().default(''),
+  customArgs: z.string().default(''),
+  buildRoot: z.string().default(''),
+});
+
 export const CustomShellSchema = z.enum(['default', 'bash', 'sh', 'zsh', 'pwsh', 'cmd']);
 
 export const CustomCommandTypeOptionsSchema = z
@@ -378,6 +396,11 @@ export const RunConfigSchema = z.discriminatedUnion('type', [
     ...commonFields,
     type: z.literal('java'),
     typeOptions: JavaTypeOptionsSchema,
+  }),
+  z.object({
+    ...commonFields,
+    type: z.literal('python'),
+    typeOptions: PythonTypeOptionsSchema,
   }),
   z.object({
     ...commonFields,

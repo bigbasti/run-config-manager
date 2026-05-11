@@ -420,6 +420,37 @@ export function App() {
     post({ cmd: 'inspectContainer', containerId: id });
   }, [values]);
 
+  // Python: when the user picks a framework (or it changes via streaming
+  // detection), fill the optional `port` field with the framework's
+  // convention default — but only if the field is currently blank. This
+  // is the "I just clicked flask, why didn't 5000 appear?" UX fix.
+  // mirrors detectPythonPort.ts's framework defaults; kept inline because
+  // the webview can't reach into the extension-side static map.
+  const PYTHON_FRAMEWORK_DEFAULT_PORTS: Record<string, number | undefined> = {
+    django: 8000,
+    fastapi: 8000,
+    flask: 5000,
+    uvicorn: 8000,
+    gunicorn: 8000,
+    starlette: 8000,
+    celery: undefined,
+    typer: undefined,
+    click: undefined,
+    '': undefined,
+  };
+  useEffect(() => {
+    if (values.type !== 'python') return;
+    const to = values.typeOptions as { framework?: string; launchMode?: string } | undefined;
+    if (!to || to.launchMode !== 'framework') return;
+    const fw = to.framework ?? '';
+    const def = PYTHON_FRAMEWORK_DEFAULT_PORTS[fw];
+    if (def === undefined) return;
+    const currentPort = (values as { port?: number }).port;
+    if (currentPort === undefined || currentPort === null || currentPort === 0) {
+      setValues(v => ({ ...v, port: def }));
+    }
+  }, [values.type, (values.typeOptions as any)?.framework, (values.typeOptions as any)?.launchMode]);
+
   // Reload .env file status whenever the envFiles array changes. Fires on
   // init (so editing a saved config shows accurate counts and a red row
   // for any file that's gone missing on disk), on configPatch streaming,
