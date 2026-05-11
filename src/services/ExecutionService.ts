@@ -16,6 +16,9 @@ import {
 import { makePrettifier } from './prettyOutput';
 import { loadEnvFiles } from './EnvFileLoader';
 import { runPythonInTerminal } from './runInTerminal';
+import { checkDependencies } from '../adapters/python/checkDependencies';
+import * as fsModule from 'fs';
+import * as pathModule from 'path';
 
 interface Entry {
   execution: vscode.TaskExecution;
@@ -162,6 +165,16 @@ export class ExecutionService {
     if (cfg.type === 'http-request') {
       await this.runHttpRequest(cfg, folder);
       return undefined;
+    }
+
+    // Python pre-flight: dependency check. If the project's manifest
+    // declares packages the chosen interpreter doesn't have, give the
+    // user a one-click [Install all] prompt before launching. Saves
+    // a round-trip through the reactive ModuleNotFoundError flow,
+    // especially on fresh clones where every dep is missing.
+    if (cfg.type === 'python') {
+      const proceed = await this.preflightPythonDependencies(cfg, folder);
+      if (!proceed) return undefined;
     }
 
     // Resolve ${VAR} / ${env:VAR} / ${workspaceFolder} etc. in every text field
@@ -490,6 +503,87 @@ export class ExecutionService {
         }
       }, 3000);
     }
+  }
+
+  // Pre-flight dependency check for Python configs. Returns false to
+  // abort the launch (user picked Cancel, or chose to install first
+  // and decide manually when to retry). Returns true to proceed.
+  //
+  // Cached per (interpreter, depFileMtime) so repeat Run clicks
+  // within the same session don't re-spawn `pip list`. The cache key
+  // includes the manifest mtimes so editing pyproject.toml /
+  // requirements.txt invalidates the cached "ok" verdict.
+  private dependencyCheckCache = new Map<string, 'ok' | 'asked'>();
+
+  private async preflightPythonDependencies(
+    cfg: RunConfig,
+    folder: vscode.WorkspaceFolder,
+  ): Promise<boolean> {
+    if (cfg.type !== 'python') return true;
+    const projectRoot = resolveProjectUri(folder, cfg.projectPath).fsPath;
+    const pythonHome = cfg.typeOptions.pythonPath || '';
+
+    // Build a cache key that includes manifest mtimes so a project edit
+    // invalidates the cached verdict.
+    let mtimeKey = '';
+    for (const f of ['pyproject.toml', 'requirements.txt']) {
+      try {
+        const stat = await fsModule.promises.stat(pathModule.join(projectRoot, f));
+        mtimeKey += `:${f}=${stat.mtimeMs}`;
+      } catch { /* not present */ }
+    }
+    const cacheKey = `${pythonHome}|${projectRoot}|${mtimeKey}`;
+    if (this.dependencyCheckCache.get(cacheKey) === 'ok') return true;
+    if (this.dependencyCheckCache.get(cacheKey) === 'asked') return true; // user already chose; don't nag
+
+    const result = await checkDependencies(pythonHome, projectRoot);
+    if (result.status === 'unknown' || result.status === 'ok') {
+      this.dependencyCheckCache.set(cacheKey, 'ok');
+      return true;
+    }
+
+    // status === 'missing' — surface the prompt.
+    const previewCount = 3;
+    const preview = result.missingPackages.slice(0, previewCount).join(', ');
+    const overflow = result.missingPackages.length > previewCount
+      ? ` (+${result.missingPackages.length - previewCount} more)`
+      : '';
+    const installLabel = result.installCommand?.label ?? 'Install dependencies';
+
+    const choice = await vscode.window.showWarningMessage(
+      `"${cfg.name}" has unmet dependencies: ${preview}${overflow}. Install before running?`,
+      { modal: false },
+      'Install all',
+      'Run anyway',
+    );
+
+    // Mark as asked so a second click on Run doesn't pop the same
+    // dialog if the user already saw it. Cleared on the next manifest
+    // edit (mtimeKey change) so the prompt comes back when the project
+    // adds a new dep.
+    this.dependencyCheckCache.set(cacheKey, 'asked');
+
+    if (choice === 'Install all') {
+      // Spawn the install in a fresh terminal; don't auto-launch the
+      // config afterward — the user can click Run again when the
+      // install finishes (we don't have a clean signal that it did).
+      if (result.installCommand) {
+        runPythonInTerminal(
+          pythonHome,
+          result.installCommand.args,
+          projectRoot,
+          installLabel,
+        );
+      }
+      // Aborts THIS run — the user explicitly chose to install first.
+      return false;
+    }
+    if (choice === 'Run anyway') {
+      return true;
+    }
+    // User dismissed the dialog (clicked the X / pressed escape) — abort
+    // to be safe; they can click Run again.
+    return false;
   }
 
   async stop(configId: string): Promise<void> {

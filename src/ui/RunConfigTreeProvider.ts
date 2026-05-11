@@ -9,7 +9,7 @@ import type { GroupService } from '../services/GroupService';
 import type { DependencyOrchestrator, OrchestrationStatus } from '../services/DependencyOrchestrator';
 import type { NativeRunnerService } from '../services/NativeRunnerService';
 import { parseDependencyRef, rcmRef } from '../services/dependencyCandidates';
-import { resolveBuildContext, resolveNpmContext } from '../services/buildActions';
+import { resolveBuildContext, resolveNpmContext, resolvePythonContext } from '../services/buildActions';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 import { iconForConfig, brandIconUri } from './iconForConfig';
@@ -330,7 +330,14 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
       ? debuggable ? 'configRunning' : 'configRunningNoDebug'
       : debuggable ? 'configIdle' : 'configIdleNoDebug';
     const npmCtx = !buildCtx && folder ? resolveNpmContext(n.config, folder) : null;
-    const toolSuffix = buildCtx ? `:${buildCtx.tool}` : npmCtx ? ':npm' : '';
+    const pythonCtx = !buildCtx && !npmCtx && folder ? resolvePythonContext(n.config, folder) : null;
+    const toolSuffix = buildCtx
+      ? `:${buildCtx.tool}`
+      : npmCtx
+        ? ':npm'
+        : pythonCtx
+          ? ':python'
+          : '';
     const groupSuffix = n.config.group ? ':grouped' : '';
     item.contextValue = `${baseContextValue}${toolSuffix}${groupSuffix}`;
     // Click behavior: running/preparing configs reveal the task terminal;

@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as os from 'os';
+import * as path from 'path';
 import { ConfigStore } from './services/ConfigStore';
 import { RunConfigService } from './services/RunConfigService';
 import { ProjectScanner } from './services/ProjectScanner';
@@ -23,7 +25,7 @@ import { EditorPanel } from './ui/EditorPanel';
 import { NativeRunnerService, type NativeLaunch, type NativeTask } from './services/NativeRunnerService';
 import { buildDependencyOptions, rcmRef } from './services/dependencyCandidates';
 import { DependencyOrchestrator } from './services/DependencyOrchestrator';
-import { resolveBuildContext, buildCommandFor, buildActionLabel, resolveNpmContext, npmCommandFor, npmActionLabel, type NpmAction } from './services/buildActions';
+import { resolveBuildContext, buildCommandFor, buildActionLabel, resolveNpmContext, npmCommandFor, npmActionLabel, resolvePythonContext, pythonCommandFor, pythonActionLabel, type NpmAction, type PythonAction } from './services/buildActions';
 import { GroupService } from './services/GroupService';
 import {
   NativeLaunchContentProvider,
@@ -519,6 +521,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('runConfig.npmAction.install', (arg: ConfigNodeArg) => runNpmActionFor(arg, 'install', store, svc)),
     vscode.commands.registerCommand('runConfig.npmAction.update',  (arg: ConfigNodeArg) => runNpmActionFor(arg, 'update',  store, svc)),
     vscode.commands.registerCommand('runConfig.npmAction.prune',   (arg: ConfigNodeArg) => runNpmActionFor(arg, 'prune',   store, svc)),
+    vscode.commands.registerCommand('runConfig.pythonAction.installEditable',     (arg: ConfigNodeArg) => runPythonActionFor(arg, 'installEditable',     store)),
+    vscode.commands.registerCommand('runConfig.pythonAction.installRequirements', (arg: ConfigNodeArg) => runPythonActionFor(arg, 'installRequirements', store)),
+    vscode.commands.registerCommand('runConfig.pythonAction.upgrade',             (arg: ConfigNodeArg) => runPythonActionFor(arg, 'upgrade',             store)),
+    vscode.commands.registerCommand('runConfig.pythonAction.freeze',              (arg: ConfigNodeArg) => runPythonActionFor(arg, 'freeze',              store)),
+    vscode.commands.registerCommand('runConfig.pythonAction.list',                (arg: ConfigNodeArg) => runPythonActionFor(arg, 'list',                store)),
 
     // --- Groups (user-defined) ---
 
@@ -1002,6 +1009,69 @@ async function runNpmActionFor(
     await vscode.tasks.executeTask(task);
   } catch (e) {
     vscode.window.showErrorMessage(`npm action failed to start: ${(e as Error).message}`);
+  }
+}
+
+async function runPythonActionFor(
+  arg: any,
+  action: PythonAction,
+  store: ConfigStore,
+): Promise<void> {
+  let cfg: RunConfig | undefined;
+  let folderKey: string | undefined;
+  if (arg?.kind === 'config') { folderKey = arg.folderKey; cfg = arg.config; }
+  if (!cfg || !folderKey) return;
+  const folder = store.getFolder(folderKey);
+  if (!folder) return;
+  const ctx = resolvePythonContext(cfg, folder);
+  if (!ctx) {
+    vscode.window.showWarningMessage(`"${cfg.name}" is not a Python config.`);
+    return;
+  }
+
+  // Pre-flight per action: gate installs that need a manifest. Without
+  // this guard, "Install requirements" on a project without
+  // requirements.txt would fail noisily; "Install (editable)" on a
+  // project without pyproject.toml would error from pip itself. We
+  // trade those for clearer warnings up front.
+  if (action === 'installRequirements' && ctx.manifestKind !== 'requirements' && ctx.manifestKind !== 'pyproject+requirements') {
+    vscode.window.showWarningMessage(
+      `"${cfg.name}" project has no requirements.txt at ${ctx.cwd}. Try "Install (editable)" instead.`,
+    );
+    return;
+  }
+  if (action === 'installEditable' && ctx.manifestKind !== 'pyproject' && ctx.manifestKind !== 'pyproject+requirements') {
+    vscode.window.showWarningMessage(
+      `"${cfg.name}" project has no pyproject.toml at ${ctx.cwd}. Try "Install requirements" instead.`,
+    );
+    return;
+  }
+
+  // Resolve the python binary (handles empty pythonPath → PATH lookup,
+  // and POSIX vs Windows). Reuses the shared interpreter-binary helper
+  // shape from runInTerminal.
+  const isWin = os.platform() === 'win32';
+  const bin = !ctx.pythonPath
+    ? 'python3'
+    : isWin
+      ? path.join(ctx.pythonPath, 'python.exe')
+      : path.join(ctx.pythonPath, 'bin', 'python3');
+  const args = pythonCommandFor(ctx, action);
+  const execution = new vscode.ShellExecution(bin, args, { cwd: ctx.cwd });
+  const taskName = `${cfg.name} · ${pythonActionLabel(action).toLowerCase()}`;
+  const task = new vscode.Task(
+    { type: 'rcm-python', configId: cfg.id, action } as any,
+    folder,
+    taskName,
+    'Run Configurations',
+    execution,
+    [],
+  );
+  log.info(`python action: ${taskName} (cwd=${ctx.cwd}, py=${bin})`);
+  try {
+    await vscode.tasks.executeTask(task);
+  } catch (e) {
+    vscode.window.showErrorMessage(`Python action failed to start: ${(e as Error).message}`);
   }
 }
 
