@@ -32,6 +32,7 @@ import {
   taskViewUri,
 } from './ui/NativeLaunchContentProvider';
 import { PortViewerPanel } from './ui/PortViewerPanel';
+import { brandIconUri } from './ui/iconForConfig';
 import { log, initLogger } from './utils/logger';
 import type { RunConfig, RunConfigType } from './shared/types';
 import type { InvalidConfigEntry } from './shared/types';
@@ -800,7 +801,17 @@ async function addConfig(
   const projectUri = projectFolderUris[0];
 
   const typePick = await vscode.window.showQuickPick(
-    registry.all().map(a => ({ label: a.label, value: a.type as RunConfigType })),
+    // Sort alphabetically by display label and attach the matching brand
+    // icon so the picker mirrors what the tree shows for already-created
+    // configs. iconPath accepts a {light, dark} URI pair which VS Code
+    // resolves per active theme.
+    registry.all()
+      .map(a => ({
+        label: a.label,
+        value: a.type as RunConfigType,
+        iconPath: brandIconUri(brandForType(a.type as RunConfigType), context.extensionUri),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
     { placeHolder: 'Run configuration type' },
   );
   if (!typePick) return;
@@ -1407,6 +1418,27 @@ function collectFieldErrors(cfg: Record<string, unknown>): Array<{ fieldKey: str
     fieldKey: issue.path.join('.'),
     message: issue.message,
   }));
+}
+
+// Maps a RunConfigType to its brand icon name under media/icons/ for use in
+// the type-pick QuickPick. Mirrors `iconForConfig.computeBrand` but takes
+// just the type (the QuickPick has no full RunConfig to inspect, so the
+// npm-subtype sniffing the tree does isn't relevant here — pre-creation,
+// the user hasn't picked a folder's actual contents yet).
+function brandForType(type: RunConfigType): string {
+  switch (type) {
+    case 'spring-boot':    return 'spring-boot';
+    case 'tomcat':         return 'tomcat';
+    case 'quarkus':        return 'quarkus';
+    case 'java':           return 'java';
+    case 'python':         return 'python';
+    case 'maven-goal':     return 'maven';
+    case 'gradle-task':    return 'gradle';
+    case 'custom-command': return 'bash';
+    case 'docker':         return 'docker';
+    case 'http-request':   return 'http-request';
+    case 'npm':            return 'npm';
+  }
 }
 
 export function deactivate(): void {
