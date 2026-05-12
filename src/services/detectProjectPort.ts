@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { log } from '../utils/logger';
+import { detectNpmFramework } from '../adapters/npm/detectNpmFramework';
 
 // Detects the declared HTTP port of a project by reading its own config
 // files. Deliberately NOT a guess — returns null when nothing is found so
@@ -153,22 +154,19 @@ export async function detectNpmPort(
     return fromScript;
   }
 
-  // Fall back to framework convention defaults. These are the actual published
-  // defaults — not arbitrary guesses — and users override them explicitly
-  // when they diverge, which we catch via scan-for-port above.
-  const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-  const hasScriptToken = (t: string) => Object.values(scripts).some(s => new RegExp(`\\b${t}\\b`).test(s));
-  const hit = (port: number, framework: string) => {
-    log.info(`detectNpmPort: matched ${framework} convention → port=${port}`);
-    return port;
-  };
-  if ('@angular/core' in deps || hasScriptToken('ng'))          return hit(4200, 'Angular');
-  if ('next' in deps || hasScriptToken('next'))                 return hit(3000, 'Next.js');
-  if ('react-scripts' in deps || hasScriptToken('react-scripts')) return hit(3000, 'React-Scripts');
-  if ('svelte' in deps || hasScriptToken('sveltekit') || hasScriptToken('svelte-kit')) return hit(5173, 'SvelteKit');
-  if ('vue' in deps || hasScriptToken('vue-cli-service'))       return hit(8080, 'Vue CLI');
-  if ('vite' in deps || hasScriptToken('vite'))                 return hit(5173, 'Vite');
-  // Plain Node / Express / generic scripts: no reliable default.
+  // Fall back to framework convention defaults via the shared detector.
+  // This is the same data the form's "Detected: X" badge uses, so
+  // changes to the framework table propagate to both paths automatically.
+  const scriptKeys = Object.keys(scripts);
+  const dependencies = [
+    ...Object.keys(pkg.dependencies ?? {}),
+    ...Object.keys(pkg.devDependencies ?? {}),
+  ];
+  const fw = await detectNpmFramework(projectRoot, scriptKeys, scripts, dependencies);
+  if (fw.defaultPort !== null) {
+    log.info(`detectNpmPort: matched ${fw.name} convention → port=${fw.defaultPort}`);
+    return fw.defaultPort;
+  }
   log.debug(`detectNpmPort: no framework convention matched for script "${scriptName}"`);
   return null;
 }

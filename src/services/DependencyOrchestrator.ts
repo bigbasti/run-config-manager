@@ -233,6 +233,14 @@ export class DependencyOrchestrator {
       throw new Error(`Dependency "${step.ref}" not found — may have been renamed or removed.`);
     }
 
+    // Was this dependency already running BEFORE the orchestrator
+    // touched it? If yes, the configured `delaySeconds` is meant to
+    // give a freshly-started service time to come up — there's nothing
+    // to wait for when the service is already up. Skip the delay so
+    // the chain doesn't pause for no reason on a re-run where the
+    // dependency is still alive from a previous launch.
+    const alreadyRunning = this.isStepAlreadyRunning(step);
+
     if (step.resolved.kind === 'rcm') {
       const cfg = step.resolved.cfg;
       const folder = this.folderFor(cfg);
@@ -257,13 +265,35 @@ export class DependencyOrchestrator {
     this.emitter.fire(snap);
 
     if (step.delaySeconds && step.delaySeconds > 0) {
-      snap.statuses.set(step.ref, 'delaying');
-      this.emitter.fire(snap);
-      log.info(`Dep "${step.ref}": waiting ${step.delaySeconds}s before continuing.`);
-      await sleep(step.delaySeconds * 1000);
-      snap.statuses.set(step.ref, 'running');
-      this.emitter.fire(snap);
+      if (alreadyRunning) {
+        log.info(`Dep "${step.ref}": skipping ${step.delaySeconds}s delay — already running before orchestration.`);
+      } else {
+        snap.statuses.set(step.ref, 'delaying');
+        this.emitter.fire(snap);
+        log.info(`Dep "${step.ref}": waiting ${step.delaySeconds}s before continuing.`);
+        await sleep(step.delaySeconds * 1000);
+        snap.statuses.set(step.ref, 'running');
+        this.emitter.fire(snap);
+      }
     }
+  }
+
+  // True when the dependency's runtime state is already 'running' (or
+  // the equivalent per kind) at the moment the orchestrator looks at
+  // it. Used to skip the post-start delay — it's a "give the new
+  // process time to come up" timer, useless when nothing was started.
+  private isStepAlreadyRunning(step: PlanStep): boolean {
+    if (!step.resolved) return false;
+    if (step.resolved.kind === 'rcm') {
+      const cfg = step.resolved.cfg;
+      if (cfg.type === 'docker') return this.docker.isRunning(cfg.typeOptions.containerId);
+      return this.exec.isRunning(cfg.id) || this.dbg.isRunning(cfg.id);
+    }
+    if (step.resolved.kind === 'launch') {
+      return this.native.isLaunchRunning(step.resolved.launch.name);
+    }
+    // task
+    return this.native.isTaskRunning(step.resolved.source, step.resolved.taskName);
   }
 
   private folderFor(cfg: RunConfig): vscode.WorkspaceFolder | undefined {

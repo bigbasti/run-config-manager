@@ -103,3 +103,34 @@ describe('NpmAdapter form schema — Node field', () => {
     expect((node as any).options).toEqual([]);
   });
 });
+
+describe('NpmAdapter form schema — Detected framework badge', () => {
+  test('badge appears when context.npmFramework.name is set', () => {
+    const adapter = new NpmAdapter();
+    const schema = adapter.getFormSchema({
+      scripts: ['dev', 'build'],
+      npmFramework: {
+        name: 'nextjs',
+        source: 'next.config.ts',
+        defaultScript: 'dev',
+        defaultPort: 3000,
+      },
+    });
+    const badge = schema.typeSpecific.find(f => f.key === 'npmFrameworkBadge');
+    expect(badge).toBeDefined();
+    expect(badge!.kind).toBe('info');
+    expect((badge as any).content.banner.text).toContain('Next.js');
+    expect((badge as any).content.banner.text).toContain('next.config.ts');
+  });
+
+  test('no badge when npmFramework is null or absent', () => {
+    const adapter = new NpmAdapter();
+    const schema = adapter.getFormSchema({
+      scripts: ['build'],
+      npmFramework: { name: null, source: '', defaultScript: 'build', defaultPort: null },
+    });
+    expect(schema.typeSpecific.find(f => f.key === 'npmFrameworkBadge')).toBeUndefined();
+    const noContext = adapter.getFormSchema({});
+    expect(noContext.typeSpecific.find(f => f.key === 'npmFrameworkBadge')).toBeUndefined();
+  });
+});

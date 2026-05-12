@@ -3,6 +3,7 @@ import type { RuntimeAdapter, DetectionResult, StreamingPatch } from '../Runtime
 import type { RunConfig } from '../../shared/types';
 import type { FormField, FormSchema } from '../../shared/formSchema';
 import { readPackageJsonInfo } from './detectPackageJson';
+import { detectNpmFramework, type NpmFrameworkInfo } from './detectNpmFramework';
 import { splitArgs } from './splitArgs';
 import { log } from '../../utils/logger';
 import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
@@ -59,15 +60,25 @@ export class NpmAdapter implements RuntimeAdapter {
     try {
       const info = await readPackageJsonInfo(folder);
       if (info) {
+        const fw = await detectNpmFramework(
+          folder,
+          info.scripts,
+          info.pkgScripts,
+          info.dependencies,
+        );
         const port = await safeNpmPort(folder, info.defaultScript);
+        const effectivePort = port ?? fw.defaultPort ?? undefined;
         emit({
-          contextPatch: { scripts: info.scripts },
+          contextPatch: {
+            scripts: info.scripts,
+            npmFramework: fw,
+          },
           defaultsPatch: {
             typeOptions: {
               scriptName: info.defaultScript,
               packageManager: info.packageManager,
             },
-            ...(port !== undefined ? { port } : {}),
+            ...(effectivePort !== undefined ? { port: effectivePort } : {}),
           } as any,
         });
       }
@@ -81,6 +92,18 @@ export class NpmAdapter implements RuntimeAdapter {
 
   getFormSchema(context: Record<string, unknown>): FormSchema {
     const scripts = (context.scripts as string[] | undefined) ?? [];
+    const fw = context.npmFramework as NpmFrameworkInfo | undefined;
+    const frameworkBadge: FormField | null = fw && fw.name ? {
+      kind: 'info',
+      key: 'npmFrameworkBadge',
+      label: 'Detected framework',
+      content: {
+        banner: {
+          kind: 'muted',
+          text: `Detected: ${frameworkDisplayName(fw.name)} (${fw.source})`,
+        },
+      },
+    } : null;
     const scriptField: FormField = scripts.length
       ? {
           kind: 'select',
@@ -123,6 +146,7 @@ export class NpmAdapter implements RuntimeAdapter {
       ],
       typeSpecific: [
         scriptField,
+        ...(frameworkBadge ? [frameworkBadge] : []),
         {
           kind: 'selectOrCustom',
           key: 'typeOptions.nodePath',
@@ -266,5 +290,25 @@ async function safeNpmPort(folder: vscode.Uri, defaultScript: string): Promise<n
   } catch (e) {
     log.debug(`safeNpmPort: ${(e as Error).message}`);
     return undefined;
+  }
+}
+
+// Maps the internal framework key to the user-facing display name. Kept
+// next to NpmAdapter so any future entries land in one place.
+function frameworkDisplayName(name: NpmFrameworkInfo['name']): string {
+  switch (name) {
+    case 'angular':   return 'Angular';
+    case 'nextjs':    return 'Next.js';
+    case 'nuxt':      return 'Nuxt';
+    case 'vite':      return 'Vite';
+    case 'sveltekit': return 'SvelteKit';
+    case 'svelte':    return 'Svelte';
+    case 'vue':       return 'Vue (CLI)';
+    case 'react':     return 'Create React App';
+    case 'astro':     return 'Astro';
+    case 'remix':     return 'Remix';
+    case 'gatsby':    return 'Gatsby';
+    case 'storybook': return 'Storybook';
+    case null:        return '';
   }
 }

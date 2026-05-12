@@ -176,6 +176,10 @@ export class ExecutionService {
       const proceed = await this.preflightPythonDependencies(cfg, folder);
       if (!proceed) return undefined;
     }
+    if (cfg.type === 'npm') {
+      const proceed = await this.preflightNpmDependencies(cfg, folder);
+      if (!proceed) return undefined;
+    }
 
     // Resolve ${VAR} / ${env:VAR} / ${workspaceFolder} etc. in every text field
     // of the config. Unresolved variables become empty strings and are logged.
@@ -583,6 +587,82 @@ export class ExecutionService {
     }
     // User dismissed the dialog (clicked the X / pressed escape) — abort
     // to be safe; they can click Run again.
+    return false;
+  }
+
+  // Cache for npm dependency pre-flight. Keyed by
+  // `<projectRoot>|<package.json mtime>|<lockfile mtime>` so a fresh
+  // `npm install` (which updates the lockfile mtime) re-fires the
+  // check on the next Run.
+  private npmDependencyCheckCache = new Map<string, 'ok' | 'asked'>();
+
+  private async preflightNpmDependencies(
+    cfg: RunConfig,
+    folder: vscode.WorkspaceFolder,
+  ): Promise<boolean> {
+    if (cfg.type !== 'npm') return true;
+    const projectRoot = resolveProjectUri(folder, cfg.projectPath).fsPath;
+
+    // Build a cache key that includes manifest + lockfile mtimes so
+    // `npm install` automatically invalidates the prompt.
+    let mtimeKey = '';
+    try {
+      const stat = await fsModule.promises.stat(pathModule.join(projectRoot, 'package.json'));
+      mtimeKey += `:pkg=${stat.mtimeMs}`;
+    } catch {
+      // No package.json — nothing to install. Let the launch fail
+      // through its own error path.
+      return true;
+    }
+    for (const lock of ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml']) {
+      try {
+        const stat = await fsModule.promises.stat(pathModule.join(projectRoot, lock));
+        mtimeKey += `:${lock}=${stat.mtimeMs}`;
+        break; // first found wins
+      } catch { /* not present */ }
+    }
+    const cacheKey = `${projectRoot}|${mtimeKey}`;
+    if (this.npmDependencyCheckCache.get(cacheKey)) return true;
+
+    // Fast path: node_modules exists → no prompt.
+    try {
+      const stat = await fsModule.promises.stat(pathModule.join(projectRoot, 'node_modules'));
+      if (stat.isDirectory()) {
+        this.npmDependencyCheckCache.set(cacheKey, 'ok');
+        return true;
+      }
+    } catch { /* not present — fall through to prompt */ }
+
+    const pm = cfg.typeOptions.packageManager ?? 'npm';
+    const choice = await vscode.window.showWarningMessage(
+      `"${cfg.name}" depends on packages that aren't installed. Run \`${pm} install\` first?`,
+      { modal: false },
+      'Install',
+      'Run anyway',
+    );
+    this.npmDependencyCheckCache.set(cacheKey, 'asked');
+
+    if (choice === 'Install') {
+      // Spawn the install via the same Task-based plumbing the
+      // right-click `npm: Install` action uses. That path doesn't
+      // suffer the rc-init race that plagued createTerminal earlier.
+      const execution = new vscode.ShellExecution(pm, ['install'], { cwd: projectRoot });
+      const task = new vscode.Task(
+        { type: 'rcm-npm-preflight', configId: cfg.id } as any,
+        folder,
+        `${cfg.name} · ${pm} install`,
+        'Run Configurations',
+        execution,
+        [],
+      );
+      try {
+        await vscode.tasks.executeTask(task);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Failed to start ${pm} install: ${(e as Error).message}`);
+      }
+      return false; // abort this run; user will click Run again after install
+    }
+    if (choice === 'Run anyway') return true;
     return false;
   }
 
