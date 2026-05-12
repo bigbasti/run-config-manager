@@ -60,6 +60,12 @@ export interface PrepareContext {
   // Resolved debug port that the caller will attach to. Tomcat uses this to
   // set JPDA_ADDRESS.
   debugPort?: number;
+  // NEW — when true, the adapter should inject JMX flags via its
+  // canonical env channel (JAVA_TOOL_OPTIONS / vmArgs / CATALINA_OPTS).
+  // ExecutionService reads `monitorPort` and ensures the bundled
+  // agent connects to the same port after launch.
+  monitor?: boolean;
+  monitorPort?: number;
 }
 
 export interface PrepareResult {

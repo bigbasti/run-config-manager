@@ -79,6 +79,12 @@ export class RunTerminal implements vscode.Pseudoterminal {
     this.kill();
   }
 
+  // Public getter for the spawned shell's pid. Held by MonitoringService
+  // for liveness signals — the agent itself connects via JMX, not pid.
+  get childPid(): number | undefined {
+    return this.child?.pid;
+  }
+
   // User-typed input. Two phases:
   //   - while the child is alive: Ctrl+C / Ctrl+D forwards a stop;
   //     other keys are ignored.

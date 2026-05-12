@@ -111,7 +111,16 @@ export type Outbound =
   // Loads (or reloads) the listed .env files and reports per-file status
   // + parsed variables. Fired on init/edit/add/remove so the form pills
   // always reflect the current files-on-disk.
-  | { cmd: 'loadEnvFiles'; paths: string[] };
+  | { cmd: 'loadEnvFiles'; paths: string[] }
+  // Monitor panel — webview asks the extension to write a heap dump for
+  // the currently-monitored config. Extension shows a save dialog, then
+  // forwards the path to MonitoringService.saveHeapDump and posts back
+  // either `monitor.dumpComplete` or `monitor.error`.
+  | { cmd: 'monitor.saveHeapDump'; configId: string }
+  // Monitor panel — pause/resume the agent's histogram emissions while
+  // the user inspects the tree. Extension forwards to
+  // MonitoringService.setHistogramPaused.
+  | { cmd: 'monitor.setHistogramPaused'; configId: string; paused: boolean };
 
 // Field keys whose detection is still in flight (spinner rendered in-place).
 export type PendingFields = string[];
@@ -323,7 +332,30 @@ export type Inbound =
         errorDetail?: string;
       }>;
     }
-  | { cmd: 'error'; message: string };
+  | { cmd: 'error'; message: string }
+  // Monitor panel — pushed by MonitorPanel.pushState() and on every
+  // MonitoringService.onChanged emission. Carries the latest metrics tick
+  // for the panel's chart + analytics.
+  | {
+      cmd: 'monitor.tick';
+      configId: string;
+      metrics: import('../services/monitoring/AgentMessage').MetricsTick;
+    }
+  // Monitor panel — latest histogram snapshot (top-N rows by retained
+  // bytes). The webview groups by package via parseClassHistogram.
+  | {
+      cmd: 'monitor.histogram';
+      configId: string;
+      histogram: import('../services/monitoring/AgentMessage').HistogramSnapshot;
+    }
+  // Monitor panel — incremental progress while a heap dump is being
+  // written. Reserved for a future agent that streams progress; the
+  // current agent only emits dumpComplete.
+  | { cmd: 'monitor.dumpProgress'; configId: string; bytesWritten: number }
+  // Monitor panel — heap dump finished. Webview can show a toast / link.
+  | { cmd: 'monitor.dumpComplete'; configId: string; path: string }
+  // Monitor panel — agent or save-dump error. Surfaced in the panel UI.
+  | { cmd: 'monitor.error'; configId: string; message: string };
 
 // DTO mirrors TomcatPackage; install dir name is computed server-side
 // for parity with the JDK dialog's preview.

@@ -6,3 +6,4 @@ media/webview
 coverage
 # WSL / Windows NTFS ADS sidecar files for files downloaded from the internet.
 *:Zone.Identifier
+monitor-agent/target/*

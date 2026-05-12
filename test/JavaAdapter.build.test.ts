@@ -236,14 +236,25 @@ describe('JavaAdapter.prepareLaunch', () => {
     expect(p.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
   });
 
-  test('debug=true + gradle → JAVA_TOOL_OPTIONS (not MAVEN_OPTS)', async () => {
+  test('debug=true + gradle → init script (not JAVA_TOOL_OPTIONS, not MAVEN_OPTS)', async () => {
+    // JDWP via JAVA_TOOL_OPTIONS would land in BOTH the gradle daemon and
+    // the forked JavaExec JVM — the daemon binds the port first and the app
+    // fails. We use --init-script to scope jvmArgs to JavaExec only.
     const p = await adapter.prepareLaunch(
       cfg({ typeOptions: { launchMode: 'gradle' } }),
       folder as any,
       { debug: true, debugPort: 5099 },
     );
-    expect(p.env?.JAVA_TOOL_OPTIONS).toContain('-agentlib:jdwp');
+    expect(p.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
     expect(p.env?.MAVEN_OPTS).toBeUndefined();
+    expect(p.extraArgs?.[0]).toBe('--init-script');
+    const scriptPath = p.extraArgs?.[1];
+    expect(scriptPath).toBeDefined();
+    const fs = require('fs');
+    const body = fs.readFileSync(scriptPath, 'utf8');
+    expect(body).toContain('JavaExec');
+    expect(body).toContain('-agentlib:jdwp');
+    expect(body).toContain('address=*:5099');
   });
 
   test('debug=true + java-main → no env (launcher drives JDWP)', async () => {
@@ -266,14 +277,15 @@ describe('JavaAdapter.prepareLaunch', () => {
     expect(p.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
   });
 
-  test('debug=true + gradle-custom → JAVA_TOOL_OPTIONS', async () => {
+  test('debug=true + gradle-custom → init script (not JAVA_TOOL_OPTIONS)', async () => {
     const p = await adapter.prepareLaunch(
       cfg({ typeOptions: { launchMode: 'gradle-custom', customArgs: ':test' } }),
       folder as any,
       { debug: true, debugPort: 5099 },
     );
-    expect(p.env?.JAVA_TOOL_OPTIONS).toContain('-agentlib:jdwp');
+    expect(p.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
     expect(p.env?.MAVEN_OPTS).toBeUndefined();
+    expect(p.extraArgs?.[0]).toBe('--init-script');
   });
 
   test('colorOutput sets FORCE_COLOR', async () => {

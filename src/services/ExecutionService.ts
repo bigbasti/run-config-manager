@@ -17,6 +17,8 @@ import { makePrettifier } from './prettyOutput';
 import { loadEnvFiles } from './EnvFileLoader';
 import { runPythonInTerminal } from './runInTerminal';
 import { checkDependencies } from '../adapters/python/checkDependencies';
+import { MonitoringService } from './MonitoringService';
+import { allocateFreePort } from './monitoring/freePort';
 import * as fsModule from 'fs';
 import * as pathModule from 'path';
 
@@ -58,6 +60,10 @@ export interface RunOpts {
   // wire in JDWP flags. DebugService uses this to attach after the JVM boots.
   debug?: boolean;
   debugPort?: number;
+  // When true, ExecutionService allocates a free TCP port and threads it
+  // through prepareLaunch as monitorPort so JVM adapters add JMX flags.
+  // After launch, MonitoringService.attach is called to spin up the agent.
+  monitor?: boolean;
 }
 
 export class ExecutionService {
@@ -94,7 +100,13 @@ export class ExecutionService {
   readonly onRunningChanged = this.emitter.event;
   private taskEndSub: vscode.Disposable;
 
-  constructor(private readonly registry: AdapterRegistry) {
+  constructor(
+    private readonly registry: AdapterRegistry,
+    // Optional so existing callers/tests that don't care about JVM
+    // monitoring can construct an ExecutionService without wiring it.
+    // When omitted, attach/detach are simply skipped.
+    private readonly monitoring?: MonitoringService,
+  ) {
     this.taskEndSub = vscode.tasks.onDidEndTask(e => this.handleEnd(e.execution));
   }
 
@@ -190,17 +202,34 @@ export class ExecutionService {
       log.warn(`Unresolved variable(s) in "${cfg.name}": ${unresolved.join(', ')} (expanded to empty string)`);
     }
 
+    // Allocate a JMX port for monitoring up-front so we can pass it into
+    // prepareLaunch. If allocation fails the run still proceeds; we just
+    // don't enable monitoring.
+    let monitorPort: number | undefined;
+    if (opts?.monitor) {
+      try {
+        monitorPort = await allocateFreePort();
+      } catch (e) {
+        log.warn(`Could not allocate JMX port for monitoring: ${(e as Error).message}`);
+        vscode.window.showWarningMessage(
+          `Monitoring disabled: could not allocate a free JMX port. The run will continue without monitoring.`,
+        );
+      }
+    }
+
     // Let the adapter prep any filesystem state / env vars (Tomcat writes its
     // CATALINA_BASE scaffold here). prepareLaunch may override cwd.
     let prepared: { env?: Record<string, string>; cwd?: string; extraArgs?: string[]; cfg?: RunConfig } = {};
     if (adapter.prepareLaunch) {
       this.preparing.add(cfg.id);
       this.emitter.fire(cfg.id);
-      log.debug(`Preparing launch: ${cfg.name} (debug=${opts?.debug ?? false})`);
+      log.debug(`Preparing launch: ${cfg.name} (debug=${opts?.debug ?? false}, monitor=${Boolean(monitorPort)})`);
       try {
         prepared = await adapter.prepareLaunch(resolvedCfg, folder, {
           debug: opts?.debug ?? false,
           debugPort: opts?.debugPort,
+          monitor: Boolean(monitorPort),
+          monitorPort,
         });
         const envKeys = Object.keys(prepared.env ?? {});
         if (envKeys.length || prepared.cwd) {
@@ -447,6 +476,18 @@ export class ExecutionService {
       this.running.set(cfg.id, entry);
       this.emitter.fire(cfg.id);
       log.info(`Started: ${cfg.name} (${command} ${args.join(' ')})`);
+
+      // Spin up the monitoring agent. Fire-and-forget — the agent retries
+      // its JMX connection internally for ~10 s, which covers the gap
+      // between this point and the JVM actually binding the JMX port.
+      // pid is best-effort: with CustomExecution we have the spawned
+      // shell's pid; with ShellExecution we don't. The agent connects
+      // via JMX, not pid, so 0 is acceptable as a placeholder.
+      if (monitorPort && this.monitoring) {
+        const pid = terminalRef.current?.childPid ?? 0;
+        this.monitoring.attach(cfg.id, pid, monitorPort);
+      }
+
       return execution;
     } catch (e) {
       log.error(`Failed to start ${cfg.name}`, e);
@@ -694,6 +735,10 @@ export class ExecutionService {
     }
     entry.watcher?.terminate();
     if (entry.readyTimer) clearTimeout(entry.readyTimer);
+    // Tear down the monitoring agent if it was attached. Safe to call
+    // even when this config wasn't monitored — detach is a no-op for
+    // unknown ids.
+    this.monitoring?.detach(configId);
     this.running.delete(configId);
     this.started.delete(configId);
     this.failed.delete(configId);
@@ -707,6 +752,8 @@ export class ExecutionService {
         // Main task ended — also kill the watcher.
         entry.watcher?.terminate();
         if (entry.readyTimer) clearTimeout(entry.readyTimer);
+        // The JVM is gone; tear the monitoring agent down too.
+        this.monitoring?.detach(id);
         this.running.delete(id);
         this.started.delete(id);
         this.failed.delete(id);

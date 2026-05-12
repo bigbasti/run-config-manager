@@ -8,6 +8,7 @@ import { resolveProjectUri } from '../../utils/paths';
 import { gradleModulePrefix, findGradleRoot } from '../spring-boot/findBuildRoot';
 import { findTomcatArtifacts } from './detectTomcat';
 import { log } from '../../utils/logger';
+import { buildMonitorJvmArgs } from '../../services/monitoring/buildMonitorJvmArgs';
 
 // CATALINA_BASE scaffold location: <workspace>/.vscode/rcm-tomcat/<configId>/.
 // We create a minimal tree that Tomcat recognises — conf/, logs/, temp/,
@@ -54,8 +55,16 @@ export async function prepareTomcatLaunch(
   };
   if (to.jdkPath) env.JAVA_HOME = to.jdkPath;
 
+  // Monitor (JMX) flags. Tomcat's canonical channel is CATALINA_OPTS — the
+  // catalina.sh launcher merges it onto the java command line for the
+  // Tomcat JVM. Composes cleanly with debug JDWP added below.
+  const monitorArgs: string[] = ctx.monitor && ctx.monitorPort
+    ? buildMonitorJvmArgs(ctx.monitorPort)
+    : [];
+
   const catalinaOpts: string[] = [];
   if (to.vmOptions.trim()) catalinaOpts.push(to.vmOptions.trim());
+  if (monitorArgs.length) catalinaOpts.push(...monitorArgs);
   // Spring profiles: if any were selected, pass them through as the standard
   // -Dspring.profiles.active system property. Harmless when the webapp isn't
   // Spring-based (the property is simply ignored).

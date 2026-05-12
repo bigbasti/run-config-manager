@@ -13,6 +13,7 @@ import { resolveProjectUri } from '../../utils/paths';
 import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
+import { buildMonitorJvmArgs } from '../../services/monitoring/buildMonitorJvmArgs';
 
 const VAR_SYNTAX_HINT =
   'Supports `${VAR}` and `${env:VAR}` (environment variables), `${workspaceFolder}`, `${userHome}`, and `${cwd}` / `${projectPath}`. Unresolved variables expand to an empty string at launch.';
@@ -354,8 +355,8 @@ export class QuarkusAdapter implements RuntimeAdapter {
   async prepareLaunch(
     cfg: RunConfig,
     _folder: vscode.WorkspaceFolder,
-    _ctx: { debug: boolean; debugPort?: number },
-  ): Promise<{ env?: Record<string, string> }> {
+    ctx: { debug: boolean; debugPort?: number; monitor?: boolean; monitorPort?: number },
+  ): Promise<{ env?: Record<string, string>; cfg?: RunConfig }> {
     if (cfg.type !== 'quarkus') return {};
     const env: Record<string, string> = {};
     if (cfg.typeOptions.colorOutput) {
@@ -365,7 +366,28 @@ export class QuarkusAdapter implements RuntimeAdapter {
     if (cfg.typeOptions.jdkPath) {
       env.JAVA_HOME = cfg.typeOptions.jdkPath;
     }
-    return { env };
+    // Monitor (JMX) flags. We route them through cfg.vmArgs so buildMaven /
+    // buildGradle wrap them in `-Djvm.args=...` — the documented Quarkus
+    // channel for "JVM args for the FORKED dev-mode JVM" (the
+    // quarkus-maven-plugin / quarkus-gradle-plugin reads -Djvm.args and
+    // applies it only to the spawned application JVM).
+    //
+    // We MUST NOT use JAVA_TOOL_OPTIONS — it's inherited by the gradle
+    // daemon / Maven JVM AND the forked Quarkus dev JVM, and the daemon
+    // binds the JMX port first, leaving the app JVM to fail with
+    //   ExportException: Port already in use: <port>
+    const monitorArgs: string[] = ctx.monitor && ctx.monitorPort
+      ? buildMonitorJvmArgs(ctx.monitorPort)
+      : [];
+    let updatedCfg: RunConfig | undefined;
+    if (monitorArgs.length) {
+      const existingVm = (cfg.vmArgs ?? '').trim();
+      const composedVm = existingVm
+        ? `${existingVm} ${monitorArgs.join(' ')}`
+        : monitorArgs.join(' ');
+      updatedCfg = { ...cfg, vmArgs: composedVm };
+    }
+    return { env, ...(updatedCfg ? { cfg: updatedCfg } : {}) };
   }
 
   getDebugConfig(cfg: RunConfig, folder: vscode.WorkspaceFolder): vscode.DebugConfiguration {

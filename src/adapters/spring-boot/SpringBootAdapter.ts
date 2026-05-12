@@ -40,6 +40,7 @@ const VAR_SYNTAX_HINT =
 const COLORED_LOG_PATTERN = "%clr(%d{yyyy-MM-dd\\'T\\'HH:mm:ss.SSS}){faint} %clr(%5p) %clr([%t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %clr(%replace(%m){'(/[a-zA-Z0-9/._-]+)','\u001b[94m$1\u001b[0m'}) %n%wEx";
 import { splitArgs } from '../npm/splitArgs';
 import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
+import { buildMonitorJvmArgs } from '../../services/monitoring/buildMonitorJvmArgs';
 
 export class SpringBootAdapter implements RuntimeAdapter {
   readonly type = 'spring-boot' as const;
@@ -591,10 +592,21 @@ export class SpringBootAdapter implements RuntimeAdapter {
   async prepareLaunch(
     cfg: RunConfig,
     folder: vscode.WorkspaceFolder,
-    ctx: { debug: boolean; debugPort?: number },
+    ctx: { debug: boolean; debugPort?: number; monitor?: boolean; monitorPort?: number },
   ): Promise<{ env?: Record<string, string>; extraArgs?: string[]; cfg?: RunConfig }> {
     if (cfg.type !== 'spring-boot') return {};
     const env: Record<string, string> = {};
+    // Monitor (JMX) flags. Channel per launchMode (forked-JVM-only — we MUST
+    // NOT use JAVA_TOOL_OPTIONS or the gradle daemon / Maven JVM would bind
+    // the JMX port first, leaving the actual app JVM to fail with
+    // ExportException: Port already in use):
+    //   java-main → composed into cfg.vmArgs (single JVM, lands on `java`)
+    //   maven     → composed into cfg.vmArgs → buildMaven wraps in
+    //               -Dspring-boot.run.jvmArguments (forked JVM only)
+    //   gradle    → init script targets bootRun.jvmArgs (forked JVM only)
+    const monitorArgs: string[] = ctx.monitor && ctx.monitorPort
+      ? buildMonitorJvmArgs(ctx.monitorPort)
+      : [];
     // JAVA_HOME steers which JDK Gradle / Maven use for compilation + forked
     // JVMs. Without this, `./gradlew bootRun` uses whatever JDK happened to
     // be on VS Code's PATH — typically too old for projects targeting
@@ -623,28 +635,50 @@ export class SpringBootAdapter implements RuntimeAdapter {
       const vm = (cfg.vmArgs ?? '').trim();
       if (vm) toolOptParts.push(vm);
     }
+    // Monitor (JMX) flags must NOT go through JAVA_TOOL_OPTIONS for the
+    // gradle/maven build-tool launch modes — JAVA_TOOL_OPTIONS is inherited
+    // by EVERY forked JVM, including the gradle daemon and Maven JVM. The
+    // daemon binds the JMX port FIRST, then the forked bootRun / spring-boot
+    // plugin JVM tries to bind the same port and fails:
+    //   java.rmi.server.ExportException: Port already in use: <port>
+    //
+    // Routing per launchMode (set up below this block):
+    //   - gradle  → init script targets bootRun.jvmArgs (forked JVM only)
+    //   - maven   → composed into cfg.vmArgs so buildMaven wraps in
+    //               -Dspring-boot.run.jvmArguments (forked JVM only)
+    //   - java-main → composed into cfg.vmArgs (single JVM, no fork)
     if (toolOptParts.length) {
       env.JAVA_TOOL_OPTIONS = toolOptParts.join(' ');
     }
 
-    // Gradle debug: write an init script that adds the JDWP arg only to
-    // the BootRun task's jvmArgs, then pass `--init-script <path>` to
-    // gradle via extraArgs. This is the IntelliJ approach.
+    // Gradle debug + monitor: write an init script that adds the JDWP agent
+    // and/or the JMX flags only to the BootRun task's jvmArgs, then pass
+    // `--init-script <path>` to gradle via extraArgs. This is the IntelliJ
+    // approach.
     //
-    // Why not JAVA_TOOL_OPTIONS for JDWP? It applies to *every* forked
-    // JVM, including the gradle daemon itself. The daemon JVM grabs
-    // port 5005 first, and bootRun's forked JVM then fails to bind:
-    //   ERROR: transport error 202: bind failed: Address already in use
-    // The init script targets BootRun in isolation, so the daemon stays
-    // a normal JVM and only the application gets the debug agent.
+    // Why not JAVA_TOOL_OPTIONS for JDWP / JMX? It applies to *every* forked
+    // JVM, including the gradle daemon itself. The daemon JVM grabs the port
+    // first, and bootRun's forked JVM then fails to bind:
+    //   - JDWP: "transport error 202: bind failed: Address already in use"
+    //   - JMX:  "ExportException: Port already in use: <port>"
+    // The init script targets BootRun in isolation, so the daemon stays a
+    // normal JVM and only the application gets the agents.
     let extraArgs: string[] | undefined;
-    if (ctx.debug && cfg.typeOptions.launchMode === 'gradle') {
-      const port = ctx.debugPort ?? cfg.typeOptions.debugPort ?? 5005;
-      const initScriptPath = await writeBootRunDebugInitScript(port);
+    const needsGradleInitScript =
+      cfg.typeOptions.launchMode === 'gradle' &&
+      (ctx.debug || (monitorArgs.length > 0 && ctx.monitor));
+    if (needsGradleInitScript) {
+      const debugPort = ctx.debug
+        ? (ctx.debugPort ?? cfg.typeOptions.debugPort ?? 5005)
+        : undefined;
+      const initScriptPath = await writeBootRunInitScript(debugPort, monitorArgs);
       // `--init-script` is gradle's "run this file before settling
       // configuration"; we leave the user's own gradle setup alone.
       extraArgs = ['--init-script', initScriptPath];
-      log.debug(`Spring Boot gradle debug: init script ${initScriptPath} (port ${port})`);
+      log.debug(
+        `Spring Boot gradle init script ${initScriptPath} ` +
+        `(debugPort=${debugPort ?? 'none'}, monitorArgs=${monitorArgs.length})`,
+      );
     }
 
     // "Recompute classpath on each run" — only meaningful in java-main
@@ -685,6 +719,27 @@ export class SpringBootAdapter implements RuntimeAdapter {
           `Fix the build, or untick the toggle to fall back to the saved classpath.`,
         );
       }
+    }
+
+    // java-main + maven: append monitor flags to cfg.vmArgs so they reach
+    // the FORKED JVM only.
+    //   - java-main: buildJavaMain emits them on the `java` command line.
+    //   - maven:     buildMaven wraps cfg.vmArgs in
+    //                -Dspring-boot.run.jvmArguments=, which the
+    //                spring-boot-maven-plugin applies to the forked spring-boot
+    //                JVM (NOT the Maven JVM).
+    //   - gradle:    handled by the init script above (NOT here).
+    // Compose with any updatedCfg produced by the recompute-classpath branch.
+    if (
+      monitorArgs.length &&
+      (cfg.typeOptions.launchMode === 'java-main' || cfg.typeOptions.launchMode === 'maven')
+    ) {
+      const baseCfg = updatedCfg ?? cfg;
+      const existingVm = (baseCfg.vmArgs ?? '').trim();
+      const composedVm = existingVm
+        ? `${existingVm} ${monitorArgs.join(' ')}`
+        : monitorArgs.join(' ');
+      updatedCfg = { ...baseCfg, vmArgs: composedVm };
     }
 
     return {
@@ -849,26 +904,51 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-// Writes a Gradle init script that adds the JDWP agent to the BootRun
-// task only — the gradle daemon and any sibling JVMs stay untouched.
-// Returns the absolute path; the caller passes it via `--init-script`.
+// Writes a Gradle init script that adds JVM agents (JDWP for debug, JMX for
+// monitor) to the BootRun task ONLY — the gradle daemon and any sibling JVMs
+// stay untouched. Returns the absolute path; the caller passes it via
+// `--init-script`.
 //
-// Why a fresh file per launch? `os.tmpdir()` is shared across runs;
-// reusing one path is fine but writing each time keeps the port up to
-// date and avoids races if the user fires two debug sessions in
-// quick succession on different ports. The OS reaps tmp on its own
-// schedule, so we don't bother cleaning up.
-async function writeBootRunDebugInitScript(port: number): Promise<string> {
-  const file = nodePath.join(os.tmpdir(), `rcm-bootrun-debug-${port}-${Date.now()}.gradle`);
-  // The script reaches into rootProject + every subproject's BootRun
-  // task and appends the JDWP arg. We use both `tasks.matching` and
-  // `subprojects { ... }` so the script works for single-module and
-  // multi-module reactors without the user having to declare anything.
+// Each flag is emitted as its OWN `jvmArgs '...'` line. Gradle's `jvmArgs`
+// DSL accepts a varargs of strings; emitting multiple separate calls (rather
+// than one space-joined string) is the unambiguous form that survives
+// Gradle's argument parsing without any quoting tricks.
+//
+// Why a fresh file per launch? `os.tmpdir()` is shared across runs; reusing
+// one path is fine but writing each time keeps the port up to date and
+// avoids races if the user fires two sessions in quick succession on
+// different ports. The OS reaps tmp on its own schedule, so we don't bother
+// cleaning up.
+async function writeBootRunInitScript(
+  debugPort: number | undefined,
+  monitorArgs: string[],
+): Promise<string> {
+  const tag = debugPort !== undefined ? `debug-${debugPort}` : 'monitor';
+  const file = nodePath.join(os.tmpdir(), `rcm-bootrun-${tag}-${Date.now()}.gradle`);
+
+  const jvmArgLines: string[] = [];
+  if (debugPort !== undefined) {
+    jvmArgLines.push(
+      `      jvmArgs '-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${debugPort}'`,
+    );
+  }
+  for (const arg of monitorArgs) {
+    // Single-quoted Groovy strings — escape any literal single quotes by
+    // closing/reopening, but the JMX flags from buildMonitorJvmArgs never
+    // contain quotes so this is defensive only.
+    const safe = arg.replace(/'/g, `\\'`);
+    jvmArgLines.push(`      jvmArgs '${safe}'`);
+  }
+
+  // The script reaches into rootProject + every subproject's BootRun task
+  // and appends jvmArgs. `allprojects { afterEvaluate { ... } }` covers
+  // single-module and multi-module reactors without the user having to
+  // declare anything.
   const body = [
     'allprojects {',
     '  afterEvaluate {',
     "    tasks.matching { it.name == 'bootRun' }.configureEach {",
-    `      jvmArgs '-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}'`,
+    ...jvmArgLines,
     '    }',
     '  }',
     '}',

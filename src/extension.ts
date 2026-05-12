@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 import * as path from 'path';
 import { ConfigStore } from './services/ConfigStore';
+import { CollapseStateStore } from './services/CollapseStateStore';
 import { RunConfigService } from './services/RunConfigService';
 import { ProjectScanner } from './services/ProjectScanner';
 import { ExecutionService } from './services/ExecutionService';
@@ -22,6 +23,8 @@ import { DockerService } from './services/DockerService';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { NativeRunnerTreeProvider } from './ui/NativeRunnerTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
+import { MonitoringService } from './services/MonitoringService';
+import { MonitorPanel } from './ui/MonitorPanel';
 import { NativeRunnerService, type NativeLaunch, type NativeTask } from './services/NativeRunnerService';
 import { buildDependencyOptions, rcmRef } from './services/dependencyCandidates';
 import { DependencyOrchestrator } from './services/DependencyOrchestrator';
@@ -71,7 +74,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const store = new ConfigStore();
   const svc = new RunConfigService(store);
   const scanner = new ProjectScanner(registry);
-  const exec = new ExecutionService(registry);
+  const monitoring = new MonitoringService(context.extensionUri);
+  context.subscriptions.push({ dispose: () => monitoring.dispose() });
+  const exec = new ExecutionService(registry, monitoring);
   const dbg = new DebugService(registry, exec);
   const native = new NativeRunnerService();
   context.subscriptions.push({ dispose: () => native.dispose() });
@@ -83,7 +88,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const orchestrator = new DependencyOrchestrator(svc, exec, dbg, docker, native);
   const groups = new GroupService(svc);
-  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri, docker, orchestrator, native, groups);
+  const collapseState = new CollapseStateStore(context.workspaceState);
+  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri, docker, orchestrator, native, groups, monitoring, collapseState);
   // Separate view for native launch.json / tasks.json — sibling to the
   // main Configurations view, like VARIABLES / BREAKPOINTS in Run & Debug.
   const nativeTree = new NativeRunnerTreeProvider(native);
@@ -100,6 +106,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // assign / drag back to root to ungroup.
     dragAndDropController: tree,
   });
+  // Persist user-driven expand/collapse for folder/typeGroup/group rows
+  // so reloading VS Code restores the last view state. Listeners only
+  // record nodes our store cares about; everything else is a no-op.
+  context.subscriptions.push(
+    view.onDidExpandElement(e => {
+      const id = tree.collapseStateIdFor(e.element);
+      if (id) collapseState.set(id, 'expanded');
+    }),
+    view.onDidCollapseElement(e => {
+      const id = tree.collapseStateIdFor(e.element);
+      if (id) collapseState.set(id, 'collapsed');
+    }),
+  );
   const launchTasksView = vscode.window.createTreeView('runConfigLaunchTasks', {
     treeDataProvider: nativeTree,
     showCollapseAll: true,
@@ -349,6 +368,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!folder) return;
       log.info(`Debug: "${arg.config.name}" (${arg.config.type})`);
       await dbg.debug(arg.config, folder);
+    }),
+
+    // --- JVM Monitoring (Run/Debug with monitoring agent + Open Monitor view) ---
+    //
+    // Run/Debug variants pass `{ monitor: true }` through the prepare-context
+    // chain; the JVM adapters (spring-boot, tomcat, quarkus, java) inject the
+    // bundled agent as a JVMTI/javaagent flag. Once the JVM starts, the
+    // ExecutionService/DebugService asks MonitoringService.attach(...) which
+    // spins up the in-process metrics socket. Open Monitor reveals the
+    // webview backed by MonitoringService state.
+    vscode.commands.registerCommand('runConfig.runMonitored', async (arg: ConfigNodeArg) => {
+      if (!arg || arg.kind !== 'config') return;
+      const folder = store.getFolder(arg.folderKey);
+      if (!folder) return;
+      log.info(`Run with monitoring: "${arg.config.name}"`);
+      await exec.run(arg.config, folder, { monitor: true });
+    }),
+    vscode.commands.registerCommand('runConfig.debugMonitored', async (arg: ConfigNodeArg) => {
+      if (!arg || arg.kind !== 'config') return;
+      const folder = store.getFolder(arg.folderKey);
+      if (!folder) return;
+      log.info(`Debug with monitoring: "${arg.config.name}"`);
+      await dbg.debug(arg.config, folder, { monitor: true });
+    }),
+    vscode.commands.registerCommand('runConfig.openMonitor', (arg: ConfigNodeArg) => {
+      if (!arg || arg.kind !== 'config') return;
+      MonitorPanel.open(arg.config, context.extensionUri, monitoring);
     }),
 
     vscode.commands.registerCommand('runConfig.fix', async (arg: ConfigNodeArg) => {

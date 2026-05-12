@@ -295,6 +295,65 @@ describe('SpringBootAdapter.prepareLaunch — JAVA_TOOL_OPTIONS plumbing', () =>
   });
 });
 
+describe('SpringBootAdapter.prepareLaunch — monitor (JMX) plumbing', () => {
+  const folder = { uri: Uri.file('/ws'), name: 'ws', index: 0 } as any;
+
+  test('gradle mode + monitor → init script (NOT JAVA_TOOL_OPTIONS)', async () => {
+    // Bug: JAVA_TOOL_OPTIONS would land in the gradle daemon, which would
+    // bind the JMX port first and leave bootRun's forked JVM to fail with
+    // ExportException: Port already in use.
+    const c = cfg({ typeOptions: { launchMode: 'gradle', buildTool: 'gradle' } });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false, monitor: true, monitorPort: 33343 });
+    expect(r.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
+    expect(r.extraArgs?.[0]).toBe('--init-script');
+    const fs = require('fs');
+    const body = fs.readFileSync(r.extraArgs![1], 'utf8');
+    expect(body).toContain("tasks.matching { it.name == 'bootRun' }");
+    expect(body).toContain('-Dcom.sun.management.jmxremote.port=33343');
+    // Each flag must be its own jvmArgs '...' line — Gradle's varargs DSL
+    // chokes on a single space-joined string.
+    const jvmArgsLines = body.split('\n').filter((l: string) => l.includes('jvmArgs '));
+    expect(jvmArgsLines.length).toBeGreaterThanOrEqual(7); // 7 flags from buildMonitorJvmArgs
+  });
+
+  test('gradle mode + debug + monitor → init script with both', async () => {
+    const c = cfg({ typeOptions: { launchMode: 'gradle', buildTool: 'gradle' } });
+    const r = await adapter.prepareLaunch!(c, folder, {
+      debug: true, debugPort: 5099, monitor: true, monitorPort: 33343,
+    });
+    expect(r.extraArgs?.[0]).toBe('--init-script');
+    const fs = require('fs');
+    const body = fs.readFileSync(r.extraArgs![1], 'utf8');
+    expect(body).toContain('-agentlib:jdwp');
+    expect(body).toContain('address=*:5099');
+    expect(body).toContain('-Dcom.sun.management.jmxremote.port=33343');
+  });
+
+  test('maven mode + monitor → composed into cfg.vmArgs (NOT JAVA_TOOL_OPTIONS)', async () => {
+    // buildMaven wraps cfg.vmArgs in -Dspring-boot.run.jvmArguments — the
+    // spring-boot-maven-plugin applies that to the FORKED app JVM only.
+    const c = cfg({
+      vmArgs: '-Xmx2g',
+      typeOptions: { launchMode: 'maven', buildTool: 'maven' },
+    });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false, monitor: true, monitorPort: 33343 });
+    expect(r.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
+    expect(r.cfg?.vmArgs).toContain('-Xmx2g');
+    expect(r.cfg?.vmArgs).toContain('-Dcom.sun.management.jmxremote.port=33343');
+  });
+
+  test('java-main mode + monitor → composed into cfg.vmArgs', async () => {
+    const c = cfg({
+      vmArgs: '-Xmx1g',
+      typeOptions: { launchMode: 'java-main', mainClass: 'com.ex.App', classpath: '/a' },
+    });
+    const r = await adapter.prepareLaunch!(c, folder, { debug: false, monitor: true, monitorPort: 33343 });
+    expect(r.env?.JAVA_TOOL_OPTIONS).toBeUndefined();
+    expect(r.cfg?.vmArgs).toContain('-Xmx1g');
+    expect(r.cfg?.vmArgs).toContain('-Dcom.sun.management.jmxremote.port=33343');
+  });
+});
+
 describe('SpringBootAdapter.getFormSchema — JDK visibility', () => {
   test('JDK field is shown for every launch mode, not just java-main', () => {
     const schema = adapter.getFormSchema({ buildTool: 'gradle' });

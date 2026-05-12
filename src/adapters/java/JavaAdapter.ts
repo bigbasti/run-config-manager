@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as nodePath from 'path';
 import type { RuntimeAdapter, DetectionResult, StreamingPatch } from '../RuntimeAdapter';
 import type { RunConfig } from '../../shared/types';
 import type { FormSchema } from '../../shared/formSchema';
@@ -13,6 +16,7 @@ import { resolveProjectUri } from '../../utils/paths';
 import { splitArgs } from '../npm/splitArgs';
 import { log } from '../../utils/logger';
 import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
+import { buildMonitorJvmArgs } from '../../services/monitoring/buildMonitorJvmArgs';
 
 const VAR_SYNTAX_HINT =
   'Supports `${VAR}` and `${env:VAR}` (environment variables), `${workspaceFolder}`, `${userHome}`, and `${cwd}` / `${projectPath}`. Unresolved variables expand to an empty string at launch.';
@@ -449,8 +453,8 @@ export class JavaAdapter implements RuntimeAdapter {
   async prepareLaunch(
     cfg: RunConfig,
     _folder: vscode.WorkspaceFolder,
-    ctx: { debug: boolean; debugPort?: number },
-  ): Promise<{ env?: Record<string, string> }> {
+    ctx: { debug: boolean; debugPort?: number; monitor?: boolean; monitorPort?: number },
+  ): Promise<{ env?: Record<string, string>; extraArgs?: string[]; cfg?: RunConfig }> {
     if (cfg.type !== 'java') return {};
     const env: Record<string, string> = {};
     if (cfg.typeOptions.colorOutput) {
@@ -460,24 +464,72 @@ export class JavaAdapter implements RuntimeAdapter {
     if (cfg.typeOptions.jdkPath) {
       env.JAVA_HOME = cfg.typeOptions.jdkPath;
     }
+    // Monitor (JMX) flags. Channel per launchMode:
+    //   java-main → composed into cfg.vmArgs (lands on `java` command line)
+    //   maven / maven-custom → JAVA_TOOL_OPTIONS — `mvn exec:java` runs IN
+    //     the Maven JVM (no fork), so there is exactly one JVM and no
+    //     port-bind race. Same applies to maven-custom: the Maven JVM IS
+    //     the app JVM.
+    //   gradle / gradle-custom → init script targets all JavaExec tasks'
+    //     jvmArgs. JAVA_TOOL_OPTIONS would land in the gradle daemon AND
+    //     the forked JavaExec JVM; the daemon binds the JMX port first
+    //     and the app fails with
+    //       ExportException: Port already in use: <port>
+    const monitorArgs: string[] = ctx.monitor && ctx.monitorPort
+      ? buildMonitorJvmArgs(ctx.monitorPort)
+      : [];
+    let updatedCfg: RunConfig | undefined;
+    const mode = cfg.typeOptions.launchMode;
+    if (monitorArgs.length) {
+      if (mode === 'java-main') {
+        const existingVm = (cfg.vmArgs ?? '').trim();
+        const composedVm = existingVm
+          ? `${existingVm} ${monitorArgs.join(' ')}`
+          : monitorArgs.join(' ');
+        updatedCfg = { ...cfg, vmArgs: composedVm };
+      } else if (mode === 'maven' || mode === 'maven-custom') {
+        // No fork — Maven JVM is the app JVM. Will be merged with the JDWP
+        // value below if both are present.
+        env.JAVA_TOOL_OPTIONS = monitorArgs.join(' ');
+      }
+      // gradle / gradle-custom: handled by the init script below.
+    }
+    let extraArgs: string[] | undefined;
     if (ctx.debug) {
       const port = ctx.debugPort ?? cfg.typeOptions.debugPort ?? 5005;
       const jdwp = `-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${port}`;
-      const mode = cfg.typeOptions.launchMode;
       // Maven (standard + custom): inject into MAVEN_OPTS. Using
       // JAVA_TOOL_OPTIONS here would bind JDWP in both the Maven JVM AND the
       // forked plugin JVM, producing "Address already in use" on the second
       // bind.
       if (mode === 'maven' || mode === 'maven-custom') {
         env.MAVEN_OPTS = jdwp;
-      } else if (mode === 'gradle' || mode === 'gradle-custom') {
-        // Gradle's forked test/run tasks inherit JAVA_TOOL_OPTIONS. Same
-        // pattern Spring Boot's Gradle bootRun flow uses.
-        env.JAVA_TOOL_OPTIONS = jdwp;
       }
+      // gradle / gradle-custom: handled by the init script below.
       // java-main: the Java debugger's request: 'launch' drives JDWP; no env.
     }
-    return { env };
+    // Gradle init script — same isolation pattern as Spring Boot's bootRun
+    // path. Targets every `JavaExec` task (the canonical Gradle Java run
+    // task type, used by `application.run` and any custom JavaExec the
+    // user authored). The daemon JVM stays a normal daemon; only the
+    // forked application JVM gets the agents.
+    if ((mode === 'gradle' || mode === 'gradle-custom')
+        && (ctx.debug || (monitorArgs.length > 0 && ctx.monitor))) {
+      const debugPort = ctx.debug
+        ? (ctx.debugPort ?? cfg.typeOptions.debugPort ?? 5005)
+        : undefined;
+      const initScriptPath = await writeJavaExecInitScript(debugPort, monitorArgs);
+      extraArgs = ['--init-script', initScriptPath];
+      log.debug(
+        `Java gradle init script ${initScriptPath} ` +
+        `(debugPort=${debugPort ?? 'none'}, monitorArgs=${monitorArgs.length})`,
+      );
+    }
+    return {
+      env,
+      ...(extraArgs ? { extraArgs } : {}),
+      ...(updatedCfg ? { cfg: updatedCfg } : {}),
+    };
   }
 
   getDebugConfig(cfg: RunConfig, folder: vscode.WorkspaceFolder): vscode.DebugConfiguration {
@@ -658,4 +710,44 @@ function buildJavaMain(cfg: Extract<RunConfig, { type: 'java' }>) {
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+// Writes a Gradle init script that adds JVM agents (JDWP for debug, JMX for
+// monitor) to ALL `JavaExec` tasks. Mirrors Spring Boot's bootRun init
+// script — JavaExec is the canonical Gradle task type for forked Java runs
+// (used by `application.run` and any custom `task <name>(type: JavaExec)`).
+//
+// Each flag is emitted as its OWN `jvmArgs '...'` line — Gradle's `jvmArgs`
+// DSL accepts varargs of strings, and one-flag-per-call is the unambiguous
+// form that survives parsing without quoting tricks.
+async function writeJavaExecInitScript(
+  debugPort: number | undefined,
+  monitorArgs: string[],
+): Promise<string> {
+  const tag = debugPort !== undefined ? `debug-${debugPort}` : 'monitor';
+  const file = nodePath.join(os.tmpdir(), `rcm-javaexec-${tag}-${Date.now()}.gradle`);
+
+  const jvmArgLines: string[] = [];
+  if (debugPort !== undefined) {
+    jvmArgLines.push(
+      `      jvmArgs '-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:${debugPort}'`,
+    );
+  }
+  for (const arg of monitorArgs) {
+    const safe = arg.replace(/'/g, `\\'`);
+    jvmArgLines.push(`      jvmArgs '${safe}'`);
+  }
+
+  const body = [
+    'allprojects {',
+    '  afterEvaluate {',
+    '    tasks.withType(JavaExec).configureEach {',
+    ...jvmArgLines,
+    '    }',
+    '  }',
+    '}',
+    '',
+  ].join('\n');
+  await fs.promises.writeFile(file, body, 'utf8');
+  return file;
 }

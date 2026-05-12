@@ -8,12 +8,14 @@ import type { DockerService } from '../services/DockerService';
 import type { GroupService } from '../services/GroupService';
 import type { DependencyOrchestrator, OrchestrationStatus } from '../services/DependencyOrchestrator';
 import type { NativeRunnerService } from '../services/NativeRunnerService';
+import type { MonitoringService } from '../services/MonitoringService';
 import { parseDependencyRef, rcmRef } from '../services/dependencyCandidates';
 import { resolveBuildContext, resolveNpmContext, resolvePythonContext } from '../services/buildActions';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 import { iconForConfig, brandIconUri } from './iconForConfig';
 import { checkConfigHealth, peekConfigHealth, type ConfigHealth } from '../services/configHealth';
+import type { CollapseStateStore } from '../services/CollapseStateStore';
 import { log } from '../utils/logger';
 
 export type Node =
@@ -77,6 +79,11 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     private readonly orchestrator: DependencyOrchestrator,
     private readonly native: NativeRunnerService,
     private readonly groupSvc: GroupService,
+    private readonly monitoring?: MonitoringService,
+    // Persists user-chosen expand/collapse state for folder / typeGroup /
+    // group rows so reloading VS Code restores the last view. Optional so
+    // tests can construct the provider without a workspace state mock.
+    private readonly collapseState?: CollapseStateStore,
   ) {
     store.onChange(() => this.refresh());
     exec.onRunningChanged(() => this.refresh());
@@ -85,10 +92,33 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     orchestrator.onChanged(() => this.refresh());
     native.onRunningChanged(() => this.refresh());
     groupSvc.onChanged(() => this.refresh());
+    if (monitoring) {
+      monitoring.onChanged(() => this.refresh());
+    }
   }
 
   refresh(): void {
     this.emitter.fire(undefined);
+  }
+
+  // Resolves the collapsibleState for a row that defaults to expanded
+  // but should remember the user's last expand/collapse choice across
+  // reloads. Returns Expanded for never-touched nodes (preserving the
+  // first-time-open UX) and the persisted choice otherwise.
+  private resolveDefaultExpanded(id: string): vscode.TreeItemCollapsibleState {
+    const stored = this.collapseState?.get(id);
+    if (stored === 'collapsed') return vscode.TreeItemCollapsibleState.Collapsed;
+    return vscode.TreeItemCollapsibleState.Expanded;
+  }
+
+  // Returns the persisted-state id for a node, or undefined if the node
+  // type isn't one we persist. Used by the expand/collapse listeners
+  // wired in extension.ts.
+  collapseStateIdFor(n: Node): string | undefined {
+    if (n.kind === 'folder') return `folder:${n.folderKey}`;
+    if (n.kind === 'typeGroup') return `typeGroup:${n.folderKey}:${n.type}`;
+    if (n.kind === 'group') return `group:${n.folderKey}:${n.path}`;
+    return undefined;
   }
 
   getTreeItem(n: Node): vscode.TreeItem {
@@ -96,13 +126,17 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
       return this.renderDepItem(n);
     }
     if (n.kind === 'folder') {
-      const item = new vscode.TreeItem(n.label, vscode.TreeItemCollapsibleState.Expanded);
+      const id = `folder:${n.folderKey}`;
+      const item = new vscode.TreeItem(n.label, this.resolveDefaultExpanded(id));
+      item.id = id;
       item.contextValue = 'folder';
       item.iconPath = new vscode.ThemeIcon('folder');
       return item;
     }
     if (n.kind === 'typeGroup') {
-      const item = new vscode.TreeItem(n.label, vscode.TreeItemCollapsibleState.Expanded);
+      const id = `typeGroup:${n.folderKey}:${n.type}`;
+      const item = new vscode.TreeItem(n.label, this.resolveDefaultExpanded(id));
+      item.id = id;
       item.description = `(${n.count})`;
       item.contextValue = 'typeGroup';
       // Brand icon from media/icons/ (the npm icon for plain npm groups;
@@ -114,7 +148,8 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
       return item;
     }
     if (n.kind === 'group') {
-      const item = new vscode.TreeItem(n.name, vscode.TreeItemCollapsibleState.Expanded);
+      const id = `group:${n.folderKey}:${n.path}`;
+      const item = new vscode.TreeItem(n.name, this.resolveDefaultExpanded(id));
       item.description = `(${n.count})`;
       item.iconPath = new vscode.ThemeIcon('folder');
       // contextValue drives the right-click menu for group rows. We
@@ -122,7 +157,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
       // Add config). Encode the path as a TreeItem `id` so the
       // command handler knows which node was clicked.
       item.contextValue = 'userGroup';
-      item.id = `group:${n.folderKey}:${n.path}`;
+      item.id = id;
       item.tooltip = new vscode.MarkdownString(
         `**Folder: ${n.path}**\n\n${n.count} configuration${n.count === 1 ? '' : 's'} (incl. sub-folders).\n\n` +
         'Right-click to run all (sequential / parallel), rename, or delete the folder. ' +
@@ -339,7 +374,18 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
           ? ':python'
           : '';
     const groupSuffix = n.config.group ? ':grouped' : '';
-    item.contextValue = `${baseContextValue}${toolSuffix}${groupSuffix}`;
+    const monState = this.monitoring?.state(n.config.id);
+    const monitoredSuffix = monState ? ':monitored' : '';
+    item.contextValue = `${baseContextValue}${toolSuffix}${groupSuffix}${monitoredSuffix}`;
+    // When monitoring is active, surface a live heap/CPU summary in the
+    // row description. Updates each metric tick (1 s) via the onChanged
+    // subscription wired in the constructor.
+    if (monState && monState.history.length > 0) {
+      const last = monState.history[monState.history.length - 1];
+      const heapMb = (last.heapUsed / (1024 * 1024)).toFixed(0);
+      const cpuPct = (last.cpuLoad * 100).toFixed(1);
+      item.description = `${item.description ? `${item.description}  ` : ''}${heapMb} MB  ${cpuPct}%`;
+    }
     // Click behavior: running/preparing configs reveal the task terminal;
     // idle configs open the editor. The inline Edit button always opens the
     // editor regardless of state.

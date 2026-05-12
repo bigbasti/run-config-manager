@@ -32,7 +32,11 @@ export class DebugService {
     return this.running.has(configId);
   }
 
-  async debug(cfg: RunConfig, folder: vscode.WorkspaceFolder): Promise<boolean> {
+  async debug(
+    cfg: RunConfig,
+    folder: vscode.WorkspaceFolder,
+    opts?: { monitor?: boolean },
+  ): Promise<boolean> {
     if (this.running.has(cfg.id)) return false;
 
     const adapter = this.registry.get(cfg.type);
@@ -73,16 +77,16 @@ export class DebugService {
     // then hand over to startDebugging after a short delay so the JVM has time
     // to open the port.
     if (conf.type === 'java' && conf.request === 'attach' && resolvedCfg.type === 'spring-boot') {
-      return await this.startAttachFlow(resolvedCfg, folder, conf);
+      return await this.startAttachFlow(resolvedCfg, folder, conf, opts);
     }
     if (conf.type === 'java' && conf.request === 'attach' && resolvedCfg.type === 'tomcat') {
-      return await this.startTomcatAttachFlow(resolvedCfg, folder, conf);
+      return await this.startTomcatAttachFlow(resolvedCfg, folder, conf, opts);
     }
     if (conf.type === 'java' && conf.request === 'attach' && resolvedCfg.type === 'quarkus') {
-      return await this.startQuarkusAttachFlow(resolvedCfg, folder, conf);
+      return await this.startQuarkusAttachFlow(resolvedCfg, folder, conf, opts);
     }
     if (conf.type === 'java' && conf.request === 'attach' && resolvedCfg.type === 'java') {
-      return await this.startJavaAttachFlow(resolvedCfg, folder, conf);
+      return await this.startJavaAttachFlow(resolvedCfg, folder, conf, opts);
     }
 
     // Launch-mode Java (java-main) or non-Java: startDebugging handles the JVM.
@@ -115,6 +119,7 @@ export class DebugService {
     cfg: Extract<RunConfig, { type: 'spring-boot' }>,
     folder: vscode.WorkspaceFolder,
     attachConf: vscode.DebugConfiguration,
+    opts?: { monitor?: boolean },
   ): Promise<boolean> {
     if (!this.exec) {
       vscode.window.showErrorMessage('Internal error: ExecutionService not wired into DebugService.');
@@ -137,7 +142,7 @@ export class DebugService {
     // Pass debug=true so prepareLaunch composes the JDWP flag for gradle.
     // Maven ignores this flag inside prepareLaunch (its JDWP flows via
     // vmArgs above); harmless to pass uniformly.
-    const execution = await this.exec.run(runCfg, folder, { debug: true, debugPort: port });
+    const execution = await this.exec.run(runCfg, folder, { debug: true, debugPort: port, monitor: opts?.monitor });
     if (!execution) return false;
 
     // Same wait-then-attach pattern as Tomcat/Java/Quarkus. Apache's
@@ -180,6 +185,7 @@ export class DebugService {
     cfg: Extract<RunConfig, { type: 'tomcat' }>,
     folder: vscode.WorkspaceFolder,
     attachConf: vscode.DebugConfiguration,
+    opts?: { monitor?: boolean },
   ): Promise<boolean> {
     if (!this.exec) {
       vscode.window.showErrorMessage('Internal error: ExecutionService not wired into DebugService.');
@@ -187,7 +193,7 @@ export class DebugService {
     }
     const port = (attachConf.port as number | undefined) ?? cfg.typeOptions.debugPort ?? 8000;
 
-    const execution = await this.exec.run(cfg, folder, { debug: true, debugPort: port });
+    const execution = await this.exec.run(cfg, folder, { debug: true, debugPort: port, monitor: opts?.monitor });
     if (!execution) return false;
 
     // Poll for the JDWP socket to actually accept connections before handing
@@ -231,6 +237,7 @@ export class DebugService {
     cfg: Extract<RunConfig, { type: 'java' }>,
     folder: vscode.WorkspaceFolder,
     attachConf: vscode.DebugConfiguration,
+    opts?: { monitor?: boolean },
   ): Promise<boolean> {
     if (!this.exec) {
       vscode.window.showErrorMessage('Internal error: ExecutionService not wired into DebugService.');
@@ -238,7 +245,7 @@ export class DebugService {
     }
     const port = (attachConf.port as number | undefined) ?? cfg.typeOptions.debugPort ?? 5005;
 
-    const execution = await this.exec.run(cfg, folder, { debug: true, debugPort: port });
+    const execution = await this.exec.run(cfg, folder, { debug: true, debugPort: port, monitor: opts?.monitor });
     if (!execution) return false;
 
     log.info(`Java debug: waiting for JDWP on localhost:${port}…`);
@@ -277,6 +284,7 @@ export class DebugService {
     cfg: Extract<RunConfig, { type: 'quarkus' }>,
     folder: vscode.WorkspaceFolder,
     attachConf: vscode.DebugConfiguration,
+    opts?: { monitor?: boolean },
   ): Promise<boolean> {
     if (!this.exec) {
       vscode.window.showErrorMessage('Internal error: ExecutionService not wired into DebugService.');
@@ -284,7 +292,7 @@ export class DebugService {
     }
     const port = (attachConf.port as number | undefined) ?? cfg.typeOptions.debugPort ?? 5005;
 
-    const execution = await this.exec.run(cfg, folder, { debug: true, debugPort: port });
+    const execution = await this.exec.run(cfg, folder, { debug: true, debugPort: port, monitor: opts?.monitor });
     if (!execution) return false;
 
     log.info(`Quarkus debug: waiting for JDWP on localhost:${port}…`);
