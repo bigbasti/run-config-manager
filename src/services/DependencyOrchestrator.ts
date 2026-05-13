@@ -29,6 +29,15 @@ export interface OrchestrationSnapshot {
   reasons: Map<string, string>;
 }
 
+// Options forwarded to the ROOT config's launch only — dependencies
+// always start with their regular Run semantics. Used by "Run with
+// Monitoring" / "Debug with Monitoring" so the user can monitor a JVM
+// that depends on other configs.
+export interface RootLaunchOpts {
+  debug?: boolean;
+  monitor?: boolean;
+}
+
 // How long we wait for a dependency to report "running" before giving up.
 // Conservative — some docker start-ups are slow. Never spin on this — we
 // poll cheaply and the user can always click Stop.
@@ -60,12 +69,21 @@ export class DependencyOrchestrator {
   // delays, then start the root itself. Promise resolves once the root is
   // started; it doesn't wait for root-started-state (tree keeps its existing
   // semantics for that).
-  async run(rootCfg: RunConfig, folder: vscode.WorkspaceFolder): Promise<void> {
+  //
+  // `rootOpts` is forwarded only to the root launch — dependencies always
+  // start with their regular Run semantics. This lets "Run with Monitoring"
+  // and "Debug with Monitoring" propagate through the orchestrator: deps
+  // come up normally, then the root JVM gets the monitoring flags.
+  async run(
+    rootCfg: RunConfig,
+    folder: vscode.WorkspaceFolder,
+    rootOpts?: RootLaunchOpts,
+  ): Promise<void> {
     // If the root has no deps, fall through to the direct path — the caller
     // should have short-circuited, but handle it safely here too.
     const plan = this.buildPlan(rootCfg);
     if (plan.steps.length === 0 && plan.cycle === null) {
-      await this.startRcmConfig(rootCfg, folder);
+      await this.startRcmConfig(rootCfg, folder, rootOpts);
       return;
     }
 
@@ -132,7 +150,7 @@ export class DependencyOrchestrator {
     snap.statuses.set(rcmRef(rootCfg.id), 'starting');
     this.emitter.fire(snap);
     try {
-      await this.startRcmConfig(rootCfg, folder);
+      await this.startRcmConfig(rootCfg, folder, rootOpts);
       snap.statuses.set(rcmRef(rootCfg.id), 'running');
       this.emitter.fire(snap);
       // Happy path — drop the snapshot so the tree collapses on its own.
@@ -301,14 +319,24 @@ export class DependencyOrchestrator {
     return folders.find(f => f.name === cfg.workspaceFolder) ?? folders[0];
   }
 
-  private async startRcmConfig(cfg: RunConfig, folder: vscode.WorkspaceFolder): Promise<void> {
+  private async startRcmConfig(
+    cfg: RunConfig,
+    folder: vscode.WorkspaceFolder,
+    opts?: RootLaunchOpts,
+  ): Promise<void> {
     if (cfg.type === 'docker') {
       if (this.docker.isRunning(cfg.typeOptions.containerId)) return;
       await this.docker.startContainer(cfg.typeOptions.containerId);
       return;
     }
     if (this.exec.isRunning(cfg.id) || this.dbg.isRunning(cfg.id)) return;
-    await this.exec.run(cfg, folder);
+    // "Debug with [monitoring]" routes through DebugService; plain Run
+    // (with optional monitoring) routes through ExecutionService.
+    if (opts?.debug) {
+      await this.dbg.debug(cfg, folder, { monitor: opts.monitor });
+      return;
+    }
+    await this.exec.run(cfg, folder, { monitor: opts?.monitor });
   }
 
   private async waitUntilRcmRunning(cfg: RunConfig): Promise<void> {

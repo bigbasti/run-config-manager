@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code.",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "publisher": "SebastianGross",
   "license": "MIT",
   "repository": {
@@ -397,6 +397,21 @@
           "command": "runConfig.delete",
           "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
           "group": "inline@5"
+        },
+        {
+          "command": "runConfig.run",
+          "when": "view == runConfigurations && viewItem =~ /^dep(Rcm|Launch|Task)Idle(:(maven|gradle))?$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "runConfig.stop",
+          "when": "view == runConfigurations && viewItem =~ /^dep(Rcm|Launch|Task)Running(:(maven|gradle))?$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "runConfig.debug",
+          "when": "view == runConfigurations && viewItem =~ /^depRcmIdle(:(maven|gradle))?$/",
+          "group": "inline@2"
         },
         {
           "command": "runConfig.run",

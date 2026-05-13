@@ -400,7 +400,23 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     const to = n.config.typeOptions;
     const summary = this.docker.find(to.containerId);
     const running = this.docker.isRunning(to.containerId);
-    const item = new vscode.TreeItem(n.config.name, vscode.TreeItemCollapsibleState.None);
+    // Docker configs can declare dependencies just like every other type;
+    // mirror the regular config-row collapsibleState logic so the user can
+    // expand the row to inspect the dep chain. Forced Expanded while the
+    // orchestrator is active for this id.
+    const hasDeps = (n.config.dependsOn?.length ?? 0) > 0;
+    const orchActive = this.orchestrator.snapshotOf(n.config.id) !== undefined;
+    const collapsibleState = !hasDeps
+      ? vscode.TreeItemCollapsibleState.None
+      : orchActive
+      ? vscode.TreeItemCollapsibleState.Expanded
+      : vscode.TreeItemCollapsibleState.Collapsed;
+    const item = new vscode.TreeItem(n.config.name, collapsibleState);
+    if (hasDeps) {
+      item.id = orchActive
+        ? `config:${n.config.id}:orch`
+        : `config:${n.config.id}`;
+    }
 
     const tipLines = [
       `**${n.config.name}** _(docker)_`,

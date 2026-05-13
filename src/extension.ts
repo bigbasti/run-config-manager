@@ -312,11 +312,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await svc.delete(arg.folderKey, id);
     }),
 
-    vscode.commands.registerCommand('runConfig.run', async (arg: ConfigNodeArg) => {
-      if (!arg || arg.kind !== 'config') return;
-      const folder = store.getFolder(arg.folderKey);
-      if (!folder) return;
-      log.info(`Run: "${arg.config.name}" (${arg.config.type})`);
+    vscode.commands.registerCommand('runConfig.run', async (arg: any) => {
+      // Dep nodes (depRcm/depLaunch/depTask) reuse the run/stop commands so
+      // their inline menu entries can run/stop the dependency directly. We
+      // resolve them up-front to a `kind: 'config'` shape (or delegate to
+      // the native runner for launch/task deps). depMissing is a no-op.
+      const resolved = resolveCommandTarget(arg, store);
+      if (!resolved) return;
+      if (resolved.kind === 'native-launch') {
+        await native.runLaunch(resolved.launch);
+        return;
+      }
+      if (resolved.kind === 'native-task') {
+        const list = await native.getTasks();
+        const found = list.find(t => t.source === resolved.source && t.name === resolved.taskName);
+        if (!found) {
+          vscode.window.showWarningMessage(`Task "${resolved.taskName}" not found.`);
+          return;
+        }
+        await native.runTask(found);
+        return;
+      }
+      const { config, folder } = resolved;
+      log.info(`Run: "${config.name}" (${config.type})`);
 
       // When the config has dependencies, fan out through the orchestrator.
       // It starts each dep in order, waits for running-state, applies the
@@ -324,30 +342,40 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // automatically — the provider flips the root and nested depRcm nodes
       // to Expanded while an orchestration snapshot is active, then back to
       // Collapsed when it clears ~1.5s after the root reports running.
-      if ((arg.config.dependsOn?.length ?? 0) > 0) {
-        await orchestrator.run(arg.config, folder);
+      if ((config.dependsOn?.length ?? 0) > 0) {
+        await orchestrator.run(config, folder);
         return;
       }
 
-      if (arg.config.type === 'docker') {
+      if (config.type === 'docker') {
         // Docker bypasses ExecutionService entirely — start/stop are
         // one-shot daemon calls and the "running" state comes from polling.
         try {
-          await docker.startContainer(arg.config.typeOptions.containerId);
+          await docker.startContainer(config.typeOptions.containerId);
         } catch (e) {
           vscode.window.showErrorMessage(`docker start failed: ${(e as Error).message}`);
         }
         return;
       }
-      await exec.run(arg.config, folder);
+      await exec.run(config, folder);
     }),
 
-    vscode.commands.registerCommand('runConfig.stop', async (arg: ConfigNodeArg) => {
-      if (!arg || arg.kind !== 'config') return;
-      log.info(`Stop: "${arg.config.name}"`);
-      if (arg.config.type === 'docker') {
+    vscode.commands.registerCommand('runConfig.stop', async (arg: any) => {
+      const resolved = resolveCommandTarget(arg, store);
+      if (!resolved) return;
+      if (resolved.kind === 'native-launch') {
+        await native.stopLaunch(resolved.launch.name);
+        return;
+      }
+      if (resolved.kind === 'native-task') {
+        await native.stopTask(resolved.source, resolved.taskName);
+        return;
+      }
+      const { config } = resolved;
+      log.info(`Stop: "${config.name}"`);
+      if (config.type === 'docker') {
         try {
-          await docker.stopContainer(arg.config.typeOptions.containerId);
+          await docker.stopContainer(config.typeOptions.containerId);
         } catch (e) {
           vscode.window.showErrorMessage(`docker stop failed: ${(e as Error).message}`);
         }
@@ -355,19 +383,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       // A single config can be either in a run task OR a debug session.
       // Stop whichever is actually tracking it.
-      if (dbg.isRunning(arg.config.id)) {
-        await dbg.stop(arg.config.id);
+      if (dbg.isRunning(config.id)) {
+        await dbg.stop(config.id);
       } else {
-        await exec.stop(arg.config.id);
+        await exec.stop(config.id);
       }
     }),
 
-    vscode.commands.registerCommand('runConfig.debug', async (arg: ConfigNodeArg) => {
-      if (!arg || arg.kind !== 'config') return;
-      const folder = store.getFolder(arg.folderKey);
-      if (!folder) return;
-      log.info(`Debug: "${arg.config.name}" (${arg.config.type})`);
-      await dbg.debug(arg.config, folder);
+    vscode.commands.registerCommand('runConfig.debug', async (arg: any) => {
+      const resolved = resolveCommandTarget(arg, store);
+      // Debug only applies to RCM-config targets; native launch/task deps
+      // don't have a debug semantic in this command.
+      if (!resolved || resolved.kind !== 'config') return;
+      const { config, folder } = resolved;
+      log.info(`Debug: "${config.name}" (${config.type})`);
+      await dbg.debug(config, folder);
     }),
 
     // --- JVM Monitoring (Run/Debug with monitoring agent + Open Monitor view) ---
@@ -383,6 +413,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
       log.info(`Run with monitoring: "${arg.config.name}"`);
+      // When the config has dependencies, fan out through the orchestrator so
+      // deps come up first; the orchestrator forwards `{ monitor: true }` to
+      // the root launch only.
+      if ((arg.config.dependsOn?.length ?? 0) > 0) {
+        await orchestrator.run(arg.config, folder, { monitor: true });
+        return;
+      }
       await exec.run(arg.config, folder, { monitor: true });
     }),
     vscode.commands.registerCommand('runConfig.debugMonitored', async (arg: ConfigNodeArg) => {
@@ -390,6 +427,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const folder = store.getFolder(arg.folderKey);
       if (!folder) return;
       log.info(`Debug with monitoring: "${arg.config.name}"`);
+      if ((arg.config.dependsOn?.length ?? 0) > 0) {
+        await orchestrator.run(arg.config, folder, { debug: true, monitor: true });
+        return;
+      }
       await dbg.debug(arg.config, folder, { monitor: true });
     }),
     vscode.commands.registerCommand('runConfig.openMonitor', (arg: ConfigNodeArg) => {
@@ -821,6 +862,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   log.info('Run Configurations ready.');
+}
+
+// Resolves whichever node kind the user clicked into a uniform "what
+// should run/stop do?" shape. Accepts `kind: 'config'` (regular config
+// row), depRcm (the dep's underlying RunConfig), depLaunch (delegate to
+// native launch runner), depTask (delegate to native task runner). Drops
+// depMissing and unknown shapes. Pulled into a helper so run/stop/debug
+// don't repeat the same dispatch.
+type CommandTarget =
+  | { kind: 'config'; config: RunConfig; folder: vscode.WorkspaceFolder }
+  | { kind: 'native-launch'; launch: NativeLaunch }
+  | { kind: 'native-task'; source: string; taskName: string };
+
+function resolveCommandTarget(arg: any, store: ConfigStore): CommandTarget | undefined {
+  if (!arg || typeof arg !== 'object') return undefined;
+  if (arg.kind === 'config' && arg.config && arg.folderKey) {
+    const folder = store.getFolder(arg.folderKey);
+    if (!folder) return undefined;
+    return { kind: 'config', config: arg.config as RunConfig, folder };
+  }
+  if (arg.kind === 'depRcm' && arg.config) {
+    const cfg = arg.config as RunConfig;
+    // Resolve the workspace folder by name (depRcm carries cfg, which has
+    // workspaceFolder). Fall back to the first folder when the lookup
+    // fails — matches `RunConfigTreeProvider.folderKeyOf` semantics.
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const folder = folders.find(f => f.name === cfg.workspaceFolder) ?? folders[0];
+    if (!folder) return undefined;
+    return { kind: 'config', config: cfg, folder };
+  }
+  if (arg.kind === 'depLaunch' && arg.launchName) {
+    return {
+      kind: 'native-launch',
+      launch: { name: arg.launchName, launchType: arg.launchType ?? '' } as NativeLaunch,
+    };
+  }
+  if (arg.kind === 'depTask' && arg.source && arg.taskName) {
+    return { kind: 'native-task', source: arg.source, taskName: arg.taskName };
+  }
+  return undefined;
 }
 
 async function addConfig(
