@@ -120,7 +120,15 @@ export type Outbound =
   // Monitor panel — pause/resume the agent's histogram emissions while
   // the user inspects the tree. Extension forwards to
   // MonitoringService.setHistogramPaused.
-  | { cmd: 'monitor.setHistogramPaused'; configId: string; paused: boolean };
+  | { cmd: 'monitor.setHistogramPaused'; configId: string; paused: boolean }
+  // Monitor panel — request a per-thread stack dump for one tid. Extension
+  // forwards to MonitoringService.requestThreadDump and replies with
+  // `monitor.threadDump` (or `monitor.error` on failure).
+  | { cmd: 'monitor.requestThreadDump'; configId: string; tid: number }
+  // Monitor panel — change a logger's level via the agent's actuator
+  // bridge. Extension forwards to MonitoringService.setLogLevel and
+  // replies with `monitor.logLevelChanged`.
+  | { cmd: 'monitor.setLogLevel'; configId: string; name: string; level: string };
 
 // Field keys whose detection is still in flight (spinner rendered in-place).
 export type PendingFields = string[];
@@ -355,7 +363,50 @@ export type Inbound =
   // Monitor panel — heap dump finished. Webview can show a toast / link.
   | { cmd: 'monitor.dumpComplete'; configId: string; path: string }
   // Monitor panel — agent or save-dump error. Surfaced in the panel UI.
-  | { cmd: 'monitor.error'; configId: string; message: string };
+  | { cmd: 'monitor.error'; configId: string; message: string }
+  // Monitor panel — one GC event from the agent's GC notification stream.
+  // Pushed individually as they arrive; the webview deduplicates on
+  // (t, collector) since pushState replays the whole ring buffer each tick.
+  | {
+      cmd: 'monitor.gc';
+      configId: string;
+      gc: import('../services/monitoring/AgentMessage').GcEvent;
+    }
+  // Monitor panel — latest per-thread snapshot (state counts + top stacks).
+  | {
+      cmd: 'monitor.threads';
+      configId: string;
+      threads: import('../services/monitoring/AgentMessage').ThreadsSnapshot;
+    }
+  // Monitor panel — actuator snapshot (health, info, env, loggers).
+  | {
+      cmd: 'monitor.actuator';
+      configId: string;
+      actuator: import('../services/monitoring/AgentMessage').ActuatorSnapshot;
+    }
+  // Monitor panel — JVM runtime info (vm name/version, args, sysprops).
+  | {
+      cmd: 'monitor.runtime';
+      configId: string;
+      runtime: import('../services/monitoring/AgentMessage').RuntimeInfo;
+    }
+  // Monitor panel — reply to a `monitor.requestThreadDump`. Carries the
+  // full per-thread stack trace.
+  | {
+      cmd: 'monitor.threadDump';
+      configId: string;
+      dump: import('../services/monitoring/AgentMessage').ThreadDump;
+    }
+  // Monitor panel — reply to a `monitor.setLogLevel`. `ok=false` carries an
+  // `errorMessage` the panel surfaces inline next to the logger row.
+  | {
+      cmd: 'monitor.logLevelChanged';
+      configId: string;
+      name: string;
+      level: string;
+      ok: boolean;
+      errorMessage?: string;
+    };
 
 // DTO mirrors TomcatPackage; install dir name is computed server-side
 // for parity with the JDK dialog's preview.

@@ -1,0 +1,111 @@
+<h2>Which KPI tiles go in the always-visible header?</h2>
+<p class="subtitle">Each tile is glanceable + color-coded. Click a red tile → jumps you to the relevant tab.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Header layout — tiles colored by health</div>
+  <div class="mockup-body" style="background:#1e1e1e;padding:16px;">
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;font-family:monospace;font-size:11px;">
+
+      <div style="background:#1f3a1f;border-left:3px solid #4caf50;padding:10px;border-radius:3px;color:#d4d4d4;">
+        <div style="font-size:9px;color:#aaa;text-transform:uppercase;">Heap</div>
+        <div style="font-size:18px;margin:2px 0;">312 MB</div>
+        <div style="font-size:9px;color:#888;">7.6% of 4 GB</div>
+      </div>
+
+      <div style="background:#3a2a1f;border-left:3px solid #ffaa33;padding:10px;border-radius:3px;color:#d4d4d4;">
+        <div style="font-size:9px;color:#aaa;text-transform:uppercase;">GC pause</div>
+        <div style="font-size:18px;margin:2px 0;">412 ms</div>
+        <div style="font-size:9px;color:#888;">last 60s — high</div>
+      </div>
+
+      <div style="background:#1f3a1f;border-left:3px solid #4caf50;padding:10px;border-radius:3px;color:#d4d4d4;">
+        <div style="font-size:9px;color:#aaa;text-transform:uppercase;">CPU</div>
+        <div style="font-size:18px;margin:2px 0;">2.1%</div>
+        <div style="font-size:9px;color:#888;">avg 1.8%</div>
+      </div>
+
+      <div style="background:#3a1f1f;border-left:3px solid #f44747;padding:10px;border-radius:3px;color:#d4d4d4;">
+        <div style="font-size:9px;color:#aaa;text-transform:uppercase;">Threads</div>
+        <div style="font-size:18px;margin:2px 0;">203</div>
+        <div style="font-size:9px;color:#f88;">3 BLOCKED</div>
+      </div>
+
+      <div style="background:#1f3a1f;border-left:3px solid #4caf50;padding:10px;border-radius:3px;color:#d4d4d4;">
+        <div style="font-size:9px;color:#aaa;text-transform:uppercase;">Off-heap</div>
+        <div style="font-size:18px;margin:2px 0;">42 MB</div>
+        <div style="font-size:9px;color:#888;">direct + mapped</div>
+      </div>
+
+      <div style="background:#1f3a1f;border-left:3px solid #4caf50;padding:10px;border-radius:3px;color:#d4d4d4;">
+        <div style="font-size:9px;color:#aaa;text-transform:uppercase;">Open FDs</div>
+        <div style="font-size:18px;margin:2px 0;">128</div>
+        <div style="font-size:9px;color:#888;">of 65 535</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px;">Pick the tile set you want (multi-select)</h3>
+<p class="subtitle">All include the chart above. Tiles get green/yellow/red based on thresholds + click-to-jump-to-tab.</p>
+
+<div class="options" data-multiselect>
+  <div class="option" data-choice="heap" onclick="toggleSelect(this)">
+    <div class="letter">H</div>
+    <div class="content">
+      <h3>Heap usage</h3>
+      <p>used / max. Yellow @ 70%, red @ 90%. Click → Memory tab.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="gc" onclick="toggleSelect(this)">
+    <div class="letter">G</div>
+    <div class="content">
+      <h3>GC pause time</h3>
+      <p>Cumulative GC ms in last 60s. Yellow @ 100ms, red @ 500ms. Click → Memory tab. Catches GC pressure before heap-usage even moves.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="cpu" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>CPU</h3>
+      <p>Process CPU%, now / avg. Yellow @ 70%, red @ 90% sustained. Click → Threads tab (top-CPU threads).</p>
+    </div>
+  </div>
+  <div class="option" data-choice="threads" onclick="toggleSelect(this)">
+    <div class="letter">T</div>
+    <div class="content">
+      <h3>Threads</h3>
+      <p>Total count + #BLOCKED. Yellow if BLOCKED &gt; 0, red on deadlock. Click → Threads tab.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="offheap" onclick="toggleSelect(this)">
+    <div class="letter">O</div>
+    <div class="content">
+      <h3>Off-heap</h3>
+      <p>direct + mapped buffers MB. Yellow at 2× max-heap (suspicious for non-NIO apps). Click → Memory tab. Catches Netty/NIO-style leaks heap chart misses.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="fds" onclick="toggleSelect(this)">
+    <div class="letter">F</div>
+    <div class="content">
+      <h3>Open FDs</h3>
+      <p>file descriptors open / max. Yellow @ 50%, red @ 80%. Click → JVM internals tab. Catches connection / file leaks.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="reqs" onclick="toggleSelect(this)">
+    <div class="letter">R</div>
+    <div class="content">
+      <h3>HTTP req/s</h3>
+      <p>App-level (Spring Boot Actuator / Tomcat MBeans). Tile only shows when source is available. Yellow @ p99 latency &gt; 1s. Click → App tab.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="loaded" onclick="toggleSelect(this)">
+    <div class="letter">L</div>
+    <div class="content">
+      <h3>Loaded classes</h3>
+      <p>Loaded count + Δ. Yellow if Δ ≠ 0 over 60s steady state (catches classloader leaks). Click → JVM internals tab.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px;">Pick anywhere from 4–8. Note: the visual shows 6, which is comfortable on a typical sidebar width.</p>

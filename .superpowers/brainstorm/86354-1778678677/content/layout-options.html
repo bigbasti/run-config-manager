@@ -1,0 +1,72 @@
+<h2>How should we lay out the expanded Monitor view?</h2>
+<p class="subtitle">All 8 data categories will be there — the question is how to organize them so you can scan quickly and drill in when needed.</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 16px; background: #1e1e1e;">
+      <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:11px;color:#aaa;">
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ Heap chart</div>
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ Run duration / threads / CPU</div>
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ Memory pools breakdown</div>
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ GC timeline + causes</div>
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ Off-heap buffers</div>
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ Threads table</div>
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ Class loading / JIT</div>
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ OS signals</div>
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ Actuator (Spring)</div>
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ Class histogram</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. Long scroll page</h3>
+      <p>Every section stacked vertically, top-to-bottom. Simple. Everything is one Ctrl+F away. But you scroll a lot, and 90% of the viewport is data you're not looking at right now.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 16px; background: #1e1e1e;">
+      <div style="display:flex;flex-direction:column;gap:8px;font-family:monospace;font-size:11px;">
+        <div style="display:flex;gap:4px;">
+          <div style="background:#0e639c;color:white;padding:5px 10px;border-radius:3px;">Overview</div>
+          <div style="background:#2a2a2a;color:#aaa;padding:5px 10px;border-radius:3px;">Memory</div>
+          <div style="background:#2a2a2a;color:#aaa;padding:5px 10px;border-radius:3px;">Threads</div>
+          <div style="background:#2a2a2a;color:#aaa;padding:5px 10px;border-radius:3px;">JVM</div>
+          <div style="background:#2a2a2a;color:#aaa;padding:5px 10px;border-radius:3px;">App</div>
+        </div>
+        <div style="background:#2a2a2a;padding:10px;border-radius:3px;height:240px;color:#aaa;">
+          <div style="margin-bottom:6px;color:#ddd;">Active tab content</div>
+          <div style="font-size:9px;line-height:1.6;">Chart, drill-down panels, tables — tab-specific.</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Tabs only</h3>
+      <p>Top-level tabs, each one shows one category. No mixing. Clean focus. Downside: you have to click around to know if anything is wrong elsewhere — you can't see at a glance whether GC is normal while looking at threads.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 16px; background: #1e1e1e;">
+      <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:11px;color:#aaa;">
+        <div style="background:#1f3a4a;padding:6px;border-radius:3px;color:#d4d4d4;">▣ Always-visible: chart + 6 KPI tiles</div>
+        <div style="background:#1f3a4a;padding:6px;border-radius:3px;color:#d4d4d4;">  Heap • Threads • CPU • GC • FDs • Reqs/s</div>
+        <div style="margin-top:6px;display:flex;gap:4px;">
+          <div style="background:#0e639c;color:white;padding:5px 10px;border-radius:3px;font-size:10px;">Memory</div>
+          <div style="background:#2a2a2a;padding:5px 10px;border-radius:3px;font-size:10px;">Threads</div>
+          <div style="background:#2a2a2a;padding:5px 10px;border-radius:3px;font-size:10px;">JVM internals</div>
+          <div style="background:#2a2a2a;padding:5px 10px;border-radius:3px;font-size:10px;">App</div>
+        </div>
+        <div style="background:#2a2a2a;padding:10px;border-radius:3px;height:120px;color:#aaa;">
+          <div style="margin-bottom:6px;color:#ddd;">Drill-down for selected tab</div>
+        </div>
+        <div style="background:#2a2a2a;padding:6px;border-radius:3px;">▣ Class histogram (always at bottom)</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Dashboard + drill-down tabs</h3>
+      <p><strong>Recommended.</strong> Top: a compact "what's going on right now" header — chart + KPI tiles colored by health (green/yellow/red). Middle: tabs for deep dives (Memory, Threads, JVM internals, App). Bottom: class histogram (most-used existing panel) stays anchored. The KPI tiles double as health indicators — one red tile tells you which tab to click.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:24px;">Click a card to choose a direction.</p>

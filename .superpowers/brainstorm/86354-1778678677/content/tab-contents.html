@@ -1,0 +1,82 @@
+<h2>What goes inside each tab?</h2>
+<p class="subtitle">Each tab is a deep-dive panel. The class histogram stays anchored at the bottom across all tabs.</p>
+
+<div class="cards">
+  <div class="card" style="cursor:default;">
+    <div class="card-image" style="padding:14px;background:#1e1e1e;">
+      <div style="font-family:monospace;font-size:10px;line-height:1.5;color:#aaa;">
+        <div style="color:#d4d4d4;font-weight:600;margin-bottom:8px;">▣ Memory tab</div>
+        <div>┌─ Heap chart (2 lines: used + committed)</div>
+        <div>├─ Heap pools breakdown (stacked bars)</div>
+        <div style="padding-left:8px;color:#888;">  Eden / Survivor / Old / Metaspace / Code Cache</div>
+        <div>├─ GC timeline</div>
+        <div style="padding-left:8px;color:#888;">  per-collector spikes + cause + duration tooltip</div>
+        <div>├─ Direct + mapped buffer chart</div>
+        <div>└─ Allocation rate (MB/sec, derived)</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Memory tab</h3>
+      <p>Everything heap-related plus off-heap. The GC timeline is the critical addition — visual spikes with hover tooltip showing cause + duration. Allocation rate (derived from used-heap delta over time) helps spot allocation pressure.</p>
+    </div>
+  </div>
+
+  <div class="card" style="cursor:default;">
+    <div class="card-image" style="padding:14px;background:#1e1e1e;">
+      <div style="font-family:monospace;font-size:10px;line-height:1.5;color:#aaa;">
+        <div style="color:#d4d4d4;font-weight:600;margin-bottom:8px;">▣ Threads tab</div>
+        <div>┌─ State donut: RUNNABLE / BLOCKED / WAITING / TIMED</div>
+        <div>├─ Thread count over time</div>
+        <div>├─ Top 10 threads by CPU (live, sortable)</div>
+        <div style="padding-left:8px;color:#888;">  name · state · CPU% · stack snippet</div>
+        <div>├─ Deadlock banner (red, when detected)</div>
+        <div style="padding-left:8px;color:#888;">  shows the cycle of locked threads</div>
+        <div>└─ Click any row → expand stack trace</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Threads tab</h3>
+      <p>Donut chart for state distribution. Top-by-CPU table shows what's actually working. Deadlock detection runs every 10s; if found, a red banner pops above the table with the cycle. Click a thread row to expand its stack trace inline.</p>
+    </div>
+  </div>
+
+  <div class="card" style="cursor:default;">
+    <div class="card-image" style="padding:14px;background:#1e1e1e;">
+      <div style="font-family:monospace;font-size:10px;line-height:1.5;color:#aaa;">
+        <div style="color:#d4d4d4;font-weight:600;margin-bottom:8px;">▣ JVM internals tab</div>
+        <div>┌─ Runtime info (read-only)</div>
+        <div style="padding-left:8px;color:#888;">  vendor · version · uptime · args</div>
+        <div>├─ Class loading: loaded / total / unloaded</div>
+        <div>├─ JIT: compile time + method count</div>
+        <div>├─ OS: load avg · free RAM · swap · FDs</div>
+        <div>└─ System properties / env (collapsible)</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>JVM internals tab</h3>
+      <p>The "what JVM am I actually running and what's it doing" tab. Static info (vendor, version, args) plus live counters. Class-loading delta is highlighted when it climbs steadily — classic classloader-leak signal.</p>
+    </div>
+  </div>
+
+  <div class="card" style="cursor:default;">
+    <div class="card-image" style="padding:14px;background:#1e1e1e;">
+      <div style="font-family:monospace;font-size:10px;line-height:1.5;color:#aaa;">
+        <div style="color:#d4d4d4;font-weight:600;margin-bottom:8px;">▣ App tab</div>
+        <div>┌─ Source detector (Spring Boot vs Tomcat vs none)</div>
+        <div>├─ HTTP requests/sec + p50/p95/p99 latency</div>
+        <div>├─ Top endpoints by latency (Actuator)</div>
+        <div>├─ Health checks (Actuator /health)</div>
+        <div>├─ Log level inspector + live changer</div>
+        <div>│   (Actuator /loggers — change levels without restart)</div>
+        <div>└─ Tomcat MBean: busy threads, error count</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>App tab</h3>
+      <p>App-level signals. Auto-detects source — Spring Boot Actuator (preferred) or Tomcat MBeans. <strong>Graceful degradation:</strong> if neither is reachable, tab shows "no app source detected — enable Spring Boot Actuator or use Tomcat for app-level metrics" instead of being broken.</p>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px;">Anything you want to add, drop, or change?</h3>
+<p class="subtitle">Reply in the terminal. Or click a tab card if it needs a deeper redesign — I'll push a v2.</p>

@@ -73,6 +73,34 @@ export class MonitorPanel {
         histogram: state.histogram,
       });
     }
+    if (state.runtime) {
+      this.panel.webview.postMessage({
+        cmd: 'monitor.runtime',
+        configId: this.cfg.id,
+        runtime: state.runtime,
+      });
+    }
+    if (state.threadsDetail) {
+      this.panel.webview.postMessage({
+        cmd: 'monitor.threads',
+        configId: this.cfg.id,
+        threads: state.threadsDetail,
+      });
+    }
+    if (state.actuator) {
+      this.panel.webview.postMessage({
+        cmd: 'monitor.actuator',
+        configId: this.cfg.id,
+        actuator: state.actuator,
+      });
+    }
+    for (const ev of state.gcEvents) {
+      this.panel.webview.postMessage({
+        cmd: 'monitor.gc',
+        configId: this.cfg.id,
+        gc: ev,
+      });
+    }
   }
 
   private async onMessage(msg: any): Promise<void> {
@@ -111,6 +139,45 @@ export class MonitorPanel {
     }
     if (msg?.cmd === 'monitor.setHistogramPaused' && msg.configId === this.cfg.id) {
       this.monitoring.setHistogramPaused(this.cfg.id, !!msg.paused);
+      return;
+    }
+    if (msg?.cmd === 'monitor.requestThreadDump' && msg.configId === this.cfg.id) {
+      try {
+        const dump = await this.monitoring.requestThreadDump(this.cfg.id, msg.tid);
+        this.panel.webview.postMessage({
+          cmd: 'monitor.threadDump',
+          configId: this.cfg.id,
+          dump,
+        });
+      } catch (e) {
+        this.panel.webview.postMessage({
+          cmd: 'monitor.error',
+          configId: this.cfg.id,
+          message: (e as Error).message,
+        });
+      }
+      return;
+    }
+    if (msg?.cmd === 'monitor.setLogLevel' && msg.configId === this.cfg.id) {
+      try {
+        await this.monitoring.setLogLevel(this.cfg.id, msg.name, msg.level);
+        this.panel.webview.postMessage({
+          cmd: 'monitor.logLevelChanged',
+          configId: this.cfg.id,
+          name: msg.name,
+          level: msg.level,
+          ok: true,
+        });
+      } catch (e) {
+        this.panel.webview.postMessage({
+          cmd: 'monitor.logLevelChanged',
+          configId: this.cfg.id,
+          name: msg.name,
+          level: msg.level,
+          ok: false,
+          errorMessage: (e as Error).message,
+        });
+      }
       return;
     }
   }

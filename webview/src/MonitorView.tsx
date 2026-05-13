@@ -1,12 +1,31 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { MetricsTick } from '../../src/services/monitoring/AgentMessage';
+import type {
+  MetricsTick,
+  HistogramSnapshot,
+  HistogramRow,
+  GcEvent,
+  ThreadsSnapshot,
+  ActuatorSnapshot,
+  RuntimeInfo,
+  ThreadDump,
+} from '../../src/services/monitoring/AgentMessage';
 import { groupByPackage, type HistogramNode } from '../../src/services/monitoring/parseClassHistogram';
+import {
+  heapStatus,
+  gcPauseStatus,
+  cpuStatus,
+  threadsStatus,
+  offHeapStatus,
+  fdStatus,
+} from '../../src/services/monitoring/healthThresholds';
+import { KpiTile } from './monitor/KpiTile';
+import { MemoryTab } from './monitor/MemoryTab';
+import { ThreadsTab } from './monitor/ThreadsTab';
+import { JvmInternalsTab } from './monitor/JvmInternalsTab';
+import { AppTab } from './monitor/AppTab';
 
-const HISTORY_CAP_BY_WINDOW: Record<string, number> = {
-  '60s': 60,
-  '5min': 300,
-  '30min': 1800,
-};
+const HISTORY_CAP_BY_WINDOW: Record<string, number> = { '60s': 60, '5min': 300, '30min': 1800 };
+type TabKey = 'memory' | 'threads' | 'jvm' | 'app';
 
 declare const acquireVsCodeApi: any;
 const vscode = typeof acquireVsCodeApi !== 'undefined' ? acquireVsCodeApi() : { postMessage: () => {} };
@@ -21,20 +40,22 @@ export function MonitorView({
   ownPackage: string;
 }) {
   const [history, setHistory] = useState<MetricsTick[]>([]);
-  const [histogram, setHistogram] = useState<import('../../src/services/monitoring/AgentMessage').HistogramSnapshot | null>(null);
+  const [histogram, setHistogram] = useState<HistogramSnapshot | null>(null);
   const [windowKey, setWindowKey] = useState<keyof typeof HISTORY_CAP_BY_WINDOW>('60s');
   const [filter, setFilter] = useState('');
   const [sortBy, setSortBy] = useState<'instances' | 'bytes' | 'className'>('bytes');
   const [paused, setPaused] = useState(false);
   const [onlyOwn, setOnlyOwn] = useState(false);
-  // Run start time, pushed alongside each metrics tick. We can't derive
-  // it from `history[0].t` because the ring buffer caps at 60 entries —
-  // once full, the oldest visible tick is always ~60s old, so subtracting
-  // it from now() gives a constant uptime.
   const [startTime, setStartTime] = useState<number | null>(null);
-  // Force a re-render every second so the run-duration display ticks
-  // even when no metric arrived this second (e.g., GC pause).
   const [, forceTick] = useState(0);
+  // New: monitor extended insight state.
+  const [gcEvents, setGcEvents] = useState<GcEvent[]>([]);
+  const [threadsDetail, setThreadsDetail] = useState<ThreadsSnapshot | null>(null);
+  const [actuator, setActuator] = useState<ActuatorSnapshot | null>(null);
+  const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
+  const [threadDumps, setThreadDumps] = useState<Map<number, ThreadDump>>(new Map());
+  const [activeTab, setActiveTab] = useState<TabKey>('memory');
+
   useEffect(() => {
     const id = setInterval(() => forceTick(t => t + 1), 1000);
     return () => clearInterval(id);
@@ -53,6 +74,26 @@ export function MonitorView({
         });
       } else if (msg.cmd === 'monitor.histogram') {
         setHistogram(msg.histogram);
+      } else if (msg.cmd === 'monitor.gc') {
+        setGcEvents(prev => {
+          const seen = new Set(prev.map(g => `${g.t}-${g.collector}`));
+          const key = `${msg.gc.t}-${msg.gc.collector}`;
+          if (seen.has(key)) return prev;
+          const cutoff = Date.now() - 60_000;
+          return [...prev, msg.gc].filter(g => g.t >= cutoff);
+        });
+      } else if (msg.cmd === 'monitor.threads') {
+        setThreadsDetail(msg.threads);
+      } else if (msg.cmd === 'monitor.actuator') {
+        setActuator(msg.actuator);
+      } else if (msg.cmd === 'monitor.runtime') {
+        setRuntime(msg.runtime);
+      } else if (msg.cmd === 'monitor.threadDump') {
+        setThreadDumps(prev => {
+          const next = new Map(prev);
+          next.set(msg.dump.tid, msg.dump);
+          return next;
+        });
       }
     };
     window.addEventListener('message', handler);
@@ -76,71 +117,132 @@ export function MonitorView({
   const heapMb = last ? (last.heapUsed / (1024 * 1024)).toFixed(0) : '—';
   const heapMaxMb = last && last.heapMax > 0 ? (last.heapMax / (1024 * 1024)).toFixed(0) : '—';
   const uptime = startTime ? Math.round((Date.now() - startTime) / 1000) : 0;
-  const avgCpu = history.length > 0
-    ? (history.reduce((s, m) => s + m.cpuLoad, 0) / history.length * 100).toFixed(1)
-    : '—';
+  const offHeapBytes = (last?.directBuffer?.memoryUsed ?? 0) + (last?.mappedBuffer?.memoryUsed ?? 0);
+  const gcPauseLast60s = gcEvents.reduce((s, ev) => s + ev.duration, 0);
+  const blockedCount = threadsDetail?.states.BLOCKED ?? 0;
+  const deadlocked = threadsDetail?.deadlock != null;
+  const heapMaxRaw = last?.heapMax ?? -1;
+  const heapUsedRaw = last?.heapUsed ?? 0;
+  const cpuLoad = last?.cpuLoad ?? -1;
+  const openFds = last?.openFds ?? -1;
+  const maxFds = last?.maxFds ?? -1;
+
+  const requestThreadDump = (tid: number) => {
+    vscode.postMessage({ cmd: 'monitor.requestThreadDump', configId, tid });
+  };
+  const setLogLevel = (name: string, level: string) => {
+    vscode.postMessage({ cmd: 'monitor.setLogLevel', configId, name, level });
+  };
 
   return (
     <div style={{ padding: 16, fontFamily: 'var(--vscode-font-family)' }}>
       <h2 style={{ marginTop: 0 }}>{configName}</h2>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         {(['60s', '5min', '30min'] as const).map(w => (
-          <button
-            key={w}
-            onClick={() => setWindowKey(w)}
-            style={{ fontWeight: w === windowKey ? 'bold' : 'normal' }}
-          >
-            {w}
-          </button>
+          <button key={w} onClick={() => setWindowKey(w)} style={{ fontWeight: w === windowKey ? 'bold' : 'normal' }}>{w}</button>
         ))}
-        <span style={{ flex: 1 }} />
-        <button onClick={() => vscode.postMessage({ cmd: 'monitor.saveHeapDump', configId })}>
-          Save heap dump
-        </button>
+        <button onClick={() => vscode.postMessage({ cmd: 'monitor.saveHeapDump', configId })}>Save heap dump</button>
+        <div style={{ marginLeft: 'auto', fontSize: 12, opacity: 0.7, alignSelf: 'center' }}>
+          Run duration: {Math.floor(uptime / 60)}m {uptime % 60}s
+        </div>
       </div>
+
       <ChartStrip history={history} />
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'auto 1fr',
-          columnGap: 16,
-          rowGap: 4,
-          marginTop: 8,
-          fontSize: '0.92em',
-        }}
-      >
-        <div>Run duration</div>
-        <div>{Math.floor(uptime / 60)}m {uptime % 60}s</div>
-        <div>Heap used</div>
-        <div>{heapMb} MB / {heapMaxMb} MB</div>
-        <div>Threads</div>
-        <div>{last?.threadCount ?? '—'}</div>
-        <div>CPU (now / avg)</div>
-        <div>{last ? (last.cpuLoad * 100).toFixed(1) : '—'}% / {avgCpu}%</div>
-        <div>GC count / time</div>
-        <div>{last?.gcCount ?? '—'} / {last?.gcTime ?? '—'} ms</div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginTop: 12, marginBottom: 12 }}>
+        <KpiTile
+          label="Heap" value={`${heapMb} MB`}
+          secondary={heapMaxMb !== '—' ? `of ${heapMaxMb} MB` : 'unbounded'}
+          status={heapStatus(heapUsedRaw, heapMaxRaw)}
+          tooltip="Heap used / max. Yellow ≥ 70% · Red ≥ 90%."
+          onClick={() => setActiveTab('memory')}
+        />
+        <KpiTile
+          label="GC pause" value={`${gcPauseLast60s} ms`}
+          secondary="last 60s"
+          status={gcPauseStatus(gcPauseLast60s)}
+          tooltip="Cumulative GC pause time over the last 60s. Yellow ≥ 100ms · Red ≥ 500ms."
+          onClick={() => setActiveTab('memory')}
+        />
+        <KpiTile
+          label="CPU" value={cpuLoad >= 0 ? `${(cpuLoad * 100).toFixed(1)}%` : 'n/a'}
+          secondary={cpuLoad >= 0 ? 'process load' : 'unavailable'}
+          status={cpuStatus(cpuLoad)}
+          tooltip="Process CPU load. Yellow ≥ 70% · Red ≥ 90%."
+          onClick={() => setActiveTab('threads')}
+        />
+        <KpiTile
+          label="Threads" value={String(last?.threadCount ?? '—')}
+          secondary={blockedCount > 0 ? `${blockedCount} BLOCKED` : (deadlocked ? 'deadlock!' : 'OK')}
+          status={threadsStatus(blockedCount, deadlocked)}
+          tooltip="Total threads + BLOCKED count. Yellow when BLOCKED > 0 · Red on deadlock."
+          onClick={() => setActiveTab('threads')}
+        />
+        <KpiTile
+          label="Off-heap" value={`${(offHeapBytes / (1024 * 1024)).toFixed(0)} MB`}
+          secondary="direct + mapped"
+          status={offHeapStatus(offHeapBytes, heapMaxRaw)}
+          tooltip="Direct + mapped buffer bytes. Yellow ≥ 2× heapMax · Red ≥ 4× heapMax."
+          onClick={() => setActiveTab('memory')}
+        />
+        <KpiTile
+          label="Open FDs" value={openFds >= 0 ? openFds.toLocaleString() : '—'}
+          secondary={maxFds > 0 ? `of ${maxFds.toLocaleString()}` : ''}
+          status={fdStatus(openFds, maxFds)}
+          tooltip="Open file descriptors / max. Yellow ≥ 50% · Red ≥ 80%."
+          onClick={() => setActiveTab('jvm')}
+        />
       </div>
+
+      <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--vscode-editorWidget-border, #444)' }}>
+        {(
+          [
+            ['memory', 'Memory'],
+            ['threads', 'Threads'],
+            ['jvm', 'JVM internals'],
+            ['app', 'App'],
+          ] as Array<[TabKey, string]>
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            style={{
+              border: 'none',
+              borderBottom: activeTab === key ? '2px solid var(--vscode-focusBorder, #007acc)' : '2px solid transparent',
+              background: 'transparent',
+              padding: '6px 12px',
+              cursor: 'pointer',
+              color: activeTab === key ? 'var(--vscode-foreground)' : 'var(--vscode-descriptionForeground)',
+              fontWeight: activeTab === key ? 600 : 400,
+            }}
+          >{label}</button>
+        ))}
+      </div>
+
+      <div style={{ padding: '12px 0' }}>
+        {activeTab === 'memory' && <MemoryTab history={history} gcEvents={gcEvents} />}
+        {activeTab === 'threads' && (
+          <ThreadsTab
+            history={history}
+            threadsDetail={threadsDetail}
+            threadDumps={threadDumps}
+            requestThreadDump={requestThreadDump}
+          />
+        )}
+        {activeTab === 'jvm' && <JvmInternalsTab runtime={runtime} history={history} />}
+        {activeTab === 'app' && <AppTab actuator={actuator} setLogLevel={setLogLevel} />}
+      </div>
+
       <hr style={{ margin: '16px 0' }} />
       <h3 style={{ marginBottom: 8 }}>Class histogram</h3>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '50% 30% 1fr',
-          gap: 8,
-          marginBottom: 8,
-        }}
-      >
+      <div style={{ display: 'grid', gridTemplateColumns: '50% 30% 1fr', gap: 8, marginBottom: 8 }}>
         <input
           placeholder="Filter (substring of class name)"
           value={filter}
           onChange={e => setFilter(e.target.value)}
           style={{ width: '100%', boxSizing: 'border-box' }}
         />
-        <select
-          value={sortBy}
-          onChange={e => setSortBy(e.target.value as any)}
-          style={{ width: '100%', boxSizing: 'border-box' }}
-        >
+        <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} style={{ width: '100%', boxSizing: 'border-box' }}>
           <option value="bytes">Sort: Bytes (desc)</option>
           <option value="instances">Sort: Instances (desc)</option>
           <option value="className">Sort: Class name (A→Z)</option>
@@ -152,29 +254,13 @@ export function MonitorView({
             vscode.postMessage({ cmd: 'monitor.setHistogramPaused', configId, paused: next });
           }}
           style={{ width: '100%', boxSizing: 'border-box' }}
-        >
-          {paused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
-        </button>
+        >{paused ? 'Resume auto-refresh' : 'Pause auto-refresh'}</button>
       </div>
       {ownPackage && (
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            marginBottom: 8,
-            fontSize: '0.9em',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={onlyOwn}
-            onChange={e => setOnlyOwn(e.target.checked)}
-          />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: '0.9em' }}>
+          <input type="checkbox" checked={onlyOwn} onChange={e => setOnlyOwn(e.target.checked)} />
           Show only classes in <code style={{ padding: '0 4px' }}>{ownPackage}.*</code>
-          <span style={{ opacity: 0.7 }}>
-            (otherwise highlighted inline below)
-          </span>
+          <span style={{ opacity: 0.7 }}>(otherwise highlighted inline below)</span>
         </label>
       )}
       <HistogramTree nodes={grouped} sortBy={sortBy} ownPackage={ownPackage} />
