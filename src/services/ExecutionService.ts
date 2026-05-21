@@ -66,6 +66,17 @@ export interface RunOpts {
   monitor?: boolean;
 }
 
+// Quarkus dev mode (quarkus:dev / quarkusDev) compiles the project before
+// forking the app JVM. The forked JVM — which is where the JMX flags land
+// via -Djvm.args — typically starts 15–60 s after executeTask returns.
+// Spawning the monitoring agent immediately would exhaust its 10 s connect
+// window before the JVM is ready, leaving the monitoring view empty.
+// This delay gives the forked JVM time to start and bind the JMX port.
+// 30 s covers warm-cache builds comfortably; cold builds may still miss
+// the window, but that is the same situation as the 15 s "optimistic ready"
+// timer used by the tree icon — acceptable as a best-effort heuristic.
+const QUARKUS_MONITOR_ATTACH_DELAY_MS = 30_000;
+
 export class ExecutionService {
   private running = new Map<string, Entry>();
   // "Preparing" is the window between the user clicking Run and the shell
@@ -483,9 +494,32 @@ export class ExecutionService {
       // pid is best-effort: with CustomExecution we have the spawned
       // shell's pid; with ShellExecution we don't. The agent connects
       // via JMX, not pid, so 0 is acceptable as a placeholder.
+      //
+      // Quarkus special-case: quarkus:dev / quarkusDev run inside a
+      // ShellExecution (interactive PTY) and compile the project before
+      // forking the app JVM. The forked JVM — which is where the JMX
+      // flags land via -Djvm.args — typically starts 15–60 s after we
+      // call executeTask. The agent's 10 s connect window would expire
+      // well before the JVM is ready. We therefore delay the attach by
+      // QUARKUS_MONITOR_ATTACH_DELAY_MS so the agent starts polling
+      // right around the time the JVM binds the JMX port.
       if (monitorPort && this.monitoring) {
         const pid = terminalRef.current?.childPid ?? 0;
-        this.monitoring.attach(cfg.id, pid, monitorPort);
+        if (resolvedCfg.type === 'quarkus') {
+          // Use a per-execution token so a rapid stop+restart doesn't
+          // cause the old run's pending attach to fire for the new run.
+          const execToken = execution;
+          setTimeout(() => {
+            // Guard: config must still be running AND must still be THIS
+            // execution (not a restarted one with the same config id).
+            const currentEntry = this.running.get(cfg.id);
+            if (currentEntry?.execution === execToken && this.monitoring) {
+              this.monitoring.attach(cfg.id, 0, monitorPort!);
+            }
+          }, QUARKUS_MONITOR_ATTACH_DELAY_MS);
+        } else {
+          this.monitoring.attach(cfg.id, pid, monitorPort);
+        }
       }
 
       return execution;
