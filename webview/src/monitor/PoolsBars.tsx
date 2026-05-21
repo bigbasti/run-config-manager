@@ -2,12 +2,21 @@ import type { PoolUsage } from '../../../src/services/monitoring/AgentMessage';
 import { categorizePool, type PoolCategory } from '../../../src/services/monitoring/poolCategories';
 
 const CATEGORY_LABEL: Record<PoolCategory, string> = {
-  young: 'Young',
+  young: 'Young gen',
   survivor: 'Survivor',
-  old: 'Old',
+  old: 'Old gen',
   metaspace: 'Metaspace',
   codeCache: 'Code Cache',
   other: 'Other',
+};
+
+const CATEGORY_TOOLTIP: Record<PoolCategory, string> = {
+  young: 'Young generation — short-lived objects are allocated here first. Frequent minor GCs reclaim most of it quickly.',
+  survivor: 'Survivor spaces — objects that survived at least one minor GC live here temporarily before being promoted to Old gen.',
+  old: 'Old (tenured) generation — long-lived objects promoted from Young gen. Major GCs are triggered when this fills up.',
+  metaspace: 'Metaspace — class metadata (class definitions, method bytecode). Lives in native memory, not on the Java heap. A steady rise may indicate a classloader leak.',
+  codeCache: 'Code Cache — JIT-compiled native code. Fixed size; when full, the JIT stops compiling and performance degrades.',
+  other: 'Other memory pools not matching a known category (e.g. compressed class space on some JVM implementations).',
 };
 const CATEGORY_COLOR: Record<PoolCategory, string> = {
   young: 'var(--vscode-charts-green, #4caf50)',
@@ -35,7 +44,12 @@ export function PoolsBars({ pools }: { pools: Record<string, PoolUsage> }) {
         );
         return (
           <div key={category} style={{ display: 'grid', gridTemplateColumns: '110px 1fr 220px', gap: 8, alignItems: 'center', fontSize: 12 }}>
-            <div style={{ color: 'var(--vscode-descriptionForeground, #aaa)' }}>{CATEGORY_LABEL[category]}</div>
+            <div
+              title={CATEGORY_TOOLTIP[category]}
+              style={{ color: 'var(--vscode-descriptionForeground, #aaa)', cursor: 'help', textDecoration: 'underline dotted' }}
+            >
+              {CATEGORY_LABEL[category]}
+            </div>
             <div
               title={tooltipLines.join('\n')}
               style={{

@@ -8,6 +8,15 @@ const STATE_COLOR: Record<string, string> = {
 };
 const STATE_ORDER = ['RUNNABLE', 'BLOCKED', 'WAITING', 'TIMED_WAITING', 'NEW', 'TERMINATED'];
 
+const STATE_TOOLTIP: Record<string, string> = {
+  RUNNABLE: 'RUNNABLE — thread is executing or ready to execute on a CPU core. High counts here are normal under load.',
+  BLOCKED: 'BLOCKED — thread is waiting to acquire a monitor lock held by another thread. Elevated counts indicate lock contention.',
+  WAITING: 'WAITING — thread is parked indefinitely (e.g. Object.wait(), LockSupport.park()). Normal for thread-pool idle threads.',
+  TIMED_WAITING: 'TIMED_WAITING — thread is sleeping for a fixed duration (e.g. Thread.sleep(), Object.wait(timeout)). Normal for scheduled tasks.',
+  NEW: 'NEW — thread has been created but not yet started.',
+  TERMINATED: 'TERMINATED — thread has finished execution but not yet been garbage-collected.',
+};
+
 // Conic-section donut chart for thread state distribution. Render as
 // flat 2D ring; mid-point label = total count.
 export function StateDonut({ states, size = 120 }: { states: Record<string, number>; size?: number }) {
@@ -43,7 +52,7 @@ export function StateDonut({ states, size = 120 }: { states: Record<string, numb
       <svg width={size} height={size}>
         {arcs.map(a => (
           <path key={a.state} d={a.path} fill={STATE_COLOR[a.state] ?? STATE_COLOR.TERMINATED}>
-            <title>{`${a.state}: ${a.count}`}</title>
+            <title>{`${a.state}: ${a.count}\n${STATE_TOOLTIP[a.state] ?? ''}`}</title>
           </path>
         ))}
         <text x={cx} y={cy + 4} textAnchor="middle" fontSize={size * 0.18} fill="var(--vscode-foreground, #d4d4d4)">
@@ -52,8 +61,12 @@ export function StateDonut({ states, size = 120 }: { states: Record<string, numb
       </svg>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12 }}>
         {STATE_ORDER.filter(k => states[k] > 0).map(state => (
-          <div key={state} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: STATE_COLOR[state] ?? STATE_COLOR.TERMINATED }} />
+          <div
+            key={state}
+            title={STATE_TOOLTIP[state]}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'help' }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: STATE_COLOR[state] ?? STATE_COLOR.TERMINATED, flex: 'none' }} />
             <span>{state}: {states[state]}</span>
           </div>
         ))}

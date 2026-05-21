@@ -52,23 +52,48 @@ export function AppTab({
 
       {actuator.metrics && (
         <section>
-          <h3 style={{ marginTop: 0, marginBottom: 6, fontSize: 13 }}>HTTP traffic</h3>
-          <div>Requests: {actuator.metrics.http_requests_total.toLocaleString()}</div>
-          <div>p50: {actuator.metrics.http_request_duration_p50_ms} ms · p95: {actuator.metrics.http_request_duration_p95_ms} ms · p99: {actuator.metrics.http_request_duration_p99_ms} ms</div>
+          <h3
+            title="HTTP request statistics from Spring Boot Actuator's http.server.requests metric."
+            style={{ marginTop: 0, marginBottom: 6, fontSize: 13, cursor: 'help', textDecoration: 'underline dotted', display: 'inline-block' }}
+          >
+            HTTP traffic
+          </h3>
+          <div title="Total number of HTTP requests handled since the application started.">
+            Requests: {actuator.metrics.http_requests_total.toLocaleString()}
+          </div>
+          <div title="Response latency percentiles: p50 = median (half of requests faster than this), p95 = 95th percentile (only 5% of requests are slower), p99 = 99th percentile (only 1% are slower). High p99 with normal p50 indicates occasional slow outliers.">
+            p50: {actuator.metrics.http_request_duration_p50_ms} ms
+            {' · '}p95: {actuator.metrics.http_request_duration_p95_ms} ms
+            {' · '}p99: {actuator.metrics.http_request_duration_p99_ms} ms
+          </div>
         </section>
       )}
 
       {actuator.tomcat && (
         <section>
-          <h3 style={{ marginTop: 0, marginBottom: 6, fontSize: 13 }}>Tomcat</h3>
-          <div>Busy threads: {actuator.tomcat.currentThreadsBusy} of {actuator.tomcat.maxThreads}</div>
-          <div>Requests: {actuator.tomcat.requestCount.toLocaleString()} · Errors: {actuator.tomcat.errorCount.toLocaleString()}</div>
+          <h3
+            title="Tomcat connector statistics read from JMX MBeans (Catalina:type=ThreadPool and GlobalRequestProcessor)."
+            style={{ marginTop: 0, marginBottom: 6, fontSize: 13, cursor: 'help', textDecoration: 'underline dotted', display: 'inline-block' }}
+          >
+            Tomcat connector
+          </h3>
+          <div title="Threads currently processing a request vs the connector's maximum thread pool size. When busy threads approach the maximum, new connections queue up and response times increase.">
+            Busy threads: {actuator.tomcat.currentThreadsBusy} of {actuator.tomcat.maxThreads}
+          </div>
+          <div title="Total requests processed and total error responses (4xx + 5xx) since Tomcat started.">
+            Requests: {actuator.tomcat.requestCount.toLocaleString()} · Errors: {actuator.tomcat.errorCount.toLocaleString()}
+          </div>
         </section>
       )}
 
       {actuator.health && (
         <section>
-          <h3 style={{ marginTop: 0, marginBottom: 6, fontSize: 13 }}>Health</h3>
+          <h3
+            title="Spring Boot Actuator /actuator/health endpoint. Reports the overall application health status and the status of each health indicator (database, disk space, message broker, etc.)."
+            style={{ marginTop: 0, marginBottom: 6, fontSize: 13, cursor: 'help', textDecoration: 'underline dotted', display: 'inline-block' }}
+          >
+            Health
+          </h3>
           <div>Overall: <strong style={{ color: actuator.health.status === 'UP' ? '#4caf50' : '#f44747' }}>{actuator.health.status}</strong></div>
           {Object.entries(actuator.health.components ?? {}).map(([name, status]) => (
             <div key={name}>

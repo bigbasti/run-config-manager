@@ -137,11 +137,30 @@ export function MonitorView({
   return (
     <div style={{ padding: 16, fontFamily: 'var(--vscode-font-family)' }}>
       <h2 style={{ marginTop: 0 }}>{configName}</h2>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-        {(['60s', '5min', '30min'] as const).map(w => (
-          <button key={w} onClick={() => setWindowKey(w)} style={{ fontWeight: w === windowKey ? 'bold' : 'normal' }}>{w}</button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: 11, color: 'var(--vscode-descriptionForeground, #aaa)', marginRight: 2 }}>Window:</span>
+        {(
+          [
+            ['60s', 'Show the last 60 seconds of metrics (1 data point per second)'],
+            ['5min', 'Show the last 5 minutes of metrics (1 data point per second, up to 300 points)'],
+            ['30min', 'Show the last 30 minutes of metrics (1 data point per second, up to 1800 points — older data is kept in memory by the extension)'],
+          ] as const
+        ).map(([w, tip]) => (
+          <button
+            key={w}
+            onClick={() => setWindowKey(w as keyof typeof HISTORY_CAP_BY_WINDOW)}
+            title={tip}
+            style={{ fontWeight: w === windowKey ? 'bold' : 'normal' }}
+          >
+            {w}
+          </button>
         ))}
-        <button onClick={() => vscode.postMessage({ cmd: 'monitor.saveHeapDump', configId })}>Save heap dump</button>
+        <button
+          title="Trigger a heap dump of this JVM. You will be prompted to choose a save location. The dump is written in HPROF format and can be opened with tools like Eclipse MAT, VisualVM, or IntelliJ."
+          onClick={() => vscode.postMessage({ cmd: 'monitor.saveHeapDump', configId })}
+        >
+          Save heap dump
+        </button>
         <div style={{ marginLeft: 'auto', fontSize: 12, opacity: 0.7, alignSelf: 'center' }}>
           Run duration: {Math.floor(uptime / 60)}m {uptime % 60}s
         </div>
@@ -327,7 +346,10 @@ function ChartStrip({ history }: { history: MetricsTick[] }) {
       <text x={padLeft - 4} y={padTop + plotH} textAnchor="end" fontSize="10"
         fill="var(--vscode-descriptionForeground, #888)">{fmt(lo)}</text>
       <text x={padLeft} y={12} fontSize="10"
-        fill="var(--vscode-descriptionForeground, #888)">Heap used (auto-scaled)</text>
+        fill="var(--vscode-descriptionForeground, #888)">
+        <title>Blue area: heap memory currently used by live objects. Orange dashed line (if visible): heap committed — memory reserved from the OS for the heap (between -Xms and -Xmx). Y-axis auto-scales to the visible range, not to -Xmx, so small fluctuations are readable.</title>
+        Heap used (auto-scaled)
+      </text>
       {/* filled area = heap used */}
       <path d={areaPath} fill="var(--vscode-charts-blue, #4080ff)" fillOpacity="0.2" />
       {/* heap-used line */}

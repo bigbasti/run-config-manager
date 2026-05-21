@@ -44,9 +44,20 @@ export function ThreadsTab({
       )}
 
       <section>
-        <h3 style={{ marginTop: 0, marginBottom: 8, fontSize: 13 }}>
-          Top threads by CPU (last 5s) {blockedCount > 0 && <span style={{ color: '#f44747' }}>· {blockedCount} BLOCKED</span>}
+        <h3
+          title="The 10 threads that consumed the most CPU time in the last 5-second measurement window. Click any row to fetch its full stack trace. Use this to identify threads doing heavy computation or busy-waiting."
+          style={{ marginTop: 0, marginBottom: 8, fontSize: 13, cursor: 'help', textDecoration: 'underline dotted', display: 'inline-block' }}
+        >
+          Top threads by CPU (last 5s)
         </h3>
+        {blockedCount > 0 && (
+          <span
+            title="BLOCKED threads are waiting to acquire a monitor lock held by another thread. Multiple blocked threads on the same lock may indicate a contention hotspot."
+            style={{ color: '#f44747', marginLeft: 8, fontSize: 13 }}
+          >
+            · {blockedCount} BLOCKED
+          </span>
+        )}
         <TopByCpu threads={threadsDetail.topByCpu} threadDumps={threadDumps} requestThreadDump={requestThreadDump} />
       </section>
     </div>
@@ -64,8 +75,11 @@ function CountHistory({ history }: { history: MetricsTick[] }) {
   }).join(' ');
   return (
     <div>
-      <div style={{ fontSize: 12, color: 'var(--vscode-descriptionForeground, #aaa)', marginBottom: 4 }}>
-        Thread count over visible window
+      <div
+        title="Total number of live threads (all states) sampled once per second. A steadily rising thread count that never decreases may indicate a thread leak — threads are being created but not shut down."
+        style={{ fontSize: 12, color: 'var(--vscode-descriptionForeground, #aaa)', marginBottom: 4, cursor: 'help', textDecoration: 'underline dotted', display: 'inline-block' }}
+      >
+        Total thread count over time
       </div>
       <svg width={w} height={h} style={{ background: 'var(--vscode-editorWidget-background)' }}>
         <polyline points={points} fill="none" stroke="var(--vscode-charts-blue, #4080ff)" strokeWidth={1.5} />
@@ -102,10 +116,15 @@ function TopByCpu({
         fontSize: 11,
         color: 'var(--vscode-descriptionForeground, #aaa)',
       }}>
-        <span>Name</span>
-        <span>State</span>
-        <span style={{ textAlign: 'right' }}>CPU Δ</span>
-        <span>Stack snippet</span>
+        <span title="Thread name as assigned by the application or JVM framework.">Name</span>
+        <span title="Thread state: RUNNABLE (executing), BLOCKED (waiting for a lock), WAITING (parked indefinitely), TIMED_WAITING (sleeping for a fixed duration), NEW, or TERMINATED.">State</span>
+        <span
+          style={{ textAlign: 'right', cursor: 'help', textDecoration: 'underline dotted' }}
+          title="CPU time consumed by this thread during the last 5-second measurement interval. High values here point to threads doing heavy computation or busy-waiting."
+        >
+          CPU Δ
+        </span>
+        <span title="Top frame of the thread's call stack at the time of the last snapshot. Click a row to fetch the full stack trace.">Stack snippet</span>
       </div>
       {threads.map(t => {
         const isOpen = expanded.has(t.id);
