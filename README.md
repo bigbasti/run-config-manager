@@ -26,6 +26,7 @@ Configurations are stored in `.vscode/run.json` so you can commit them and share
 |---|---|
 | **npm / Node.js** | Any `package.json` script, with your choice of npm, yarn, or pnpm. Auto-detects installed Node interpreters (system, nvm, volta, asdf, fnm, n, the extension's own install root) and lets you pin one per config. |
 | **Python** | Five launch modes — script, module (`-m`), framework, pytest, custom. Detects venvs (`.venv` / `venv` / `env` / `$VIRTUAL_ENV`) plus pyenv / asdf / rye / uv / mise / conda. Pre-fills entry-point scripts (`if __name__ == "__main__":`) and importable modules (`__main__.py`). |
+| **Go** | Five launch modes — `go run`, `go test`, `go build`, `go install`, custom. Auto-detects Go installations from `$GOROOT`, `which go`, and version managers (gvm, asdf, mise, goenv). Scans for `package main` entry points. Race detector and build flag support built in. |
 | **Spring Boot** | Maven, Gradle, or direct Java launch — auto-detects your project setup |
 | **Quarkus** | Maven or Gradle dev mode with Live Coding |
 | **Tomcat** | Deploys your WAR or exploded directory to a managed Tomcat instance |
@@ -50,7 +51,7 @@ Configurations are stored in `.vscode/run.json` so you can commit them and share
 
 ![Live run state in the sidebar](media/live_run_state_example.gif)
 
-**One-click debugging** — Every configuration that supports it has a Debug button alongside Run. The extension handles attaching the debugger automatically — no separate launch configuration to maintain.
+**One-click debugging** — Every configuration that supports it has a Debug button alongside Run. The extension handles attaching the debugger automatically — no separate launch configuration to maintain. Go debug is powered by [Delve](https://github.com/go-delve/delve) via the official `golang.go` extension.
 
 **Rich terminal output** — The integrated terminal colors log levels, turns file paths and URLs into clickable links, and highlights startup success or failure lines so important output is never buried.
 
@@ -79,7 +80,7 @@ Right-click any configuration and choose **Add to Group…** to bundle it with o
 Right-click a group to:
 - **Run All Sequentially** — starts one member, waits for it to reach running, then the next. Members with their own `dependsOn` chains still have their dependencies started first. Any member's failure aborts the rest, which stay visible as "skipped" so you can see where it broke. Recurses into sub-folders.
 - **Run All in Parallel** — dispatches every member at once. Recurses into sub-folders.
-- **Debug All Sequentially** / **Debug All in Parallel** — same flows but routes debuggable configs (Java / Spring Boot / Quarkus / Python / npm) through the debugger automatically, while non-debuggable members fall back to a normal run so the whole group still starts.
+  - **Debug All Sequentially** / **Debug All in Parallel** — same flows but routes debuggable configs (Java / Spring Boot / Quarkus / Python / npm / Go) through the debugger automatically, while non-debuggable members fall back to a normal run so the whole group still starts.
 - **Stop All** — terminates every running member, including those in sub-folders.
 - **Rename** / **Delete** — deleting a group unassigns its members; the configs themselves stay, just ungrouped.
 
@@ -99,13 +100,15 @@ Create a Docker run config and the form lists your local containers grouped by r
 
 ### Right-click actions
 
-Every config's right-click menu offers type-appropriate shortcuts — no manual `mvn` / `gradle` / `npm` typing:
+Every config's right-click menu offers type-appropriate shortcuts — no manual `mvn` / `gradle` / `npm` / `go` typing:
 
 - **Maven configs**: Clean · Build (package -DskipTests) · Test, each with the Maven icon.
 - **Gradle configs**: Clean · Build (assemble) · Test, each with the Gradle icon.
 - **npm configs**: Install · Update · Prune.
+- **Python configs**: Install (editable) · Install requirements.txt · Upgrade dependencies · Freeze · List.
+- **Go configs**: `go mod tidy` · `go mod download` · `go build ./...` · `go test ./...`.
 
-These shortcuts reuse the config's resolved `buildRoot`, `:module:` prefix, and JDK path, so they run against the exact same project state as the main run action. For multi-module Gradle projects that means the right module, not a top-level rebuild.
+These shortcuts reuse the config's resolved `buildRoot`, `:module:` prefix, and tool path, so they run against the exact same project state as the main run action. For multi-module Gradle projects that means the right module, not a top-level rebuild.
 
 ### Dependency-aware build context
 
@@ -141,6 +144,27 @@ A first-class Python config type with the same auto-detection ergonomics as the 
 - **One-click debug** — wires up `debugpy` automatically. The interpreter args are hoisted ahead of `-m debugpy` so user `vmArgs` (`-O`, `-W default`, etc.) take effect; the debug port is threaded consistently between attach and launch so non-default ports work. If `debugpy` isn't installed in the chosen interpreter, the run surfaces a clear error with the exact `pip install debugpy` command.
 - **Pip proxy info** — the Advanced section shows the effective pip proxy (`pip config list` merged with `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` env vars) so corporate-proxied runs are debuggable. Re-evaluates when the user picks a different interpreter.
 
+### Go adapter
+
+A first-class Go config type with the same auto-detection ergonomics as the other runtime types:
+
+- **Five launch modes**, each with a focused form:
+  - **Run** — `go run [package] [args]`. The package dropdown is pre-populated with every `package main` directory found in the project (up to 4 directory levels deep). Pick a package or type a path — `./cmd/server`, `.`, `./...`.
+  - **Test** — `go test [args]`. Free-form field for package paths, `-run` filters, `-bench`, `-count`, etc.
+  - **Build** — `go build [-o output] [package]`. Separate output binary field for the `-o` flag.
+  - **Install** — `go install [package]`. Puts the resulting binary in `$GOPATH/bin`.
+  - **Custom** — anything appended to `go` verbatim (e.g. `generate ./...`, `vet ./...`, `env GOARCH=arm64 build .`).
+
+- **Go installation detection** — finds installations from `$GOROOT`, `which go` (symlink-resolved), and version managers: gvm (`~/.gvm/gos/`), asdf (`~/.asdf/installs/go/`), mise (`~/.local/share/mise/installs/go/`), goenv (`~/.goenv/versions/`). Also checks Homebrew (`/opt/homebrew/opt/go/libexec`, `/usr/local/opt/go/libexec`) and the standard OS locations (`/usr/local/go`, `C:\Go`, etc.). Installs are listed with their version (`go version go1.22.3`) in the dropdown. Leave the field blank to use `go` on `PATH`.
+
+- **Race detector** — a single toggle adds `-race` to `go run`, `go test`, or `go build`. Useful for catching data races during development and in CI without modifying your project.
+
+- **Go tool flags** — the "Go tool flags" field (internally `vmArgs`) places flags between the subcommand and the package: `-ldflags "-X main.version=1.0.0 -s -w"`, `-tags integration`, `-trimpath`. Separate from program args, which go after the package path.
+
+- **One-click debug** — the Debug button launches your program under [Delve](https://github.com/go-delve/delve) via the official [Go for VS Code](https://marketplace.visualstudio.com/items?itemName=golang.go) extension. No separate `launch.json` required. The package to debug defaults to the same path configured for `go run`. Race detector and build flags are forwarded to Delve's build step. A yellow warning appears in the form when the `golang.go` extension is not installed; otherwise the form stays clean.
+
+- **Module root** — the Advanced section has a "Module root" field for monorepos where `go.mod` lives above `projectPath`. Leave blank for the common case where the module root is the project directory.
+
 ### Node version management
 
 The npm / Node config gains an interpreter selector and a built-in installer dialog:
@@ -158,8 +182,9 @@ The "Started" signal in the sidebar is driven by per-runtime regex patterns matc
 - **Tomcat:** `Server startup in [N] milliseconds`.
 - **npm dev servers:** Angular CLI, Vite, webpack-dev-server, Next.js, Express, plus a generic `listening on port N` fallback.
 - **Python:** Flask's `* Running on http://…`, Django's `Starting development server at …`, `Uvicorn running on http://…` / `Application startup complete.`, gunicorn's `Listening at: http://…`, Celery's `celery@host ready.`
+- **Go:** `listening on :N` (net/http), `Listening and serving HTTP on …` (Gin), `http server started on …` (Echo), `running on https://…`, `ok <pkg> Ns` (go test success). Failure patterns cover compiler errors, panics, `go test FAIL`, port-in-use, and missing package errors.
 
-Failure patterns are equally specific — Spring Boot's `APPLICATION FAILED TO START`, port-bind errors (`EADDRINUSE`, `Address already in use`), Python tracebacks / `ModuleNotFoundError`, gunicorn worker errors, Maven/Gradle `BUILD FAIL*`, etc. — so the tree flips to red the moment a startup goes wrong, instead of waiting for the process to die.
+Failure patterns are equally specific — Spring Boot's `APPLICATION FAILED TO START`, port-bind errors (`EADDRINUSE`, `Address already in use`), Python tracebacks / `ModuleNotFoundError`, Go panics / compiler errors, gunicorn worker errors, Maven/Gradle `BUILD FAIL*`, etc. — so the tree flips to red the moment a startup goes wrong, instead of waiting for the process to die.
 
 ### Stale-config detection
 
