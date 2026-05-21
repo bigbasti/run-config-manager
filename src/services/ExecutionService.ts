@@ -836,6 +836,9 @@ function buildCwd(cfg: RunConfig, folder: vscode.WorkspaceFolder): string {
       return to.buildRoot;
     }
   }
+  if (cfg.type === 'go' && cfg.typeOptions.buildRoot) {
+    return cfg.typeOptions.buildRoot;
+  }
   return resolveProjectUri(folder, cfg.projectPath).fsPath;
 }
 

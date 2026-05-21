@@ -259,6 +259,26 @@
         "icon": "media/icons/python.svg"
       },
       {
+        "command": "runConfig.goAction.modTidy",
+        "title": "go mod tidy",
+        "icon": { "light": "media/icons/go.svg", "dark": "media/icons/go.svg" }
+      },
+      {
+        "command": "runConfig.goAction.modDownload",
+        "title": "go mod download",
+        "icon": { "light": "media/icons/go.svg", "dark": "media/icons/go.svg" }
+      },
+      {
+        "command": "runConfig.goAction.build",
+        "title": "go build ./...",
+        "icon": { "light": "media/icons/go.svg", "dark": "media/icons/go.svg" }
+      },
+      {
+        "command": "runConfig.goAction.test",
+        "title": "go test ./...",
+        "icon": { "light": "media/icons/go.svg", "dark": "media/icons/go.svg" }
+      },
+      {
         "command": "runConfig.findBlockingPorts",
         "title": "Find Blocking Ports",
         "icon": "$(plug)"
@@ -360,17 +380,17 @@
       "view/item/context": [
         {
           "command": "runConfig.run",
-          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "inline@1"
         },
         {
           "command": "runConfig.stop",
-          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "inline@1"
         },
         {
           "command": "runConfig.debug",
-          "when": "view == runConfigurations && viewItem =~ /^configIdle(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "inline@2"
         },
         {
@@ -385,17 +405,17 @@
         },
         {
           "command": "runConfig.edit",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "inline@3"
         },
         {
           "command": "runConfig.clone",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "inline@4"
         },
         {
           "command": "runConfig.delete",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "inline@5"
         },
         {
@@ -415,17 +435,17 @@
         },
         {
           "command": "runConfig.run",
-          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "1_run@1"
         },
         {
           "command": "runConfig.debug",
-          "when": "view == runConfigurations && viewItem =~ /^configIdle(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configIdle(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "1_run@2"
         },
         {
           "command": "runConfig.stop",
-          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "1_run@3"
         },
         {
@@ -440,7 +460,7 @@
         },
         {
           "command": "runConfig.openMonitor",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?:monitored$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?:monitored$/",
           "group": "1_run@7"
         },
         {
@@ -514,18 +534,38 @@
           "group": "2_build@5"
         },
         {
+          "command": "runConfig.goAction.modTidy",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:go(:grouped)?(:monitored)?$/",
+          "group": "2_build@1"
+        },
+        {
+          "command": "runConfig.goAction.modDownload",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:go(:grouped)?(:monitored)?$/",
+          "group": "2_build@2"
+        },
+        {
+          "command": "runConfig.goAction.build",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:go(:grouped)?(:monitored)?$/",
+          "group": "2_build@3"
+        },
+        {
+          "command": "runConfig.goAction.test",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?:go(:grouped)?(:monitored)?$/",
+          "group": "2_build@4"
+        },
+        {
           "command": "runConfig.edit",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "3_edit@1"
         },
         {
           "command": "runConfig.clone",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running)(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "3_edit@2"
         },
         {
           "command": "runConfig.delete",
-          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm|python))?(:grouped)?(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^config(Idle|Running|Invalid)(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "3_edit@3"
         },
         {
@@ -560,12 +600,12 @@
         },
         {
           "command": "runConfig.addToGroup",
-          "when": "view == runConfigurations && viewItem =~ /^(config(Idle|Running)(NoDebug)?(:(maven|gradle|npm|python))?|docker(Idle|Running))(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^(config(Idle|Running)(NoDebug)?(:(maven|gradle|npm|python|go))?|docker(Idle|Running))(:monitored)?$/",
           "group": "4_group@1"
         },
         {
           "command": "runConfig.removeFromGroup",
-          "when": "view == runConfigurations && viewItem =~ /^(config(Idle|Running)(NoDebug)?(:(maven|gradle|npm|python))?|docker(Idle|Running)):grouped(:monitored)?$/",
+          "when": "view == runConfigurations && viewItem =~ /^(config(Idle|Running)(NoDebug)?(:(maven|gradle|npm|python|go))?|docker(Idle|Running)):grouped(:monitored)?$/",
           "group": "4_group@1"
         },
         {

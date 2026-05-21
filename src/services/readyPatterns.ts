@@ -69,6 +69,26 @@ export function readyPatternsFor(cfg: RunConfig): RegExp[] {
     // marker. Tree spins while running and returns to idle on exit.
     return [];
   }
+  if (cfg.type === 'go') {
+    return [
+      // Standard net/http ListenAndServe: "Listening on :8080" or similar.
+      /listening on .*:\d+/i,
+      // Many Go servers: "server is running on ...", "server listening on ..."
+      /server (is )?(running|listening|started) on/i,
+      // Gin framework: "Listening and serving HTTP on :8080"
+      /Listening and serving (HTTP|HTTPS) on/i,
+      // Echo framework: "⇨ http server started on [::]:8080"
+      /http server started on/i,
+      // Fiber framework: "Listening on 0.0.0.0:8080"
+      /Listening on [\d.:]+:\d+/i,
+      // gRPC server
+      /grpc server (listening|started)/i,
+      // Generic "running on http(s)://..."
+      /running on https?:\/\//i,
+      // go test success: "ok  	github.com/foo/bar	0.123s"
+      /^ok\s+\S+\s+[\d.]+s/m,
+    ];
+  }
   if (cfg.type === 'npm') {
     return [
       // Angular CLI 14+: 'Application bundle generation complete.' / 'Compiled successfully'
@@ -205,6 +225,29 @@ export function failurePatternsFor(cfg: RunConfig): RegExp[] {
       /npm ERR!/,
       // Port already in use — Node throws this before the server binds.
       /Error: listen EADDRINUSE/,
+    ];
+  }
+  if (cfg.type === 'go') {
+    return [
+      // go run / go build compile errors: a line starting with "#" (package path)
+      // followed by file:line:col: message pattern.
+      /^#\s+\S/m,
+      // Runtime panic
+      /^goroutine \d+ \[/m,
+      /^panic:/m,
+      // go test failure: "FAIL	github.com/foo/bar	0.123s"
+      /^FAIL\s+\S+/m,
+      // Port already in use
+      /listen tcp.*address already in use/i,
+      /bind: address already in use/i,
+      // Missing Go files or package
+      /no Go files in/,
+      /cannot find package/,
+      /build constraints exclude all Go files/,
+      // Missing go.mod
+      /no required module provides/,
+      // Build failure from `go build` exit
+      /^build failed\b/im,
     ];
   }
   if (cfg.type === 'python') {

@@ -236,6 +236,52 @@ export function pythonCommandFor(ctx: PythonContext, action: PythonAction): stri
   }
 }
 
+// ---------------------------------------------------------------------------
+// Go actions — surfaced as right-click menu entries on Go configs.
+// ---------------------------------------------------------------------------
+
+export type GoAction = 'modTidy' | 'modDownload' | 'build' | 'test';
+export const GO_ACTIONS: GoAction[] = ['modTidy', 'modDownload', 'build', 'test'];
+
+export function goActionLabel(action: GoAction): string {
+  switch (action) {
+    case 'modTidy':     return 'go mod tidy';
+    case 'modDownload': return 'go mod download';
+    case 'build':       return 'go build ./...';
+    case 'test':        return 'go test ./...';
+  }
+}
+
+// Resolved context a Go action needs. The goPath is the installation root;
+// binary is the resolved `go` executable path.
+export interface GoContext {
+  cwd: string;
+  binary: string; // 'go' or '<goPath>/bin/go'
+}
+
+export function resolveGoContext(
+  cfg: RunConfig,
+  folder: vscode.WorkspaceFolder,
+): GoContext | null {
+  if (cfg.type !== 'go') return null;
+  const cwd = resolveProjectUri(folder, cfg.projectPath).fsPath;
+  const goPath = cfg.typeOptions.goPath?.trim();
+  const binary = goPath
+    ? require('path').join(goPath.replace(/[/\\]$/, ''), 'bin', process.platform === 'win32' ? 'go.exe' : 'go') as string
+    : 'go';
+  return { cwd, binary };
+}
+
+// Returns the args to pass to `<go> ...args`. The caller spawns the go binary.
+export function goCommandFor(ctx: GoContext, action: GoAction): string[] {
+  switch (action) {
+    case 'modTidy':     return ['mod', 'tidy'];
+    case 'modDownload': return ['mod', 'download'];
+    case 'build':       return ['build', './...'];
+    case 'test':        return ['test', './...'];
+  }
+}
+
 function fileExists(fs: typeof import('fs'), p: string): boolean {
   try { return fs.statSync(p).isFile(); } catch { return false; }
 }

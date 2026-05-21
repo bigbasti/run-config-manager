@@ -55,6 +55,7 @@ function computeBrand(cfg: RunConfig, folder: vscode.WorkspaceFolder | undefined
     case 'custom-command': return 'bash';
     case 'docker':      return 'docker';
     case 'http-request': return 'http-request';
+    case 'go':          return 'go';
     case 'npm': {
       if (!folder) return 'npm';
       const sub = detectNpmSubtype(folder.uri, cfg.projectPath, cfg.typeOptions.scriptName);

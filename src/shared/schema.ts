@@ -371,6 +371,20 @@ export const DockerTypeOptionsSchema = z
     }
   });
 
+export const GoLaunchModeSchema = z.enum(['run', 'test', 'build', 'install', 'custom']);
+
+export const GoTypeOptionsSchema = z.object({
+  launchMode: GoLaunchModeSchema,
+  goPath: z.string().default(''),
+  packagePath: z.string().default(''),
+  testArgs: z.string().default(''),
+  outputPath: z.string().default(''),
+  customArgs: z.string().default(''),
+  buildRoot: z.string().default(''),
+  race: z.boolean().optional(),
+  colorOutput: z.boolean().optional(),
+});
+
 export const RunConfigSchema = z.discriminatedUnion('type', [
   z.object({
     ...commonFields,
@@ -426,6 +440,11 @@ export const RunConfigSchema = z.discriminatedUnion('type', [
     ...commonFields,
     type: z.literal('http-request'),
     typeOptions: HttpRequestTypeOptionsSchema,
+  }),
+  z.object({
+    ...commonFields,
+    type: z.literal('go'),
+    typeOptions: GoTypeOptionsSchema,
   }),
 ]);
 

@@ -9,7 +9,8 @@ export type RunConfigType =
   | 'gradle-task'
   | 'custom-command'
   | 'docker'
-  | 'http-request';
+  | 'http-request'
+  | 'go';
 
 export type PackageManager = 'npm' | 'yarn' | 'pnpm';
 
@@ -413,6 +414,40 @@ export interface DockerTypeOptions {
   containerName?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Go
+// ---------------------------------------------------------------------------
+
+// Five launch modes:
+//   run     — go run [packagePath] [args]
+//   test    — go test [testArgs]
+//   build   — go build [-o outputPath] [packagePath]
+//   install — go install [packagePath]
+//   custom  — go [customArgs]
+export type GoLaunchMode = 'run' | 'test' | 'build' | 'install' | 'custom';
+
+export interface GoTypeOptions {
+  launchMode: GoLaunchMode;
+  // Absolute path to a Go installation directory (the one containing bin/go).
+  // Empty string means "use whatever `go` is on PATH when VS Code launched."
+  goPath: string;
+  // Package path passed to go run / go build / go install.
+  // E.g. './cmd/server', './...', '.'. Empty = '.'.
+  packagePath: string;
+  // Free-form args passed to `go test` (package paths + -run filters etc.).
+  testArgs: string;
+  // Output binary path for `go build -o`. Empty = default go build name.
+  outputPath: string;
+  // Free-form args appended verbatim to `go` for the custom mode.
+  customArgs: string;
+  // Directory containing go.mod. Empty = same as projectPath.
+  buildRoot: string;
+  // When true, adds the -race flag (run/test/build modes only).
+  race?: boolean;
+  // When true, sets FORCE_COLOR=1 and TERM=xterm-256color.
+  colorOutput?: boolean;
+}
+
 export type RunConfig =
   | (RunConfigBase & { type: 'npm'; typeOptions: NpmTypeOptions })
   | (RunConfigBase & { type: 'spring-boot'; typeOptions: SpringBootTypeOptions })
@@ -424,7 +459,8 @@ export type RunConfig =
   | (RunConfigBase & { type: 'gradle-task'; typeOptions: GradleTaskTypeOptions })
   | (RunConfigBase & { type: 'custom-command'; typeOptions: CustomCommandTypeOptions })
   | (RunConfigBase & { type: 'docker'; typeOptions: DockerTypeOptions })
-  | (RunConfigBase & { type: 'http-request'; typeOptions: HttpRequestTypeOptions });
+  | (RunConfigBase & { type: 'http-request'; typeOptions: HttpRequestTypeOptions })
+  | (RunConfigBase & { type: 'go'; typeOptions: GoTypeOptions });
 
 export interface RunFile {
   // Semver string mirroring the extension version that last wrote

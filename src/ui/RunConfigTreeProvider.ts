@@ -10,7 +10,7 @@ import type { DependencyOrchestrator, OrchestrationStatus } from '../services/De
 import type { NativeRunnerService } from '../services/NativeRunnerService';
 import type { MonitoringService } from '../services/MonitoringService';
 import { parseDependencyRef, rcmRef } from '../services/dependencyCandidates';
-import { resolveBuildContext, resolveNpmContext, resolvePythonContext } from '../services/buildActions';
+import { resolveBuildContext, resolveNpmContext, resolvePythonContext, resolveGoContext } from '../services/buildActions';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
 import type { RunConfig, InvalidConfigEntry } from '../shared/types';
 import { iconForConfig, brandIconUri } from './iconForConfig';
@@ -366,13 +366,16 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
       : debuggable ? 'configIdle' : 'configIdleNoDebug';
     const npmCtx = !buildCtx && folder ? resolveNpmContext(n.config, folder) : null;
     const pythonCtx = !buildCtx && !npmCtx && folder ? resolvePythonContext(n.config, folder) : null;
+    const goCtx = !buildCtx && !npmCtx && !pythonCtx && folder ? resolveGoContext(n.config, folder) : null;
     const toolSuffix = buildCtx
       ? `:${buildCtx.tool}`
       : npmCtx
         ? ':npm'
         : pythonCtx
           ? ':python'
-          : '';
+          : goCtx
+            ? ':go'
+            : '';
     const groupSuffix = n.config.group ? ':grouped' : '';
     const monState = this.monitoring?.state(n.config.id);
     const monitoredSuffix = monState ? ':monitored' : '';
@@ -911,6 +914,7 @@ function labelForType(type: RunConfig['type']): string {
     case 'custom-command': return 'Custom Command';
     case 'docker': return 'Docker';
     case 'http-request': return 'HTTP Requests';
+    case 'go': return 'Go';
     default: return type;
   }
 }
@@ -931,6 +935,7 @@ function iconForGroupType(type: string): string {
     case 'custom-command': return 'bash';
     case 'docker': return 'docker';
     case 'http-request': return 'http-request';
+    case 'go': return 'go';
     default: return 'npm';
   }
 }

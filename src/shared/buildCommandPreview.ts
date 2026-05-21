@@ -186,6 +186,32 @@ export function buildCommandPreview(cfg: RunConfig, workspaceFolderPath?: string
       const args = to.customArgs?.trim() || '<args>';
       base = `${py}${interp} ${args}`;
     }
+  } else if (cfg.type === 'go') {
+    const to = cfg.typeOptions;
+    const goBin = to.goPath
+      ? `${to.goPath.replace(/[/\\]$/, '')}/bin/go`
+      : 'go';
+    const race = to.race ? ' -race' : '';
+    const vmFlags = cfg.vmArgs?.trim() ? ` ${cfg.vmArgs.trim()}` : '';
+    if (to.launchMode === 'run') {
+      const pkg = to.packagePath?.trim() || '.';
+      const pa = cfg.programArgs?.trim() ? ` ${cfg.programArgs.trim()}` : '';
+      base = `${goBin} run${race}${vmFlags} ${pkg}${pa}`;
+    } else if (to.launchMode === 'test') {
+      const args = to.testArgs?.trim() || './...';
+      base = `${goBin} test${race}${vmFlags} ${args}`;
+    } else if (to.launchMode === 'build') {
+      const out = to.outputPath?.trim() ? ` -o ${to.outputPath.trim()}` : '';
+      const pkg = to.packagePath?.trim() || '.';
+      base = `${goBin} build${race}${vmFlags}${out} ${pkg}`;
+    } else if (to.launchMode === 'install') {
+      const pkg = to.packagePath?.trim() || '.';
+      base = `${goBin} install${race}${vmFlags} ${pkg}`;
+    } else {
+      // custom
+      const args = to.customArgs?.trim() || '<args>';
+      base = `${goBin} ${args}`;
+    }
   } else {
     return `(unsupported type: ${(cfg as RunConfig).type})`;
   }
@@ -202,7 +228,8 @@ export function buildCommandPreview(cfg: RunConfig, workspaceFolderPath?: string
     cfg.type === 'maven-goal' ||
     cfg.type === 'gradle-task' ||
     cfg.type === 'custom-command' ||
-    cfg.type === 'python';
+    cfg.type === 'python' ||
+    cfg.type === 'go';
   const args = (cfg.programArgs ?? '').trim();
   const withArgs = !programArgsApplied && args ? `${base} -- ${args}` : base;
 
@@ -235,6 +262,7 @@ function buildRootFor(cfg: RunConfig): string | undefined {
       return to.buildRoot;
     }
   }
+  if (cfg.type === 'go' && cfg.typeOptions.buildRoot) return cfg.typeOptions.buildRoot;
   return undefined;
 }
 

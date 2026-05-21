@@ -161,7 +161,8 @@ export class EditorPanel {
       | 'gradle-task'
       | 'custom-command'
       | 'docker'
-      | 'http-request';
+      | 'http-request'
+      | 'go';
 
     const baseCommon = {
       name: '',
@@ -246,6 +247,20 @@ export class EditorPanel {
         verifyTls: true,
         assertScript: '',
         responseSink: 'output',
+      };
+    } else if (type === 'go') {
+      // goPath comes from streaming detection; leave blank so mergeBlanks
+      // doesn't shadow the detected install.
+      typeDefaults = {
+        launchMode: 'run',
+        goPath: '',
+        packagePath: '',
+        testArgs: './...',
+        outputPath: '',
+        customArgs: '',
+        buildRoot: '',
+        race: false,
+        colorOutput: true,
       };
     } else {
       typeDefaults = isStreaming ? { profiles: '' } : { buildTool: 'maven', profiles: '' };
@@ -1772,6 +1787,24 @@ export function sanitizeConfig(cfg: RunConfig): RunConfig {
         pytestArgs: to?.pytestArgs ?? '',
         customArgs: to?.customArgs ?? '',
         buildRoot: to?.buildRoot ?? '',
+      },
+    };
+  }
+  if (cfg.type === 'go') {
+    const to = cfg.typeOptions as Partial<import('../shared/types').GoTypeOptions> | undefined;
+    return {
+      ...common,
+      type: 'go',
+      typeOptions: {
+        launchMode: (to?.launchMode ?? 'run') as import('../shared/types').GoLaunchMode,
+        goPath: to?.goPath ?? '',
+        packagePath: to?.packagePath ?? '',
+        testArgs: to?.testArgs ?? './...',
+        outputPath: to?.outputPath ?? '',
+        customArgs: to?.customArgs ?? '',
+        buildRoot: to?.buildRoot ?? '',
+        ...(typeof to?.race === 'boolean' ? { race: to.race } : {}),
+        ...(typeof to?.colorOutput === 'boolean' ? { colorOutput: to.colorOutput } : {}),
       },
     };
   }

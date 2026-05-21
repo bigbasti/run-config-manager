@@ -19,6 +19,7 @@ import { GradleTaskAdapter } from './adapters/gradle-task/GradleTaskAdapter';
 import { CustomCommandAdapter } from './adapters/custom-command/CustomCommandAdapter';
 import { DockerAdapter } from './adapters/docker/DockerAdapter';
 import { HttpRequestAdapter } from './adapters/http-request/HttpRequestAdapter';
+import { GoAdapter } from './adapters/go/GoAdapter';
 import { DockerService } from './services/DockerService';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { NativeRunnerTreeProvider } from './ui/NativeRunnerTreeProvider';
@@ -28,7 +29,7 @@ import { MonitorPanel } from './ui/MonitorPanel';
 import { NativeRunnerService, type NativeLaunch, type NativeTask } from './services/NativeRunnerService';
 import { buildDependencyOptions, rcmRef } from './services/dependencyCandidates';
 import { DependencyOrchestrator } from './services/DependencyOrchestrator';
-import { resolveBuildContext, buildCommandFor, buildActionLabel, resolveNpmContext, npmCommandFor, npmActionLabel, resolvePythonContext, pythonCommandFor, pythonActionLabel, type NpmAction, type PythonAction } from './services/buildActions';
+import { resolveBuildContext, buildCommandFor, buildActionLabel, resolveNpmContext, npmCommandFor, npmActionLabel, resolvePythonContext, pythonCommandFor, pythonActionLabel, resolveGoContext, goCommandFor, goActionLabel, type NpmAction, type PythonAction, type GoAction } from './services/buildActions';
 import { GroupService } from './services/GroupService';
 import {
   NativeLaunchContentProvider,
@@ -69,6 +70,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registry.register(new CustomCommandAdapter());
   registry.register(new DockerAdapter(docker));
   registry.register(new HttpRequestAdapter());
+  registry.register(new GoAdapter());
   log.debug(`Registered adapters: ${registry.all().map(a => a.type).join(', ')}`);
 
   const store = new ConfigStore();
@@ -613,6 +615,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('runConfig.pythonAction.upgrade',             (arg: ConfigNodeArg) => runPythonActionFor(arg, 'upgrade',             store)),
     vscode.commands.registerCommand('runConfig.pythonAction.freeze',              (arg: ConfigNodeArg) => runPythonActionFor(arg, 'freeze',              store)),
     vscode.commands.registerCommand('runConfig.pythonAction.list',                (arg: ConfigNodeArg) => runPythonActionFor(arg, 'list',                store)),
+    vscode.commands.registerCommand('runConfig.goAction.modTidy',    (arg: ConfigNodeArg) => runGoActionFor(arg, 'modTidy',    store)),
+    vscode.commands.registerCommand('runConfig.goAction.modDownload', (arg: ConfigNodeArg) => runGoActionFor(arg, 'modDownload', store)),
+    vscode.commands.registerCommand('runConfig.goAction.build',      (arg: ConfigNodeArg) => runGoActionFor(arg, 'build',      store)),
+    vscode.commands.registerCommand('runConfig.goAction.test',       (arg: ConfigNodeArg) => runGoActionFor(arg, 'test',       store)),
 
     // --- Groups (user-defined) ---
 
@@ -1202,6 +1208,41 @@ async function runPythonActionFor(
   }
 }
 
+async function runGoActionFor(
+  arg: any,
+  action: GoAction,
+  store: ConfigStore,
+): Promise<void> {
+  let cfg: RunConfig | undefined;
+  let folderKey: string | undefined;
+  if (arg?.kind === 'config') { folderKey = arg.folderKey; cfg = arg.config; }
+  if (!cfg || !folderKey) return;
+  const folder = store.getFolder(folderKey);
+  if (!folder) return;
+  const ctx = resolveGoContext(cfg, folder);
+  if (!ctx) {
+    vscode.window.showWarningMessage(`"${cfg.name}" is not a Go config.`);
+    return;
+  }
+  const args = goCommandFor(ctx, action);
+  const execution = new vscode.ShellExecution(ctx.binary, args, { cwd: ctx.cwd });
+  const taskName = `${cfg.name} · ${goActionLabel(action)}`;
+  const task = new vscode.Task(
+    { type: 'rcm-go', configId: cfg.id, action } as any,
+    folder,
+    taskName,
+    'Run Configurations',
+    execution,
+    [],
+  );
+  log.info(`go action: ${taskName} (cwd=${ctx.cwd}, go=${ctx.binary})`);
+  try {
+    await vscode.tasks.executeTask(task);
+  } catch (e) {
+    vscode.window.showErrorMessage(`Go action failed to start: ${(e as Error).message}`);
+  }
+}
+
 async function buildEditContext(
   adapter: { detect: (uri: vscode.Uri) => Promise<{ context: Record<string, unknown> } | null> },
   folder: vscode.WorkspaceFolder,
@@ -1635,6 +1676,7 @@ function brandForType(type: RunConfigType): string {
     case 'docker':         return 'docker';
     case 'http-request':   return 'http-request';
     case 'npm':            return 'npm';
+    case 'go':             return 'go';
   }
 }
 

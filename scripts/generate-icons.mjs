@@ -40,34 +40,27 @@ const ICONS = [
   ['svelte',      'siSvelte'],
   ['vite',        'siVite'],
   ['nextjs',      'siNextdotjs'],
+  // Go runtime
+  ['go',          'siGo'],
   // Custom Command (shell-prompt glyph — recognizable across platforms).
   ['bash',        'siGnubash'],
   // Docker — canonical mid-blue reads on both themes.
   ['docker',      'siDocker'],
 ];
 
-// For brands whose canonical color doesn't read well on a dark VS Code
-// theme (pure black, very low luminance), swap to a bright neutral. Keyed
-// on our filename; pick-fill runs *after* we know the simple-icons hex.
-function fillFor(name, hex) {
-  // Very dark colors (luminance < 0.15 using the simple relative formula)
-  // get swapped to a bright neutral so tree rows stay legible on dark
-  // themes. The 'light' variant keeps the original hex since it reads fine
-  // against VS Code's light theme.
-  return {
-    dark: needsLighten(hex) ? 'CCCCCC' : hex,
-    light: hex,
-  };
-}
-
-function needsLighten(hex) {
-  // Fast luminance check — true RGB → YIQ. Anything dim enough to be a
-  // problem on dark backgrounds gets flipped. Threshold picked empirically.
-  const r = parseInt(hex.slice(0, 2), 16);
-  const g = parseInt(hex.slice(2, 4), 16);
-  const b = parseInt(hex.slice(4, 6), 16);
-  const y = (r * 299 + g * 587 + b * 114) / 1000;
-  return y < 40;
+// All icons use the same neutral gray fills regardless of the brand's
+// canonical color. This keeps the tree rows monochrome so VS Code's own
+// state colors (green play = running, red = failed, yellow = rebuilding)
+// read clearly without competing with brand hues.
+//
+// Two neutral values, one per theme:
+//   dark  (#CCCCCC) — visible against VS Code's dark backgrounds.
+//   light (#3C3C3C) — visible against VS Code's light backgrounds.
+//
+// The `-light` sibling file is always written so `brandIconUri` can return
+// a proper {light, dark} pair. VS Code picks the right variant automatically.
+function fillFor(_name, _hex) {
+  return { dark: 'CCCCCC', light: '3C3C3C' };
 }
 
 let written = 0;
@@ -84,18 +77,13 @@ for (const [fileName, slug] of ICONS) {
   <path fill="#${fill}" d="${icon.path}"/>
 </svg>
 `;
-  // Always write the base file (dark-theme variant) and, when dark !== light,
-  // a -light sibling. iconForConfig builds {light, dark} Uri pairs when the
-  // -light file exists.
+  // Always write both the dark and light variants so iconForConfig can return
+  // a proper {light, dark} Uri pair. VS Code picks the right file per theme.
   writeFileSync(join(MEDIA_ICONS, `${fileName}.svg`), tpl(dark));
-  written++;
-  if (light !== dark) {
-    writeFileSync(join(MEDIA_ICONS, `${fileName}-light.svg`), tpl(light));
-    written++;
-    console.log(`✓ ${fileName}.svg  (dark #${dark})  + ${fileName}-light.svg  (light #${light})`);
-  } else {
-    console.log(`✓ ${fileName}.svg  (#${dark}  ${icon.title})`);
-  }
+  writeFileSync(join(MEDIA_ICONS, `${fileName}-light.svg`), tpl(light));
+  written += 2;
+  console.log(`✓ ${fileName}.svg + ${fileName}-light.svg  (${icon.title}  brand: #${icon.hex})`);
+
 }
 
 console.log(`\nWrote ${written} icon file(s) to media/icons/.`);
