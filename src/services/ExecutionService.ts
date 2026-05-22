@@ -26,7 +26,7 @@ import * as pathModule from 'path';
 // the configuration cache is enabled. This pattern matches the exact
 // error line Gradle emits so we can offer a one-click fix.
 const GRADLE_CONFIG_CACHE_PATTERN =
-  /Invocation of 'Task.project'.*unsupported with the configuration cache/;
+  /Invocation of 'Task\.project'.*unsupported with the configuration cache/;
 
 interface Entry {
   execution: vscode.TaskExecution;
@@ -788,9 +788,6 @@ export class ExecutionService {
   async stop(configId: string): Promise<void> {
     const entry = this.running.get(configId);
     if (!entry) return;
-    // Clear the config-cache dedup guard so a re-run can trigger the
-    // toast again if the Gradle error fires again.
-    this.configCacheToastShown.delete(configId);
     // When the config went through our pseudoterminal AND the user
     // opted into linger mode, kill the child process directly via
     // RunTerminal instead of going through TaskExecution.terminate.
