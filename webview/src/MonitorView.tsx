@@ -55,6 +55,8 @@ export function MonitorView({
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [threadDumps, setThreadDumps] = useState<Map<number, ThreadDump>>(new Map());
   const [activeTab, setActiveTab] = useState<TabKey>('memory');
+  // Result of the last set-log-level call — forwarded to AppTab for per-button feedback.
+  const [logLevelResult, setLogLevelResult] = useState<{ name: string; level: string; ok: boolean; errorMessage?: string } | null>(null);
 
   useEffect(() => {
     const id = setInterval(() => forceTick(t => t + 1), 1000);
@@ -86,18 +88,22 @@ export function MonitorView({
         setThreadsDetail(msg.threads);
       } else if (msg.cmd === 'monitor.actuator') {
         setActuator(msg.actuator);
-      } else if (msg.cmd === 'monitor.logLevelChanged' && msg.ok) {
-        // Optimistic update: flip the effective level in local actuator state
-        // immediately so the UI responds without waiting for the next 10s tick.
-        setActuator(prev => {
-          if (!prev?.loggers) return prev;
-          return {
-            ...prev,
-            loggers: prev.loggers.map(l =>
-              l.name === msg.name ? { ...l, configured: msg.level, effective: msg.level } : l,
-            ),
-          };
-        });
+      } else if (msg.cmd === 'monitor.logLevelChanged') {
+        if (msg.ok) {
+          // Optimistic update: flip the effective level in local actuator state
+          // immediately so the UI responds without waiting for the next 10s tick.
+          setActuator(prev => {
+            if (!prev?.loggers) return prev;
+            return {
+              ...prev,
+              loggers: prev.loggers.map(l =>
+                l.name === msg.name ? { ...l, configured: msg.level, effective: msg.level } : l,
+              ),
+            };
+          });
+        }
+        // Forward the result (including any error message) to AppTab for per-button feedback.
+        setLogLevelResult({ name: msg.name, level: msg.level, ok: msg.ok, errorMessage: msg.errorMessage });
       } else if (msg.cmd === 'monitor.runtime') {
         setRuntime(msg.runtime);
       } else if (msg.cmd === 'monitor.threadDump') {
@@ -261,7 +267,7 @@ export function MonitorView({
           />
         )}
         {activeTab === 'jvm' && <JvmInternalsTab runtime={runtime} history={history} />}
-        {activeTab === 'app' && <AppTab actuator={actuator} setLogLevel={setLogLevel} />}
+        {activeTab === 'app' && <AppTab actuator={actuator} setLogLevel={setLogLevel} logLevelResult={logLevelResult} />}
       </div>
 
       <hr style={{ margin: '16px 0' }} />

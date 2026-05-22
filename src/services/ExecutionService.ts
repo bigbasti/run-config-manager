@@ -216,10 +216,22 @@ export class ExecutionService {
     // Allocate a JMX port for monitoring up-front so we can pass it into
     // prepareLaunch. If allocation fails the run still proceeds; we just
     // don't enable monitoring.
+    //
+    // We exclude the app's own HTTP port from the candidate set. The OS
+    // sometimes hands back an ephemeral port that happens to equal the
+    // port Spring Boot (or the user) has configured as server.port — the
+    // JMX agent then binds it first, and the app fails to start with
+    // "Port <N> already in use". Passing the known app port to
+    // allocateFreePort() lets it retry until it gets a different one.
     let monitorPort: number | undefined;
     if (opts?.monitor) {
+      // Collect ports this config is known to use so we don't collide with them.
+      const appPorts: number[] = [];
+      const rp = resolvedCfg.port;
+      if (rp && rp > 0) appPorts.push(rp);
+      if (resolvedCfg.type === 'tomcat') appPorts.push(resolvedCfg.typeOptions.httpPort);
       try {
-        monitorPort = await allocateFreePort();
+        monitorPort = await allocateFreePort(appPorts);
       } catch (e) {
         log.warn(`Could not allocate JMX port for monitoring: ${(e as Error).message}`);
         vscode.window.showWarningMessage(

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   ActuatorSnapshot,
   ActuatorEnvSource,
@@ -14,6 +14,21 @@ const LEVEL_COLORS: Record<string, string> = {
   WARN:  'var(--vscode-terminal-ansiYellow, #e5c07b)',
   ERROR: 'var(--vscode-terminal-ansiRed, #f44747)',
   OFF:   'var(--vscode-disabledForeground, #777)',
+};
+
+// Neutral style for inactive level buttons — all the same gray so only the
+// active one stands out with color.
+const INACTIVE_BTN: React.CSSProperties = {
+  fontSize: 9,
+  padding: '1px 5px',
+  background: 'transparent',
+  color: 'var(--vscode-descriptionForeground, #888)',
+  border: '1px solid var(--vscode-editorWidget-border, #555)',
+  borderRadius: 2,
+  cursor: 'pointer',
+  minWidth: 38,
+  textAlign: 'center' as const,
+  fontWeight: 400,
 };
 
 type AppSubTab = 'overview' | 'loggers' | 'env' | 'info';
@@ -91,15 +106,81 @@ function OverviewSection({ actuator }: { actuator: ActuatorSnapshot }) {
 
 // ─── Loggers ─────────────────────────────────────────────────────────────────
 
+// Per-button state: undefined = idle, 'pending' = waiting, 'ok' = success flash, 'err' = error flash
+type BtnState = 'pending' | 'ok' | 'err';
+
+// Maps common HTTP error codes from the actuator loggers endpoint to human-readable
+// guidance so the user knows exactly why the change failed and what to do.
+function describeLogLevelError(errorMessage: string | undefined): { short: string; fix: string } {
+  if (!errorMessage) return { short: 'Unknown error', fix: 'Check the extension output channel for details.' };
+  if (errorMessage.includes('HTTP 401') || errorMessage.includes('HTTP 403')) {
+    return {
+      short: `Request rejected (${errorMessage})`,
+      fix: 'Spring Security is blocking the actuator POST request. ' +
+        'Add a security rule to permit POST to /actuator/loggers/**, ' +
+        'or set management.security.enabled=false (not recommended for production).',
+    };
+  }
+  if (errorMessage.includes('HTTP 404')) {
+    return {
+      short: 'Logger endpoint not found (HTTP 404)',
+      fix: 'Ensure "loggers" is included in management.endpoints.web.exposure.include ' +
+        'and management.endpoint.loggers.enabled=true.',
+    };
+  }
+  if (errorMessage.includes('HTTP 405')) {
+    return {
+      short: 'Method not allowed (HTTP 405)',
+      fix: 'The loggers endpoint is exposed for GET but POST may be blocked. ' +
+        'Check your security configuration.',
+    };
+  }
+  if (errorMessage === 'actuator not available') {
+    return {
+      short: 'Actuator not connected',
+      fix: 'The monitoring agent has not yet found an actuator endpoint on this JVM. ' +
+        'Wait a few seconds for the agent to connect, or check the port/exposure configuration.',
+    };
+  }
+  return { short: errorMessage, fix: 'Check the extension output channel for details.' };
+}
+
 function LoggersSection({
   actuator,
   setLogLevel,
+  logLevelResult,
 }: {
   actuator: ActuatorSnapshot;
   setLogLevel: (name: string, level: string) => void;
+  logLevelResult: { name: string; level: string; ok: boolean; errorMessage?: string } | null;
 }) {
   const [filter, setFilter] = useState('');
-  const [pending, setPending] = useState<string | null>(null); // "loggerName:LEVEL"
+  // Map key: "loggerName:LEVEL"
+  const [btnStates, setBtnStates] = useState<Map<string, BtnState>>(new Map());
+  // Sticky error banner — shown until the next successful change or manual dismiss.
+  const [lastError, setLastError] = useState<{ short: string; fix: string } | null>(null);
+
+  // When a result arrives from the extension, update the button state and
+  // schedule a flash-then-clear after 1.5s. On error, also set the sticky banner.
+  useEffect(() => {
+    if (!logLevelResult) return;
+    const key = `${logLevelResult.name}:${logLevelResult.level}`;
+    const result: BtnState = logLevelResult.ok ? 'ok' : 'err';
+    setBtnStates(m => new Map(m).set(key, result));
+    if (logLevelResult.ok) {
+      setLastError(null); // clear any previous error on success
+    } else {
+      setLastError(describeLogLevelError(logLevelResult.errorMessage));
+    }
+    const t = setTimeout(() => {
+      setBtnStates(m => {
+        const next = new Map(m);
+        next.delete(key);
+        return next;
+      });
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [logLevelResult]);
 
   if (!actuator.loggers || actuator.loggers.length === 0) {
     return (
@@ -116,15 +197,53 @@ function LoggersSection({
 
   const handleSetLevel = (name: string, level: string) => {
     const key = `${name}:${level}`;
-    setPending(key);
+    // Mark as pending immediately; clear after 4s safety timeout if no reply.
+    setBtnStates(m => new Map(m).set(key, 'pending'));
+    const t = setTimeout(() => {
+      setBtnStates(m => {
+        if (m.get(key) !== 'pending') return m; // already resolved
+        const next = new Map(m);
+        next.delete(key);
+        return next;
+      });
+    }, 4000);
     setLogLevel(name, level);
-    // Clear pending indicator after 3s as a safety net in case the
-    // logLevelChanged response doesn't arrive (e.g. actuator not exposed).
-    setTimeout(() => setPending(p => (p === key ? null : p)), 3000);
+    // Store timeout id so it can be cleared by the useEffect above if the
+    // reply arrives before the 4s window. (React doesn't expose a clean way
+    // to pass it across, so we let both race — the effect sets 'ok'/'err'
+    // which is checked by the timeout before deleting.)
+    return () => clearTimeout(t);
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {lastError && (
+        <div style={{
+          background: 'var(--vscode-inputValidation-errorBackground, #5a1d1d)',
+          border: '1px solid var(--vscode-inputValidation-errorBorder, #be1100)',
+          borderRadius: 4,
+          padding: '8px 10px',
+          fontSize: 11,
+          lineHeight: 1.5,
+          position: 'relative',
+        }}>
+          <button
+            onClick={() => setLastError(null)}
+            title="Dismiss"
+            style={{
+              position: 'absolute', top: 4, right: 6,
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'inherit', fontSize: 14, lineHeight: 1, opacity: 0.7,
+            }}
+          >×</button>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            Failed to change log level: {lastError.short}
+          </div>
+          <div style={{ opacity: 0.9 }}>
+            {lastError.fix}
+          </div>
+        </div>
+      )}
       <input
         placeholder="Filter logger name…"
         value={filter}
@@ -166,31 +285,56 @@ function LoggersSection({
               <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
                 {LEVELS.map(level => {
                   const isActive = l.effective === level;
-                  const isPending = pending === `${l.name}:${level}`;
+                  const btnState = btnStates.get(`${l.name}:${level}`);
+                  const isPending = btnState === 'pending';
+                  const isOk = btnState === 'ok';
+                  const isErr = btnState === 'err';
+
+                  // Active button: filled with the level's color, dark text.
+                  // Flash states: brief green (ok) or red (err) background.
+                  // All other buttons: neutral gray — only the active one has color.
+                  let bg = 'transparent';
+                  let color = 'var(--vscode-descriptionForeground, #888)';
+                  let border = '1px solid var(--vscode-editorWidget-border, #555)';
+                  let label: string = level;
+
+                  if (isPending) {
+                    bg = 'transparent';
+                    color = 'var(--vscode-descriptionForeground, #888)';
+                    label = '…';
+                  } else if (isOk) {
+                    bg = 'var(--vscode-terminal-ansiGreen, #4caf50)';
+                    color = 'var(--vscode-editor-background, #1e1e1e)';
+                    border = '1px solid var(--vscode-terminal-ansiGreen, #4caf50)';
+                    label = '✓';
+                  } else if (isErr) {
+                    bg = 'var(--vscode-terminal-ansiRed, #f44747)';
+                    color = 'var(--vscode-editor-background, #1e1e1e)';
+                    border = '1px solid var(--vscode-terminal-ansiRed, #f44747)';
+                    label = '✗';
+                  } else if (isActive) {
+                    bg = LEVEL_COLORS[level] ?? 'var(--vscode-button-background)';
+                    color = 'var(--vscode-editor-background, #1e1e1e)';
+                    border = `1px solid ${LEVEL_COLORS[level] ?? 'var(--vscode-button-background)'}`;
+                  }
+
                   return (
                     <button
                       key={level}
-                      title={`Set ${l.name} to ${level}`}
+                      title={isActive ? `${level} (active)` : `Set ${l.name} to ${level}`}
                       onClick={() => handleSetLevel(l.name, level)}
+                      disabled={isPending}
                       style={{
-                        fontSize: 9,
-                        padding: '1px 5px',
-                        background: isActive
-                          ? (LEVEL_COLORS[level] ?? 'var(--vscode-button-background)')
-                          : 'transparent',
-                        color: isActive
-                          ? 'var(--vscode-editor-background, #1e1e1e)'
-                          : (LEVEL_COLORS[level] ?? 'inherit'),
-                        border: `1px solid ${LEVEL_COLORS[level] ?? 'var(--vscode-button-border, #555)'}`,
-                        borderRadius: 2,
-                        cursor: 'pointer',
-                        opacity: isPending ? 0.5 : 1,
+                        ...INACTIVE_BTN,
+                        background: bg,
+                        color,
+                        border,
                         fontWeight: isActive ? 700 : 400,
-                        minWidth: 38,
-                        textAlign: 'center',
+                        cursor: isPending ? 'wait' : 'pointer',
+                        transition: 'background 0.15s, color 0.15s, border-color 0.15s',
                       }}
                     >
-                      {isPending ? '…' : level}
+                      {label}
                     </button>
                   );
                 })}
@@ -352,9 +496,11 @@ function InfoSection({ info }: { info: ActuatorInfo | undefined }) {
 export function AppTab({
   actuator,
   setLogLevel,
+  logLevelResult,
 }: {
   actuator: ActuatorSnapshot | null;
   setLogLevel: (name: string, level: string) => void;
+  logLevelResult: { name: string; level: string; ok: boolean; errorMessage?: string } | null;
 }) {
   const [subTab, setSubTab] = useState<AppSubTab>('overview');
 
@@ -424,7 +570,7 @@ export function AppTab({
       <div>
         {subTab === 'overview' && <OverviewSection actuator={actuator} />}
         {subTab === 'loggers' && (
-          <LoggersSection actuator={actuator} setLogLevel={setLogLevel} />
+          <LoggersSection actuator={actuator} setLogLevel={setLogLevel} logLevelResult={logLevelResult} />
         )}
         {subTab === 'env' && <EnvSection env={actuator.env} />}
         {subTab === 'info' && <InfoSection info={actuator.info} />}

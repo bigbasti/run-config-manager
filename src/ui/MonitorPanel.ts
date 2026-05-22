@@ -161,6 +161,7 @@ export class MonitorPanel {
     if (msg?.cmd === 'monitor.setLogLevel' && msg.configId === this.cfg.id) {
       try {
         await this.monitoring.setLogLevel(this.cfg.id, msg.name, msg.level);
+        log.info(`monitor[${this.cfg.id}] log level changed: ${msg.name} → ${msg.level}`);
         this.panel.webview.postMessage({
           cmd: 'monitor.logLevelChanged',
           configId: this.cfg.id,
@@ -169,13 +170,15 @@ export class MonitorPanel {
           ok: true,
         });
       } catch (e) {
+        const errorMessage = (e as Error).message;
+        log.warn(`monitor[${this.cfg.id}] set-log-level failed for "${msg.name}" → ${msg.level}: ${errorMessage}`);
         this.panel.webview.postMessage({
           cmd: 'monitor.logLevelChanged',
           configId: this.cfg.id,
           name: msg.name,
           level: msg.level,
           ok: false,
-          errorMessage: (e as Error).message,
+          errorMessage,
         });
       }
       return;
