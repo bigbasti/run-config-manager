@@ -507,7 +507,11 @@ export class ExecutionService {
         const pid = terminalRef.current?.childPid ?? 0;
         // Pass the config's declared app port so the agent can probe the
         // actuator at the right port without falling back to the generic scan.
-        const appPort = resolvedCfg.port ?? undefined;
+        // For Tomcat, the user-facing port lives in typeOptions.httpPort (not
+        // the base cfg.port field which the Tomcat form does not expose).
+        const appPort =
+          resolvedCfg.port ??
+          (resolvedCfg.type === 'tomcat' ? resolvedCfg.typeOptions.httpPort : undefined);
         if (resolvedCfg.type === 'quarkus') {
           // Use a per-execution token so a rapid stop+restart doesn't
           // cause the old run's pending attach to fire for the new run.

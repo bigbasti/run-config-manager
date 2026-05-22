@@ -86,6 +86,18 @@ export function MonitorView({
         setThreadsDetail(msg.threads);
       } else if (msg.cmd === 'monitor.actuator') {
         setActuator(msg.actuator);
+      } else if (msg.cmd === 'monitor.logLevelChanged' && msg.ok) {
+        // Optimistic update: flip the effective level in local actuator state
+        // immediately so the UI responds without waiting for the next 10s tick.
+        setActuator(prev => {
+          if (!prev?.loggers) return prev;
+          return {
+            ...prev,
+            loggers: prev.loggers.map(l =>
+              l.name === msg.name ? { ...l, configured: msg.level, effective: msg.level } : l,
+            ),
+          };
+        });
       } else if (msg.cmd === 'monitor.runtime') {
         setRuntime(msg.runtime);
       } else if (msg.cmd === 'monitor.threadDump') {

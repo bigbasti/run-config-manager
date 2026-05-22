@@ -241,10 +241,24 @@ export class MonitoringService {
         entry.threadsDetail = msg;
         this.emitter.fire(entry.configId);
         return;
-      case 'actuator':
-        entry.actuator = msg;
+      case 'actuator': {
+        // env and info are only sent every 60s to avoid large payloads on
+        // every tick. Preserve the previous values when the new snapshot
+        // doesn't include them so the UI doesn't flicker between populated
+        // and empty on every 10s tick.
+        let actuatorMsg = msg;
+        if (entry.actuator?.available && actuatorMsg.available) {
+          if (actuatorMsg.env === undefined && entry.actuator.env !== undefined) {
+            actuatorMsg = { ...actuatorMsg, env: entry.actuator.env };
+          }
+          if (actuatorMsg.info === undefined && entry.actuator.info !== undefined) {
+            actuatorMsg = { ...actuatorMsg, info: entry.actuator.info };
+          }
+        }
+        entry.actuator = actuatorMsg;
         this.emitter.fire(entry.configId);
         return;
+      }
       case 'runtime':
         entry.runtime = msg;
         this.emitter.fire(entry.configId);

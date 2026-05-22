@@ -575,6 +575,9 @@ public class Monitor {
     String baseUrl = null;
     long lastAttempt = 0;
     boolean unavailableEmitted = false;
+    // /actuator/env and /actuator/info are large and change rarely.
+    // We fetch them on the first successful snapshot, then every 60s.
+    long lastStaticFetch = 0;
     ActuatorLoop(MBeanServerConnection m, int i, int appPort) {
       this.mbsc = m; this.intervalMs = i; this.appPort = appPort;
     }
@@ -679,6 +682,18 @@ public class Monitor {
         String reqCount = readMetric(base, "http.server.requests");
         String tomcatJson = readTomcatMBeans();
         String loggersJson = readLoggers(base + "/loggers");
+
+        // Fetch env and info only on first snapshot and every 60s — they are
+        // large payloads that change rarely and don't need per-tick updates.
+        String envJson = null;
+        String infoJson = null;
+        long now = System.currentTimeMillis();
+        if (now - lastStaticFetch > 60_000) {
+          envJson = readEnv(base + "/env");
+          infoJson = httpGet(base + "/info"); // pass raw JSON through
+          lastStaticFetch = now;
+        }
+
         StringBuilder mb = new StringBuilder();
         mb.append("{\"type\":\"actuator\",\"t\":").append(System.currentTimeMillis())
           .append(",\"available\":true,\"baseUrl\":\"").append(jsonEscape(base)).append('"');
@@ -686,12 +701,39 @@ public class Monitor {
         if (reqCount != null) mb.append(",\"metrics\":").append(reqCount);
         if (tomcatJson != null) mb.append(",\"tomcat\":").append(tomcatJson);
         if (loggersJson != null) mb.append(",\"loggers\":").append(loggersJson);
+        if (envJson != null) mb.append(",\"env\":").append(envJson);
+        if (infoJson != null && !infoJson.trim().equals("{}")) mb.append(",\"info\":").append(infoJson);
         mb.append('}');
         System.out.println(mb.toString());
         System.out.flush();
       } catch (Exception e) {
         err("actuator emit failed: " + e.getMessage());
       }
+    }
+
+    // Fetches /actuator/env and converts it to an array of property sources.
+    // Spring Boot /actuator/env response shape:
+    //   {"activeProfiles":[...],"propertySources":[
+    //     {"name":"...","properties":{"key":{"value":"val","origin":"..."},...}},
+    //     ...
+    //   ]}
+    // Returns a JSON array matching ActuatorEnvSource[] or null if not available.
+    private String readEnv(String url) {
+      String body = httpGet(url);
+      if (body == null) return null;
+      // Find "propertySources" array and pass it through verbatim.
+      int idx = body.indexOf("\"propertySources\":");
+      if (idx < 0) return null;
+      int arrStart = body.indexOf('[', idx + "\"propertySources\":".length());
+      if (arrStart < 0) return null;
+      // Find matching closing bracket.
+      int depth = 0;
+      for (int i = arrStart; i < body.length(); i++) {
+        char c = body.charAt(i);
+        if (c == '[' || c == '{') depth++;
+        else if (c == ']' || c == '}') { depth--; if (depth == 0) return body.substring(arrStart, i + 1); }
+      }
+      return null;
     }
 
     // Fetches /actuator/loggers and returns a JSON array of

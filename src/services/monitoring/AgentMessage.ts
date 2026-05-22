@@ -118,15 +118,30 @@ export interface ActuatorTomcat {
   errorCount: number;
 }
 
+export interface ActuatorEnvProperty {
+  value: string;
+  origin?: string;   // e.g. "class path resource [application.properties]:3:13"
+}
+
+export interface ActuatorEnvSource {
+  name: string;      // e.g. "applicationConfig: [classpath:/application.properties]"
+  properties: Record<string, ActuatorEnvProperty>;
+}
+
+export interface ActuatorInfo {
+  // Free-form map of info sections (app, git, build, etc.).
+  // Values can be strings, numbers, or nested objects — we store as unknown
+  // and render best-effort in the UI.
+  [key: string]: unknown;
+}
+
 export interface ActuatorSnapshot {
   type: 'actuator';
   t: number;
   available: boolean;
   baseUrl?: string;          // present when available
   reason?: string;            // present when !available
-  // Spring Boot /actuator/health returns components as objects with at least
-  // a `status` field (plus optional `details`). The TypeScript type mirrors
-  // the real wire shape so AppTab can render comp.status correctly.
+  // Spring Boot /actuator/health — components are objects with at least `status`.
   health?: { status: string; components: Record<string, { status: string }> };
   metrics?: {
     http_requests_total: number;
@@ -137,6 +152,11 @@ export interface ActuatorSnapshot {
   topEndpoints?: ActuatorEndpointStat[];
   loggers?: ActuatorLogger[];
   tomcat?: ActuatorTomcat | null;
+  // /actuator/env — property sources with their active values.
+  // Sent once at connect, then only when changed (not every tick).
+  env?: ActuatorEnvSource[];
+  // /actuator/info — application metadata (version, git, build, etc.).
+  info?: ActuatorInfo;
 }
 
 // Static info read once on JMX connect. Sent as the very first message
