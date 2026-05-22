@@ -505,6 +505,9 @@ export class ExecutionService {
       // right around the time the JVM binds the JMX port.
       if (monitorPort && this.monitoring) {
         const pid = terminalRef.current?.childPid ?? 0;
+        // Pass the config's declared app port so the agent can probe the
+        // actuator at the right port without falling back to the generic scan.
+        const appPort = resolvedCfg.port ?? undefined;
         if (resolvedCfg.type === 'quarkus') {
           // Use a per-execution token so a rapid stop+restart doesn't
           // cause the old run's pending attach to fire for the new run.
@@ -514,11 +517,11 @@ export class ExecutionService {
             // execution (not a restarted one with the same config id).
             const currentEntry = this.running.get(cfg.id);
             if (currentEntry?.execution === execToken && this.monitoring) {
-              this.monitoring.attach(cfg.id, 0, monitorPort!);
+              this.monitoring.attach(cfg.id, 0, monitorPort!, appPort);
             }
           }, QUARKUS_MONITOR_ATTACH_DELAY_MS);
         } else {
-          this.monitoring.attach(cfg.id, pid, monitorPort);
+          this.monitoring.attach(cfg.id, pid, monitorPort, appPort);
         }
       }
 

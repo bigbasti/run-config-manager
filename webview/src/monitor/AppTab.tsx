@@ -95,11 +95,11 @@ export function AppTab({
             Health
           </h3>
           <div>Overall: <strong style={{ color: actuator.health.status === 'UP' ? '#4caf50' : '#f44747' }}>{actuator.health.status}</strong></div>
-          {Object.entries(actuator.health.components ?? {}).map(([name, status]) => (
+          {Object.entries(actuator.health.components ?? {}).map(([name, comp]) => (
             <div key={name}>
-              <span style={{ color: status === 'UP' ? '#4caf50' : '#f44747' }}>
-                {status === 'UP' ? '✓' : '✗'}
-              </span> {name} — {status}
+              <span style={{ color: comp.status === 'UP' ? '#4caf50' : '#f44747' }}>
+                {comp.status === 'UP' ? '✓' : '✗'}
+              </span> {name} — {comp.status}
             </div>
           ))}
         </section>

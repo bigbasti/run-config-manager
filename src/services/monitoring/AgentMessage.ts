@@ -124,7 +124,10 @@ export interface ActuatorSnapshot {
   available: boolean;
   baseUrl?: string;          // present when available
   reason?: string;            // present when !available
-  health?: { status: string; components: Record<string, string> };
+  // Spring Boot /actuator/health returns components as objects with at least
+  // a `status` field (plus optional `details`). The TypeScript type mirrors
+  // the real wire shape so AppTab can render comp.status correctly.
+  health?: { status: string; components: Record<string, { status: string }> };
   metrics?: {
     http_requests_total: number;
     http_request_duration_p50_ms: number;

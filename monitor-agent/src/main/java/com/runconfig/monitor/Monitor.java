@@ -47,11 +47,19 @@ public class Monitor {
     int port = Integer.parseInt(args[0]);
     int metricsIntervalMs = 1000;
     int histogramIntervalMs = 10_000;
+    // Hint from the RCM config's `port` field — passed as --app-port=<N> by
+    // MonitoringService so probeActuator() can prioritise the user-configured
+    // port over the generic fallback scan.
+    int appPort = 0;
     for (int i = 1; i < args.length; i++) {
       if (args[i].startsWith("--metrics-interval=")) {
         metricsIntervalMs = Integer.parseInt(args[i].substring("--metrics-interval=".length())) * 1000;
       } else if (args[i].startsWith("--histogram-interval=")) {
         histogramIntervalMs = Integer.parseInt(args[i].substring("--histogram-interval=".length())) * 1000;
+      } else if (args[i].startsWith("--app-port=")) {
+        try {
+          appPort = Integer.parseInt(args[i].substring("--app-port=".length()));
+        } catch (NumberFormatException ignored) {}
       }
     }
 
@@ -72,7 +80,7 @@ public class Monitor {
     Thread tt = new Thread(new ThreadsLoop(mbsc, 5_000), "rcm-threads");
     tt.setDaemon(true);
     tt.start();
-    Thread at = new Thread(new ActuatorLoop(mbsc, 10_000), "rcm-actuator");
+    Thread at = new Thread(new ActuatorLoop(mbsc, 10_000, appPort), "rcm-actuator");
     at.setDaemon(true);
     at.start();
 
@@ -562,10 +570,14 @@ public class Monitor {
   private static class ActuatorLoop implements Runnable {
     final MBeanServerConnection mbsc;
     final int intervalMs;
+    // RCM config port hint — 0 means not set. Highest-priority candidate in probeActuator().
+    final int appPort;
     String baseUrl = null;
     long lastAttempt = 0;
     boolean unavailableEmitted = false;
-    ActuatorLoop(MBeanServerConnection m, int i) { this.mbsc = m; this.intervalMs = i; }
+    ActuatorLoop(MBeanServerConnection m, int i, int appPort) {
+      this.mbsc = m; this.intervalMs = i; this.appPort = appPort;
+    }
 
     public void run() {
       try { Thread.sleep(2_000); } catch (InterruptedException ignored) {}
@@ -603,22 +615,53 @@ public class Monitor {
       }
     }
 
-    // Tries server.port from -D args, then 8080.
+    // Discovers the Spring Boot Actuator base URL by probing candidate ports.
+    //
+    // Priority order:
+    //   1. RCM config port hint (--app-port arg) — the user already configured
+    //      the app port in the run config, so trust it first.
+    //   2. JVM system properties: Spring Boot sets server.port /
+    //      management.server.port as system properties at startup, which are
+    //      readable via JMX. This covers ports declared in application.properties
+    //      or application.yml without a -D flag.
+    //   3. JVM -D input arguments: explicit -Dserver.port=N / -Dmanagement.server.port=N.
+    //   4. Broad fallback list covering the most common Java server ports.
     private String probeActuator() {
       java.util.Set<Integer> candidates = new java.util.LinkedHashSet<>();
+
+      // Priority 1: RCM config port hint.
+      if (appPort > 0) candidates.add(appPort);
+
       try {
         RuntimeMXBean rt = ManagementFactory.newPlatformMXBeanProxy(
           mbsc, "java.lang:type=Runtime", RuntimeMXBean.class);
+
+        // Priority 2: system properties (Spring sets these at startup).
+        try {
+          java.util.Map<String, String> sysProps = rt.getSystemProperties();
+          for (String key : new String[]{"management.server.port", "server.port"}) {
+            String v = sysProps.get(key);
+            if (v != null && !v.isEmpty()) {
+              try { candidates.add(Integer.parseInt(v.trim())); } catch (NumberFormatException ignored) {}
+            }
+          }
+        } catch (Exception ignored) {}
+
+        // Priority 3: explicit -D JVM arguments.
         for (String a : rt.getInputArguments()) {
           java.util.regex.Matcher m = java.util.regex.Pattern.compile(
             "-D(?:management\\.server\\.port|server\\.port)=(\\d+)").matcher(a);
-          if (m.find()) candidates.add(Integer.parseInt(m.group(1)));
+          if (m.find()) {
+            try { candidates.add(Integer.parseInt(m.group(1))); } catch (NumberFormatException ignored) {}
+          }
         }
       } catch (Exception ignored) {}
-      candidates.add(8080);
-      candidates.add(8081);
-      for (int port : candidates) {
-        String base = "http://localhost:" + port + "/actuator";
+
+      // Priority 4: broad fallback covering the most common Java server ports.
+      for (int p : new int[]{8080, 8081, 8082, 8181, 8443, 9090}) candidates.add(p);
+
+      for (int p : candidates) {
+        String base = "http://localhost:" + p + "/actuator";
         try {
           java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
             new java.net.URL(base).openConnection();
@@ -635,18 +678,140 @@ public class Monitor {
         String health = httpGet(base + "/health");
         String reqCount = readMetric(base, "http.server.requests");
         String tomcatJson = readTomcatMBeans();
+        String loggersJson = readLoggers(base + "/loggers");
         StringBuilder mb = new StringBuilder();
         mb.append("{\"type\":\"actuator\",\"t\":").append(System.currentTimeMillis())
           .append(",\"available\":true,\"baseUrl\":\"").append(jsonEscape(base)).append('"');
         if (health != null) mb.append(",\"health\":").append(health);
         if (reqCount != null) mb.append(",\"metrics\":").append(reqCount);
         if (tomcatJson != null) mb.append(",\"tomcat\":").append(tomcatJson);
+        if (loggersJson != null) mb.append(",\"loggers\":").append(loggersJson);
         mb.append('}');
         System.out.println(mb.toString());
         System.out.flush();
       } catch (Exception e) {
         err("actuator emit failed: " + e.getMessage());
       }
+    }
+
+    // Fetches /actuator/loggers and returns a JSON array of
+    // {"name":"...","configured":null|"LEVEL","effective":"LEVEL"} objects,
+    // or null if the endpoint is not available or returns no loggers.
+    //
+    // Spring Boot /actuator/loggers response shape:
+    //   {"levels":[...],"loggers":{"name":{"configuredLevel":null,"effectiveLevel":"INFO"},...}}
+    //
+    // We hand-parse to avoid any JSON library dependency.
+    private String readLoggers(String url) {
+      String body = httpGet(url);
+      if (body == null) return null;
+
+      // Find the "loggers" object — everything between the first '{' after '"loggers":'
+      int loggersIdx = body.indexOf("\"loggers\":");
+      if (loggersIdx < 0) return null;
+      int objStart = body.indexOf('{', loggersIdx + "\"loggers\":".length());
+      if (objStart < 0) return null;
+
+      // Walk character by character to find the matching closing brace.
+      int depth = 0;
+      int objEnd = -1;
+      for (int i = objStart; i < body.length(); i++) {
+        char c = body.charAt(i);
+        if (c == '{') depth++;
+        else if (c == '}') { depth--; if (depth == 0) { objEnd = i; break; } }
+      }
+      if (objEnd < 0) return null;
+
+      String loggersObj = body.substring(objStart + 1, objEnd);
+      // loggersObj now looks like:
+      //   "com.example":{"configuredLevel":null,"effectiveLevel":"INFO"},...
+
+      StringBuilder result = new StringBuilder("[");
+      boolean first = true;
+
+      // Split on top-level entries. Each entry is: "<name>":{...}
+      // We iterate by finding quoted logger names followed by :{...}.
+      int pos = 0;
+      while (pos < loggersObj.length()) {
+        // Skip whitespace and commas between entries.
+        while (pos < loggersObj.length() && (loggersObj.charAt(pos) == ',' || loggersObj.charAt(pos) == ' ' || loggersObj.charAt(pos) == '\n' || loggersObj.charAt(pos) == '\r' || loggersObj.charAt(pos) == '\t')) pos++;
+        if (pos >= loggersObj.length()) break;
+        if (loggersObj.charAt(pos) != '"') break;
+
+        // Read the logger name string.
+        int nameStart = pos + 1;
+        int nameEnd = nameStart;
+        while (nameEnd < loggersObj.length()) {
+          char c = loggersObj.charAt(nameEnd);
+          if (c == '\\') { nameEnd += 2; continue; }
+          if (c == '"') break;
+          nameEnd++;
+        }
+        if (nameEnd >= loggersObj.length()) break;
+        String loggerName = loggersObj.substring(nameStart, nameEnd);
+        pos = nameEnd + 1; // skip closing quote
+
+        // Skip colon.
+        while (pos < loggersObj.length() && loggersObj.charAt(pos) != '{') pos++;
+        if (pos >= loggersObj.length()) break;
+
+        // Find the value object boundaries.
+        int valStart = pos;
+        int valDepth = 0;
+        int valEnd = -1;
+        for (int i = valStart; i < loggersObj.length(); i++) {
+          char c = loggersObj.charAt(i);
+          if (c == '{') valDepth++;
+          else if (c == '}') { valDepth--; if (valDepth == 0) { valEnd = i; break; } }
+        }
+        if (valEnd < 0) break;
+        String valObj = loggersObj.substring(valStart + 1, valEnd);
+        pos = valEnd + 1;
+
+        // Extract configuredLevel and effectiveLevel from the value object.
+        String configured = extractStringField(valObj, "configuredLevel");
+        String effective = extractStringField(valObj, "effectiveLevel");
+        if (effective == null) effective = ""; // shouldn't happen but guard
+
+        if (!first) result.append(',');
+        first = false;
+        result.append("{\"name\":\"").append(jsonEscape(loggerName)).append('"');
+        if (configured == null || configured.equals("null")) {
+          result.append(",\"configured\":null");
+        } else {
+          result.append(",\"configured\":\"").append(jsonEscape(configured)).append('"');
+        }
+        result.append(",\"effective\":\"").append(jsonEscape(effective)).append("\"}");
+      }
+
+      result.append(']');
+      return first ? null : result.toString(); // null if no loggers were parsed
+    }
+
+    // Extracts the value of a JSON string field (handles null literals too).
+    // Returns null for JSON null, the string value for string values,
+    // or null if the field is not present.
+    private String extractStringField(String obj, String field) {
+      String key = "\"" + field + "\"";
+      int idx = obj.indexOf(key);
+      if (idx < 0) return null;
+      int colon = obj.indexOf(':', idx + key.length());
+      if (colon < 0) return null;
+      int valStart = colon + 1;
+      while (valStart < obj.length() && (obj.charAt(valStart) == ' ' || obj.charAt(valStart) == '\t')) valStart++;
+      if (valStart >= obj.length()) return null;
+      char first = obj.charAt(valStart);
+      if (first == 'n') return "null"; // JSON null
+      if (first != '"') return null;   // unexpected
+      int strStart = valStart + 1;
+      int strEnd = strStart;
+      while (strEnd < obj.length()) {
+        char c = obj.charAt(strEnd);
+        if (c == '\\') { strEnd += 2; continue; }
+        if (c == '"') break;
+        strEnd++;
+      }
+      return obj.substring(strStart, strEnd);
     }
 
     private String httpGet(String url) {
@@ -671,13 +836,68 @@ public class Monitor {
     private String readMetric(String base, String name) {
       String body = httpGet(base + "/metrics/" + name);
       if (body == null) return null;
+
+      // Extract COUNT.
       long total = 0;
-      java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+      java.util.regex.Matcher cm = java.util.regex.Pattern.compile(
         "\"statistic\":\"COUNT\",\"value\":(\\d+(?:\\.\\d+)?)").matcher(body);
-      if (m.find()) total = (long) Double.parseDouble(m.group(1));
+      if (cm.find()) total = (long) Double.parseDouble(cm.group(1));
+
+      // Best-effort extraction of PERCENTILE measurements.
+      // Spring Boot publishes these when management.metrics.distribution
+      // .percentiles-histogram.http.server.requests=true is configured, or
+      // when explicit percentiles are set via
+      // management.metrics.distribution.percentiles.http.server.requests=0.5,0.95,0.99
+      //
+      // The measurement entries look like:
+      //   {"statistic":"PERCENTILE","value":0.042,"tags":[{"tag":"phi","values":["0.5"]}]}
+      // or in the older format produced by Micrometer:
+      //   {"statistic":"PERCENTILE","value":0.042}   (one entry per percentile, order matches
+      //   the configured list — we can't rely on order, so we look for tag hints or accept
+      //   all PERCENTILE values and pick p50/p95/p99 if exactly 3 are present).
+      //
+      // We also try the tag-filtered endpoint as a more reliable path.
+      double p50 = 0, p95 = 0, p99 = 0;
+
+      // Try tag-filtered endpoints first (most reliable — works when percentile
+      // histogram is enabled).
+      String p50Body = httpGet(base + "/metrics/" + name + "?tag=quantile:0.5");
+      String p95Body = httpGet(base + "/metrics/" + name + "?tag=quantile:0.95");
+      String p99Body = httpGet(base + "/metrics/" + name + "?tag=quantile:0.99");
+      if (p50Body != null) p50 = extractFirstValue(p50Body) * 1000.0; // convert s -> ms
+      if (p95Body != null) p95 = extractFirstValue(p95Body) * 1000.0;
+      if (p99Body != null) p99 = extractFirstValue(p99Body) * 1000.0;
+
+      // If tag-filtered endpoints returned nothing, fall back to parsing PERCENTILE
+      // measurements from the base response.
+      if (p50 == 0 && p95 == 0 && p99 == 0) {
+        java.util.regex.Matcher pm = java.util.regex.Pattern.compile(
+          "\"statistic\":\"PERCENTILE\",\"value\":(\\d+(?:\\.\\d+)?)").matcher(body);
+        java.util.List<Double> percs = new java.util.ArrayList<>();
+        while (pm.find()) percs.add(Double.parseDouble(pm.group(1)));
+        // Micrometer typically emits p50, p95, p99 in that order when
+        // management.metrics.distribution.percentiles is configured.
+        if (percs.size() >= 3) {
+          p50 = percs.get(0) * 1000.0;
+          p95 = percs.get(1) * 1000.0;
+          p99 = percs.get(2) * 1000.0;
+        } else if (percs.size() == 1) {
+          p50 = percs.get(0) * 1000.0;
+        }
+      }
+
       return String.format(
-        "{\"http_requests_total\":%d,\"http_request_duration_p50_ms\":0," +
-        "\"http_request_duration_p95_ms\":0,\"http_request_duration_p99_ms\":0}", total);
+        "{\"http_requests_total\":%d,\"http_request_duration_p50_ms\":%.1f," +
+        "\"http_request_duration_p95_ms\":%.1f,\"http_request_duration_p99_ms\":%.1f}",
+        total, p50, p95, p99);
+    }
+
+    // Extracts the first numeric "value" from a Spring Actuator metrics response.
+    private double extractFirstValue(String body) {
+      if (body == null) return 0;
+      java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+        "\"value\":(\\d+(?:\\.\\d+)?)").matcher(body);
+      return m.find() ? Double.parseDouble(m.group(1)) : 0;
     }
 
     private String readTomcatMBeans() {

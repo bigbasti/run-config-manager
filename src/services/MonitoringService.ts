@@ -47,11 +47,15 @@ export class MonitoringService {
 
   constructor(private readonly extensionUri: vscode.Uri) {}
 
-  attach(configId: string, pid: number, jmxPort: number): void {
+  attach(configId: string, pid: number, jmxPort: number, appPort?: number): void {
     if (this.entries.has(configId)) return; // idempotent
     const jarPath = path.join(this.extensionUri.fsPath, 'media', 'agent', 'rcm-monitor.jar');
-    log.info(`MonitoringService.attach: configId=${configId} pid=${pid} jmxPort=${jmxPort} jar=${jarPath}`);
-    const child = cp.spawn('java', ['-jar', jarPath, String(jmxPort)], {
+    log.info(`MonitoringService.attach: configId=${configId} pid=${pid} jmxPort=${jmxPort}${appPort ? ` appPort=${appPort}` : ''} jar=${jarPath}`);
+    // Pass the RCM config's app port as a hint so the agent can probe the
+    // actuator endpoint without scanning common fallback ports first.
+    const agentArgs: string[] = ['-jar', jarPath, String(jmxPort)];
+    if (appPort && appPort > 0) agentArgs.push(`--app-port=${appPort}`);
+    const child = cp.spawn('java', agentArgs, {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
