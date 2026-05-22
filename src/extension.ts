@@ -78,7 +78,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const scanner = new ProjectScanner(registry);
   const monitoring = new MonitoringService(context.extensionUri);
   context.subscriptions.push({ dispose: () => monitoring.dispose() });
-  const exec = new ExecutionService(registry, monitoring);
+  const exec = new ExecutionService(registry, monitoring, svc);
   const dbg = new DebugService(registry, exec);
   const native = new NativeRunnerService();
   context.subscriptions.push({ dispose: () => native.dispose() });
