@@ -151,6 +151,9 @@ export function MonitorView({
   const setLogLevel = (name: string, level: string) => {
     vscode.postMessage({ cmd: 'monitor.setLogLevel', configId, name, level });
   };
+  const setActuatorUrl = (url: string) => {
+    vscode.postMessage({ cmd: 'monitor.setActuatorUrl', configId, url });
+  };
 
   return (
     <div style={{ padding: 16, fontFamily: 'var(--vscode-font-family)' }}>
@@ -267,7 +270,7 @@ export function MonitorView({
           />
         )}
         {activeTab === 'jvm' && <JvmInternalsTab runtime={runtime} history={history} />}
-        {activeTab === 'app' && <AppTab actuator={actuator} setLogLevel={setLogLevel} logLevelResult={logLevelResult} />}
+        {activeTab === 'app' && <AppTab actuator={actuator} setLogLevel={setLogLevel} logLevelResult={logLevelResult} setActuatorUrl={setActuatorUrl} />}
       </div>
 
       <hr style={{ margin: '16px 0' }} />

@@ -491,45 +491,155 @@ function InfoSection({ info }: { info: ActuatorInfo | undefined }) {
   );
 }
 
+// ─── Actuator URL not found — with manual override ───────────────────────────
+
+function ActuatorNotFound({
+  actuator,
+  setActuatorUrl,
+}: {
+  actuator: ActuatorSnapshot | null;
+  setActuatorUrl: (url: string) => void;
+}) {
+  // Pre-fill with a reasonable guess:
+  // If the agent emitted a `reason` that contains a URL fragment, use it.
+  // Otherwise suggest the most common Spring Boot default.
+  const defaultUrl = 'http://localhost:8080/actuator';
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState(defaultUrl);
+  const [applied, setApplied] = useState(false);
+
+  const handleApply = () => {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    setActuatorUrl(trimmed);
+    setApplied(true);
+    setEditing(false);
+    // Reset the "applied" indicator after 3s
+    setTimeout(() => setApplied(false), 3000);
+  };
+
+  return (
+    <div style={{
+      border: '1px dashed var(--vscode-editorWidget-border, #444)',
+      borderRadius: 4,
+      padding: 16,
+      fontSize: 12,
+      lineHeight: 1.6,
+    }}>
+      <strong>No actuator endpoint detected</strong>
+      <div style={{ marginTop: 6 }}>
+        The agent scanned common ports (8080, 8081, 8082, 8181, 8443, 9090) and any port
+        configured in the run config, but did not receive an HTTP 200 from{' '}
+        <code>/actuator</code>.
+      </div>
+      <ul style={{ marginTop: 8, marginBottom: 8, paddingLeft: 18 }}>
+        <li>
+          <strong>Spring Boot WAR on Tomcat:</strong> if the WAR is deployed under a
+          context path (e.g. <code>/myapp</code>), the actuator is at{' '}
+          <code>http://localhost:&lt;port&gt;/myapp/actuator</code> — use the override below.
+        </li>
+        <li>
+          <strong>Spring Boot JAR:</strong> add <code>spring-boot-starter-actuator</code> and set{' '}
+          <code>management.endpoints.web.exposure.include=health,metrics,loggers,env,info</code>.
+        </li>
+        <li>
+          <strong>Non-default port or base path:</strong> use the override below to point
+          the agent at the correct URL.
+        </li>
+      </ul>
+      {actuator?.reason && (
+        <div style={{ opacity: 0.6, marginBottom: 10 }}>
+          Last probe result: {actuator.reason}
+        </div>
+      )}
+
+      {!editing ? (
+        <button
+          onClick={() => setEditing(true)}
+          style={{
+            padding: '4px 12px',
+            cursor: 'pointer',
+            fontSize: 12,
+            background: applied
+              ? 'var(--vscode-terminal-ansiGreen, #4caf50)'
+              : 'var(--vscode-button-background, #0e639c)',
+            color: applied
+              ? 'var(--vscode-editor-background, #1e1e1e)'
+              : 'var(--vscode-button-foreground, #fff)',
+            border: 'none',
+            borderRadius: 3,
+          }}
+        >
+          {applied ? '✓ Actuator URL applied — waiting for response…' : 'Manually set actuator endpoint'}
+        </button>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+          <label style={{ fontWeight: 600 }}>Actuator base URL</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              value={url}
+              onChange={e => setUrl(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleApply(); if (e.key === 'Escape') setEditing(false); }}
+              autoFocus
+              placeholder="http://localhost:8080/actuator"
+              style={{ flex: 1, fontFamily: 'var(--vscode-editor-font-family, monospace)', fontSize: 12 }}
+            />
+            <button
+              onClick={handleApply}
+              disabled={!url.trim()}
+              style={{
+                padding: '2px 12px',
+                cursor: 'pointer',
+                background: 'var(--vscode-button-background, #0e639c)',
+                color: 'var(--vscode-button-foreground, #fff)',
+                border: 'none',
+                borderRadius: 3,
+                fontSize: 12,
+              }}
+            >Apply</button>
+            <button
+              onClick={() => setEditing(false)}
+              style={{
+                padding: '2px 10px',
+                cursor: 'pointer',
+                background: 'transparent',
+                color: 'var(--vscode-foreground)',
+                border: '1px solid var(--vscode-editorWidget-border, #555)',
+                borderRadius: 3,
+                fontSize: 12,
+              }}
+            >Cancel</button>
+          </div>
+          <div style={{ opacity: 0.6, fontSize: 11 }}>
+            Enter/Escape to confirm/cancel. The agent will connect immediately and retry every 10 s.
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, opacity: 0.6 }}>
+        The other tabs (Memory, Threads, JVM Internals) work without an actuator source.
+      </div>
+    </div>
+  );
+}
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 export function AppTab({
   actuator,
   setLogLevel,
   logLevelResult,
+  setActuatorUrl,
 }: {
   actuator: ActuatorSnapshot | null;
   setLogLevel: (name: string, level: string) => void;
   logLevelResult: { name: string; level: string; ok: boolean; errorMessage?: string } | null;
+  setActuatorUrl: (url: string) => void;
 }) {
   const [subTab, setSubTab] = useState<AppSubTab>('overview');
 
   if (!actuator || !actuator.available) {
-    return (
-      <div style={{
-        border: '1px dashed var(--vscode-editorWidget-border, #444)',
-        borderRadius: 4,
-        padding: 16,
-        fontSize: 12,
-        lineHeight: 1.5,
-      }}>
-        <strong>No app-level source detected</strong>
-        <div style={{ marginTop: 8 }}>
-          The agent didn't find Spring Boot Actuator or Tomcat MBeans on this JVM.
-        </div>
-        <ul style={{ marginTop: 8, paddingLeft: 18 }}>
-          <li>
-            <strong>Spring Boot:</strong> add <code>spring-boot-starter-actuator</code> and
-            expose endpoints with <code>management.endpoints.web.exposure.include=health,metrics,loggers,env,info</code>.
-          </li>
-          <li><strong>Tomcat:</strong> standalone Tomcat configs auto-detect via JMX.</li>
-        </ul>
-        <div style={{ marginTop: 8, opacity: 0.7 }}>
-          The other tabs work without an app-level source.
-          {actuator?.reason && <> Last probe: {actuator.reason}.</>}
-        </div>
-      </div>
-    );
+    return <ActuatorNotFound actuator={actuator} setActuatorUrl={setActuatorUrl} />;
   }
 
   const subTabs: Array<[AppSubTab, string, string]> = [

@@ -184,6 +184,19 @@ export class MonitoringService {
     });
   }
 
+  // Sends a manual actuator URL override to the agent so it can connect even
+  // when auto-probe fails (e.g. WAR deployed under a non-root context path).
+  setActuatorUrl(configId: string, url: string): void {
+    const entry = this.entries.get(configId);
+    if (!entry) return;
+    log.info(`monitor[${configId}] overriding actuator URL to: ${url}`);
+    try {
+      entry.child.stdin?.write(`set-actuator-url ${url}\n`);
+    } catch (e) {
+      log.warn(`monitor[${configId}] set-actuator-url write failed: ${(e as Error).message}`);
+    }
+  }
+
   setHistogramPaused(configId: string, paused: boolean): void {
     const entry = this.entries.get(configId);
     if (!entry) return;

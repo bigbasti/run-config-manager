@@ -80,7 +80,8 @@ public class Monitor {
     Thread tt = new Thread(new ThreadsLoop(mbsc, 5_000), "rcm-threads");
     tt.setDaemon(true);
     tt.start();
-    Thread at = new Thread(new ActuatorLoop(mbsc, 10_000, appPort), "rcm-actuator");
+    ActuatorLoop actuatorLoop = new ActuatorLoop(mbsc, 10_000, appPort);
+    Thread at = new Thread(actuatorLoop, "rcm-actuator");
     at.setDaemon(true);
     at.start();
 
@@ -125,6 +126,16 @@ public class Monitor {
             err("set-log-level requires <name> <level>");
           } else {
             handleSetLogLevel(parts[0], parts[1]);
+          }
+        } else if (line.startsWith("set-actuator-url ")) {
+          // User-provided override for the actuator base URL, e.g. when the
+          // app is deployed under a non-root context path that the auto-probe
+          // couldn't discover.
+          String url = line.substring("set-actuator-url ".length()).trim();
+          if (url.isEmpty()) {
+            err("set-actuator-url requires a URL argument");
+          } else {
+            actuatorLoop.overrideUrl(url);
           }
         }
       }
@@ -572,7 +583,8 @@ public class Monitor {
     final int intervalMs;
     // RCM config port hint — 0 means not set. Highest-priority candidate in probeActuator().
     final int appPort;
-    String baseUrl = null;
+    // volatile so the main stdin thread can set it via overrideUrl().
+    volatile String baseUrl = null;
     long lastAttempt = 0;
     boolean unavailableEmitted = false;
     // /actuator/env and /actuator/info are large and change rarely.
@@ -580,6 +592,30 @@ public class Monitor {
     long lastStaticFetch = 0;
     ActuatorLoop(MBeanServerConnection m, int i, int appPort) {
       this.mbsc = m; this.intervalMs = i; this.appPort = appPort;
+    }
+
+    // Called from the main stdin thread when the user provides a manual URL
+    // override from the UI. Sets baseUrl directly (skipping the auto-probe)
+    // and resets state so an actuator snapshot is emitted on the next tick.
+    void overrideUrl(String url) {
+      this.baseUrl = url;
+      // Update the shared static so handleSetLogLevel can use the new URL too.
+      actuatorBaseUrl = url;
+      // Reset the static-fetch timestamp so env/info are refreshed immediately.
+      this.lastStaticFetch = 0;
+      // Wake the loop by interrupting its sleep — it will pick up the new
+      // baseUrl on the next iteration without waiting the full interval.
+      // (Interrupting a sleeping daemon thread is safe; the loop catches
+      //  InterruptedException and returns, but here we re-set the interrupt
+      //  so the loop just exits the sleep and continues.)
+      Thread.currentThread().interrupt(); // no-op when called from main thread
+      // Emit immediately from the calling thread so the UI updates without
+      // waiting for the next 10 s tick.
+      try {
+        emitActuatorSnapshot(url);
+      } catch (Exception e) {
+        err("overrideUrl snapshot failed: " + e.getMessage());
+      }
     }
 
     public void run() {

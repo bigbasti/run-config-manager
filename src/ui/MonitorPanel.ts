@@ -141,6 +141,10 @@ export class MonitorPanel {
       this.monitoring.setHistogramPaused(this.cfg.id, !!msg.paused);
       return;
     }
+    if (msg?.cmd === 'monitor.setActuatorUrl' && msg.configId === this.cfg.id) {
+      this.monitoring.setActuatorUrl(this.cfg.id, msg.url);
+      return;
+    }
     if (msg?.cmd === 'monitor.requestThreadDump' && msg.configId === this.cfg.id) {
       try {
         const dump = await this.monitoring.requestThreadDump(this.cfg.id, msg.tid);
