@@ -9,7 +9,7 @@ const src = fs.readFileSync(
 
 describe('Gradle config cache auto-fix — source-level guards', () => {
   test('defines the config cache error regex', () => {
-    expect(src).toMatch(/Invocation of 'Task\.project'/);
+    expect(src).toMatch(/Invocation of 'Task\.project'.*unsupported with the configuration cache/);
   });
 
   test('uses a per-run deduplication set (configCacheToastShown)', () => {
@@ -43,7 +43,16 @@ describe('Gradle config cache auto-fix — source-level guards', () => {
     // error still fires.
     const handleEndIdx = src.indexOf('private handleEnd(');
     expect(handleEndIdx).toBeGreaterThan(-1);
-    const handleEndBody = src.slice(handleEndIdx, handleEndIdx + 600);
+    const handleEndBody = src.slice(handleEndIdx, handleEndIdx + 1200);
     expect(handleEndBody).toMatch(/configCacheToastShown\.delete/);
+  });
+
+  test('clears configCacheToastShown in stop', () => {
+    // stop() must also clear the dedup set so a manual stop+rerun
+    // can trigger the toast again if the error fires again.
+    const stopIdx = src.indexOf('async stop(');
+    expect(stopIdx).toBeGreaterThan(-1);
+    const stopBody = src.slice(stopIdx, stopIdx + 800);
+    expect(stopBody).toMatch(/configCacheToastShown\.delete/);
   });
 });
