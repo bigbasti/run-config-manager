@@ -436,6 +436,19 @@ export class ExecutionService {
             // window and cap stays cheap.
             recentOutput = (recentOutput + chunk).slice(-RECENT_OUTPUT_CAP);
 
+            // Gradle configuration cache incompatibility — offer one-click fix.
+            // Checked BEFORE the fail/ready/rebuild state-machine because
+            // BUILD FAILED arrives in the same chunk as the config-cache error
+            // line, and the failHit branch below returns early — meaning the
+            // pattern check would never execute if placed after it.
+            if (
+              !this.configCacheToastShown.has(cfg.id) &&
+              GRADLE_CONFIG_CACHE_PATTERN.test(chunk)
+            ) {
+              this.configCacheToastShown.add(cfg.id);
+              void this.maybeOfferGradleConfigCacheFix(cfg);
+            }
+
             // Priority: failure > ready > rebuild. If a chunk happens to
             // contain both (e.g. a dev server prints an error line right
             // before it announces a new compile), the most-decisive signal
@@ -455,17 +468,6 @@ export class ExecutionService {
             const rebuildHit = rebuildPatterns.length ? firstMatch(chunk, rebuildPatterns) : null;
             if (rebuildHit) {
               markRebuilding(`matched rebuild pattern ${patternLabel(rebuildHit)}`);
-            }
-
-            // Gradle configuration cache incompatibility — offer one-click fix.
-            // Only fire once per run (deduplication guard) and only when we
-            // have a configSvc to persist the change through.
-            if (
-              !this.configCacheToastShown.has(cfg.id) &&
-              GRADLE_CONFIG_CACHE_PATTERN.test(chunk)
-            ) {
-              this.configCacheToastShown.add(cfg.id);
-              void this.maybeOfferGradleConfigCacheFix(cfg);
             }
           },
           onExit: (code) => {
