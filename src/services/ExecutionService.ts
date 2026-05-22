@@ -465,7 +465,7 @@ export class ExecutionService {
               GRADLE_CONFIG_CACHE_PATTERN.test(chunk)
             ) {
               this.configCacheToastShown.add(cfg.id);
-              void this.maybeOfferGradleConfigCacheFix(cfg, folder);
+              void this.maybeOfferGradleConfigCacheFix(cfg);
             }
           },
           onExit: (code) => {
@@ -872,19 +872,11 @@ export class ExecutionService {
   // without user intervention.
   private async maybeOfferGradleConfigCacheFix(
     cfg: RunConfig,
-    folder: vscode.WorkspaceFolder,
   ): Promise<void> {
     if (!this.configSvc) {
       log.warn(`Config cache fix: no configSvc wired — cannot auto-fix "${cfg.name}"`);
       return;
     }
-
-    const choice = await vscode.window.showWarningMessage(
-      `Gradle configuration cache is incompatible with this task. Add --no-configuration-cache to fix it?`,
-      'Fix and save',
-      'Dismiss',
-    );
-    if (choice !== 'Fix and save') return;
 
     // Re-fetch the config from the store rather than using the resolved copy —
     // we want to write back the original ${VAR} tokens, not the runtime values.
@@ -896,22 +888,28 @@ export class ExecutionService {
 
     const originalCfg = ref.config as RunConfig;
     if (originalCfg.type !== 'gradle-task' && originalCfg.type !== 'spring-boot' &&
-        originalCfg.type !== 'java' && originalCfg.type !== 'maven-goal') {
-      // Only types that run Gradle directly can produce this error.
+        originalCfg.type !== 'java') {
+      // Only types that invoke Gradle directly can produce this error.
+      // (maven-goal uses Maven, not Gradle — excluded intentionally.)
       log.warn(`Config cache fix: unexpected type "${originalCfg.type}" — skipping`);
       return;
     }
 
-    // Type-narrowing: only gradle-task has typeOptions.task at top level.
-    // For other Gradle types (spring-boot gradle mode, java gradle mode) the
-    // user should add the flag to programArgs. For now we only auto-fix
-    // gradle-task since that's the type with the named `task` field.
+    // For non-gradle-task Gradle types (spring-boot gradle mode, java gradle mode)
+    // the flag must be added manually — there is no single named `task` field to amend.
     if (originalCfg.type !== 'gradle-task') {
       vscode.window.showInformationMessage(
-        `Add --no-configuration-cache to the task arguments in "${cfg.name}" to fix this.`,
+        `Gradle configuration cache is incompatible with this task. Add --no-configuration-cache to the task arguments in "${cfg.name}" to fix this.`,
       );
       return;
     }
+
+    const choice = await vscode.window.showWarningMessage(
+      `Gradle configuration cache is incompatible with this task. Add --no-configuration-cache to fix it automatically?`,
+      'Fix and save',
+      'Dismiss',
+    );
+    if (choice !== 'Fix and save') return;
 
     const currentTask: string = originalCfg.typeOptions.task ?? '';
     if (currentTask.includes('--no-configuration-cache')) {
@@ -926,7 +924,7 @@ export class ExecutionService {
       ...originalCfg,
       typeOptions: {
         ...originalCfg.typeOptions,
-        task: currentTask + ' --no-configuration-cache',
+        task: (currentTask ? currentTask + ' ' : '') + '--no-configuration-cache',
       },
     };
 
