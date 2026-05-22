@@ -22,6 +22,12 @@ import { allocateFreePort } from './monitoring/freePort';
 import * as fsModule from 'fs';
 import * as pathModule from 'path';
 
+// Gradle 9+ aborts tasks that call Task.project at execution time when
+// the configuration cache is enabled. This pattern matches the exact
+// error line Gradle emits so we can offer a one-click fix.
+const GRADLE_CONFIG_CACHE_PATTERN =
+  /Invocation of 'Task.project'.*unsupported with the configuration cache/;
+
 interface Entry {
   execution: vscode.TaskExecution;
   configId: string;
@@ -107,6 +113,10 @@ export class ExecutionService {
   // started/failed) so the existing long-running config state machine
   // isn't disturbed.
   private httpFlash = new Map<string, 'success' | 'warn' | 'error'>();
+  // Tracks which config ids have already shown the "config cache incompatible"
+  // toast in the current run. Cleared in handleEnd/stop so re-runs can
+  // trigger the toast again if the error fires again.
+  private configCacheToastShown = new Set<string>();
   private emitter = new vscode.EventEmitter<string>();
   readonly onRunningChanged = this.emitter.event;
   private taskEndSub: vscode.Disposable;
@@ -117,6 +127,10 @@ export class ExecutionService {
     // monitoring can construct an ExecutionService without wiring it.
     // When omitted, attach/detach are simply skipped.
     private readonly monitoring?: MonitoringService,
+    private readonly configSvc?: {
+      getById(id: string): { folderKey: string; config: RunConfig; valid: true } | { folderKey: string; config: unknown; valid: false } | undefined;
+      update(folderKey: string, cfg: RunConfig): Promise<void>;
+    },
   ) {
     this.taskEndSub = vscode.tasks.onDidEndTask(e => this.handleEnd(e.execution));
   }
@@ -442,6 +456,17 @@ export class ExecutionService {
             if (rebuildHit) {
               markRebuilding(`matched rebuild pattern ${patternLabel(rebuildHit)}`);
             }
+
+            // Gradle configuration cache incompatibility — offer one-click fix.
+            // Only fire once per run (deduplication guard) and only when we
+            // have a configSvc to persist the change through.
+            if (
+              !this.configCacheToastShown.has(cfg.id) &&
+              GRADLE_CONFIG_CACHE_PATTERN.test(chunk)
+            ) {
+              this.configCacheToastShown.add(cfg.id);
+              void this.maybeOfferGradleConfigCacheFix(cfg, folder);
+            }
           },
           onExit: (code) => {
             // Python ModuleNotFoundError → offer a one-click install. Only
@@ -763,6 +788,9 @@ export class ExecutionService {
   async stop(configId: string): Promise<void> {
     const entry = this.running.get(configId);
     if (!entry) return;
+    // Clear the config-cache dedup guard so a re-run can trigger the
+    // toast again if the Gradle error fires again.
+    this.configCacheToastShown.delete(configId);
     // When the config went through our pseudoterminal AND the user
     // opted into linger mode, kill the child process directly via
     // RunTerminal instead of going through TaskExecution.terminate.
@@ -796,6 +824,7 @@ export class ExecutionService {
     this.started.delete(configId);
     this.failed.delete(configId);
     this.rebuilding.delete(configId);
+    this.configCacheToastShown.delete(configId);
     this.emitter.fire(configId);
   }
 
@@ -811,6 +840,7 @@ export class ExecutionService {
         this.started.delete(id);
         this.failed.delete(id);
         this.rebuilding.delete(id);
+        this.configCacheToastShown.delete(id);
         this.emitter.fire(id);
         return;
       }
@@ -834,8 +864,86 @@ export class ExecutionService {
     this.started.clear();
     this.failed.clear();
     this.rebuilding.clear();
+    this.configCacheToastShown.clear();
     this.taskEndSub.dispose();
     this.emitter.dispose();
+  }
+
+  // Shown when the terminal output contains the Gradle configuration cache
+  // incompatibility error. Offers to append --no-configuration-cache to the
+  // task field and persist the change to run.json so the next run succeeds
+  // without user intervention.
+  private async maybeOfferGradleConfigCacheFix(
+    cfg: RunConfig,
+    folder: vscode.WorkspaceFolder,
+  ): Promise<void> {
+    if (!this.configSvc) {
+      log.warn(`Config cache fix: no configSvc wired — cannot auto-fix "${cfg.name}"`);
+      return;
+    }
+
+    const choice = await vscode.window.showWarningMessage(
+      `Gradle configuration cache is incompatible with this task. Add --no-configuration-cache to fix it?`,
+      'Fix and save',
+      'Dismiss',
+    );
+    if (choice !== 'Fix and save') return;
+
+    // Re-fetch the config from the store rather than using the resolved copy —
+    // we want to write back the original ${VAR} tokens, not the runtime values.
+    const ref = this.configSvc.getById(cfg.id);
+    if (!ref || !ref.valid) {
+      log.warn(`Config cache fix: config "${cfg.id}" not found or invalid — cannot update`);
+      return;
+    }
+
+    const originalCfg = ref.config as RunConfig;
+    if (originalCfg.type !== 'gradle-task' && originalCfg.type !== 'spring-boot' &&
+        originalCfg.type !== 'java' && originalCfg.type !== 'maven-goal') {
+      // Only types that run Gradle directly can produce this error.
+      log.warn(`Config cache fix: unexpected type "${originalCfg.type}" — skipping`);
+      return;
+    }
+
+    // Type-narrowing: only gradle-task has typeOptions.task at top level.
+    // For other Gradle types (spring-boot gradle mode, java gradle mode) the
+    // user should add the flag to programArgs. For now we only auto-fix
+    // gradle-task since that's the type with the named `task` field.
+    if (originalCfg.type !== 'gradle-task') {
+      vscode.window.showInformationMessage(
+        `Add --no-configuration-cache to the task arguments in "${cfg.name}" to fix this.`,
+      );
+      return;
+    }
+
+    const currentTask: string = originalCfg.typeOptions.task ?? '';
+    if (currentTask.includes('--no-configuration-cache')) {
+      // Already present — nothing to do.
+      vscode.window.showInformationMessage(
+        `"${cfg.name}" already has --no-configuration-cache. Re-run to apply.`,
+      );
+      return;
+    }
+
+    const updatedCfg: RunConfig = {
+      ...originalCfg,
+      typeOptions: {
+        ...originalCfg.typeOptions,
+        task: currentTask + ' --no-configuration-cache',
+      },
+    };
+
+    try {
+      await this.configSvc.update(ref.folderKey, updatedCfg);
+      vscode.window.showInformationMessage(
+        `"${cfg.name}" updated. Re-run to apply.`,
+      );
+      log.info(`Config cache fix applied to "${cfg.name}": task="${updatedCfg.typeOptions.task}"`);
+    } catch (e) {
+      vscode.window.showErrorMessage(
+        `Failed to save fix for "${cfg.name}": ${(e as Error).message}`,
+      );
+    }
   }
 }
 
