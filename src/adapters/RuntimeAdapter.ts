@@ -17,6 +17,14 @@ export interface RuntimeAdapter {
   // Adapters that return false have their Debug button hidden in the tree.
   readonly supportsDebug: boolean;
 
+  // Whether creating this config type should prompt the user to select a
+  // project root folder before the editor opens. Defaults to true (undefined
+  // is treated as true). Adapters that don't require a folder (e.g.
+  // http-request, docker, custom-command, maven-goal, gradle-task) set this
+  // to false; the workspace root is used as projectPath and the user can
+  // adjust it in the form.
+  readonly needsFolderPick?: boolean;
+
   detect(folder: vscode.Uri): Promise<DetectionResult | null>;
 
   // Optional streaming detection: adapters that can stream partial results
