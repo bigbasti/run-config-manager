@@ -88,3 +88,9 @@ describe('MavenGoalAdapter metadata', () => {
     expect(adapter.supportsDebug).toBe(false);
   });
 });
+
+describe('needsFolderPick', () => {
+  it('is false — maven-goal skips the wizard folder picker', () => {
+    expect(adapter.needsFolderPick).toBe(false);
+  });
+});

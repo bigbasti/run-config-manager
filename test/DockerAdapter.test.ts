@@ -136,4 +136,10 @@ describe('DockerAdapter', () => {
     expect(typeof r.command).toBe('string');
     expect(Array.isArray(r.args)).toBe(true);
   });
+
+  describe('needsFolderPick', () => {
+    it('is false — docker skips the wizard folder picker', () => {
+      expect(adapter.needsFolderPick).toBe(false);
+    });
+  });
 });

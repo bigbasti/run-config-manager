@@ -105,3 +105,9 @@ describe('GradleTaskAdapter metadata', () => {
     expect(adapter.supportsDebug).toBe(false);
   });
 });
+
+describe('needsFolderPick', () => {
+  it('is false — gradle-task skips the wizard folder picker', () => {
+    expect(adapter.needsFolderPick).toBe(false);
+  });
+});

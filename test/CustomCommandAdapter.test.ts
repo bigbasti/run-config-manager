@@ -147,3 +147,9 @@ describe('CustomCommandAdapter.prepareLaunch', () => {
     expect(p.cwd).toBeUndefined();
   });
 });
+
+describe('needsFolderPick', () => {
+  it('is false — custom-command skips the wizard folder picker', () => {
+    expect(adapter.needsFolderPick).toBe(false);
+  });
+});
