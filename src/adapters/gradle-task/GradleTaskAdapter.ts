@@ -19,6 +19,7 @@ export class GradleTaskAdapter implements RuntimeAdapter {
   readonly type = 'gradle-task' as const;
   readonly label = 'Gradle Task';
   readonly supportsDebug = false;
+  readonly needsFolderPick = false;
 
   async detect(folder: vscode.Uri): Promise<DetectionResult | null> {
     log.debug(`Gradle Task detect: ${folder.fsPath}`);

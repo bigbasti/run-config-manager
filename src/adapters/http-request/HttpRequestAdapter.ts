@@ -25,6 +25,7 @@ export class HttpRequestAdapter implements RuntimeAdapter {
   readonly type = 'http-request' as const;
   readonly label = 'HTTP Request';
   readonly supportsDebug = false;
+  readonly needsFolderPick = false;
 
   async detect(_folder: vscode.Uri): Promise<DetectionResult | null> {
     // No auto-detection — HTTP requests are user-declared.

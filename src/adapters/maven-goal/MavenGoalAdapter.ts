@@ -18,6 +18,7 @@ export class MavenGoalAdapter implements RuntimeAdapter {
   readonly type = 'maven-goal' as const;
   readonly label = 'Maven Goal';
   readonly supportsDebug = false;
+  readonly needsFolderPick = false;
 
   async detect(folder: vscode.Uri): Promise<DetectionResult | null> {
     log.debug(`Maven Goal detect: ${folder.fsPath}`);

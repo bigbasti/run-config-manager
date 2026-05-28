@@ -14,6 +14,7 @@ export class CustomCommandAdapter implements RuntimeAdapter {
   readonly type = 'custom-command' as const;
   readonly label = 'Custom Command';
   readonly supportsDebug = false;
+  readonly needsFolderPick = false;
 
   async detect(_folder: vscode.Uri): Promise<DetectionResult | null> {
     // Every folder is a valid place to run a custom command; we don't auto-

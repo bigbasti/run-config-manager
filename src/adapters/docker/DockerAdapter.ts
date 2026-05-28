@@ -20,6 +20,7 @@ export class DockerAdapter implements RuntimeAdapter {
   readonly type = 'docker' as const;
   readonly label = 'Docker';
   readonly supportsDebug = false;
+  readonly needsFolderPick = false;
 
   constructor(private readonly docker: DockerService) {}
 
