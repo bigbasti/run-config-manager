@@ -1,0 +1,40 @@
+# Development tooling and AI assistant directories
+.opencode/
+.superpowers/
+.github/
+.vscode/
+
+# Source files (only compiled output is needed)
+src/
+webview/
+monitor-agent/
+
+# Test infrastructure
+test/
+__mocks__/
+jest.config.js
+
+# Build tooling config
+esbuild.config.mjs
+vite.config.ts
+tsconfig*.json
+
+# Source maps (not needed by end users)
+out/*.map
+media/webview/assets/*.map
+
+# Docs / plans / specs (development-only)
+docs/
+
+# node_modules — all runtime deps are bundled into out/extension.js by esbuild
+# zod and uuid are listed as dependencies but don't need to ship separately
+node_modules/
+
+# Dev scripts
+scripts/
+
+# Misc development files
+.gitignore
+.gitattributes
+*.md
+!README.md
