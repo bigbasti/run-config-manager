@@ -925,21 +925,9 @@ async function addConfig(
     return;
   }
 
-  let folder: vscode.WorkspaceFolder | undefined;
-  if (folders.length === 1) folder = folders[0];
-  else folder = await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Workspace folder' });
-  if (!folder) return;
-
-  const projectFolderUris = await vscode.window.showOpenDialog({
-    canSelectFolders: true,
-    canSelectFiles: false,
-    canSelectMany: false,
-    defaultUri: folder.uri,
-    openLabel: 'Use this as project root',
-  });
-  if (!projectFolderUris || projectFolderUris.length === 0) return;
-  const projectUri = projectFolderUris[0];
-
+  // Step 1: pick the config type — this is the user's first decision.
+  // Workspace folder (in multi-root setups) and project folder come after,
+  // because the type determines whether a folder picker is needed at all.
   const typePick = await vscode.window.showQuickPick(
     // Sort alphabetically by display label and attach the matching brand
     // icon so the picker mirrors what the tree shows for already-created
@@ -957,6 +945,32 @@ async function addConfig(
   if (!typePick) return;
 
   const adapter = registry.get(typePick.value)!;
+
+  // Step 2: workspace folder (only relevant in multi-root workspaces).
+  let folder: vscode.WorkspaceFolder | undefined;
+  if (folders.length === 1) folder = folders[0];
+  else folder = await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Workspace folder' });
+  if (!folder) return;
+
+  // Step 3: project root folder — only for adapters that need it.
+  // Adapters that declare needsFolderPick = false (docker, http-request,
+  // custom-command, maven-goal, gradle-task) use the workspace root as
+  // projectPath; the user can adjust it in the form.
+  let projectUri: vscode.Uri;
+  if (adapter.needsFolderPick !== false) {
+    const projectFolderUris = await vscode.window.showOpenDialog({
+      canSelectFolders: true,
+      canSelectFiles: false,
+      canSelectMany: false,
+      defaultUri: folder.uri,
+      openLabel: 'Use this as project root',
+    });
+    if (!projectFolderUris || projectFolderUris.length === 0) return;
+    projectUri = projectFolderUris[0];
+  } else {
+    projectUri = folder.uri;
+  }
+
   log.info(`Add: type=${typePick.value}, projectPath=${projectUri.fsPath}, folder=${folder.name}`);
 
   const relProject = projectUri.fsPath.startsWith(folder.uri.fsPath)
