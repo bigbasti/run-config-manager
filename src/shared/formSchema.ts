@@ -127,6 +127,11 @@ export type FormField =
   // and toggle them on/off without losing the row. The webview ships
   // an `KvListEditor` component that renders the per-row checkbox.
   | ({ kind: 'kvList'; key: string; label: string; placeholder?: string } & BaseFieldMeta)
+  // Like `kvList`, but renders the specialized HttpHeadersEditor with ⚡
+  // suggestion buttons for common HTTP header names and values. Omits
+  // `placeholder?` — the component hard-codes its own per-input placeholder
+  // text. Only the HTTP Request adapter's headers field uses this kind.
+  | ({ kind: 'httpHeaders'; key: string; label: string } & BaseFieldMeta)
   | ({
       kind: 'folderPath';
       key: string;

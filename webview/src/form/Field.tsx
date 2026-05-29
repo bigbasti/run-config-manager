@@ -3,6 +3,7 @@ import type { FormField } from '../../../src/shared/formSchema';
 import { getPath, setPath } from '../state';
 import { KvEditor } from './KvEditor';
 import { KvListEditor, type KvListRow } from './KvListEditor';
+import { HttpHeadersEditor } from './HttpHeadersEditor';
 import { CodeTextarea } from './CodeTextarea';
 import { FolderPathInput } from './FolderPathInput';
 import { SelectOrCustom } from './SelectOrCustom';
@@ -390,6 +391,15 @@ function renderInput(field: FormField, v: any, set: (x: any) => void, h: RenderH
           onFocus={h.focus}
           onBlur={h.blur}
           placeholder={field.placeholder}
+        />
+      );
+    case 'httpHeaders':
+      return (
+        <HttpHeadersEditor
+          value={(v as KvListRow[]) ?? []}
+          onChange={set}
+          onFocus={h.focus}
+          onBlur={h.blur}
         />
       );
     case 'folderPath': {

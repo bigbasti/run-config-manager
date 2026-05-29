@@ -127,7 +127,7 @@ export class HttpRequestAdapter implements RuntimeAdapter {
 
         // ------- Headers -----------------------------------------------------
         {
-          kind: 'kvList',
+          kind: 'httpHeaders',
           key: 'typeOptions.headers',
           label: 'Headers',
           help:
