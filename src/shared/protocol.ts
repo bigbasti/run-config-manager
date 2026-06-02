@@ -107,6 +107,11 @@ export type Outbound =
   // usual sink. Useful for "test this curl-style call before I commit
   // the config to disk".
   | { cmd: 'executeUnsaved'; config: RunConfig }
+  // Build a curl command for an http-request config without saving. The
+  // `target` discriminates between the actual HTTP call ('request') and
+  // a token-acquisition call ('token'). The extension replies with a
+  // `curlResult` message carrying the formatted curl string.
+  | { cmd: 'copyCurl'; config: RunConfig; target: 'request' | 'token' }
   | { cmd: 'pickEnvFile' }
   // Loads (or reloads) the listed .env files and reports per-file status
   // + parsed variables. Fired on init/edit/add/remove so the form pills
@@ -341,6 +346,9 @@ export type Inbound =
       }>;
     }
   | { cmd: 'error'; message: string }
+  // Reply to a `copyCurl` request — carries the formatted curl command
+  // string so the webview can write it to the clipboard.
+  | { cmd: 'curlResult'; curl: string }
   // Monitor panel — pushed by MonitorPanel.pushState() and on every
   // MonitoringService.onChanged emission. Carries the latest metrics tick
   // for the panel's chart + analytics.
