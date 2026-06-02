@@ -8,7 +8,7 @@ import { log } from '../utils/logger';
 import { relativeFromWorkspace, resolveProjectUri } from '../utils/paths';
 import { recomputeClasspath, RecomputeTimeoutError } from '../adapters/spring-boot/recomputeClasspath';
 import { detectSpringBootPort, detectQuarkusPort, safeDetect } from '../services/detectProjectPort';
-import { makeRunContext, resolveConfig } from '../utils/resolveVars';
+import { makeRunContext, resolveConfig, resolveVars } from '../utils/resolveVars';
 import { discoverGradleTasks } from '../adapters/gradle-task/discoverGradleTasks';
 import { discoverMavenGoals } from '../adapters/maven-goal/discoverMavenGoals';
 import { validateBuildProjectPath } from '../utils/validateBuildProjectPath';
@@ -18,6 +18,7 @@ import { BuildToolSettingsService } from '../services/BuildToolSettingsService';
 import { loadEnvFiles } from '../services/EnvFileLoader';
 import { runPythonInTerminal } from '../services/runInTerminal';
 import { runHttpRequest } from '../services/HttpRequestRunner';
+import { buildRequestCurl, buildTokenCurl } from '../services/buildCurlCommand';
 import { initLogger } from '../utils/logger';
 import { JdkInstallerService, type JdkPackage, CancelledError, ChecksumUnavailableError, jdkInstallDirName } from '../services/JdkInstallerService';
 import { TomcatInstallerService, type TomcatPackage } from '../services/TomcatInstallerService';
@@ -656,6 +657,57 @@ export class EditorPanel {
           log.error('executeUnsaved failed', e);
           vscode.window.showErrorMessage(`Execute failed: ${(e as Error).message}`);
         });
+        return;
+      }
+      case 'copyCurl': {
+        if (msg.config.type !== 'http-request') {
+          log.warn(`copyCurl called with non-http-request type: ${msg.config.type}`);
+          return;
+        }
+        const safe = sanitizeConfig(msg.config);
+        if (safe.type !== 'http-request') return; // narrowing
+
+        // Resolve env files and variables (same logic as HttpRequestRunner.runHttpRequest)
+        const to = safe.typeOptions;
+        const envFiles = (safe.envFiles ?? []) as string[];
+        let envFromFiles: Record<string, string> = {};
+        if (envFiles.length > 0) {
+          const { merged } = await loadEnvFiles(envFiles, this.args.folder.uri.fsPath);
+          envFromFiles = merged;
+        }
+        const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...envFromFiles, ...safe.env };
+        const ctx = makeRunContext({
+          workspaceFolder: this.args.folder.uri.fsPath,
+          cwd: this.args.folder.uri.fsPath,
+          env: mergedEnv,
+        });
+        const resolve = (s: string) => resolveVars(s, ctx).value;
+
+        // Build a resolved copy of typeOptions
+        const resolvedTo: typeof to = {
+          ...to,
+          url: resolve(to.url),
+          queryParams: to.queryParams.map(r => ({ ...r, key: resolve(r.key), value: resolve(r.value) })),
+          headers: to.headers.map(r => ({ ...r, key: resolve(r.key), value: resolve(r.value) })),
+          bodyRaw: resolve(to.bodyRaw),
+          bodyForm: to.bodyForm.map(r => ({ ...r, key: resolve(r.key), value: resolve(r.value) })),
+          authBasic: { username: resolve(to.authBasic.username), password: resolve(to.authBasic.password) },
+          authBearer: { token: resolve(to.authBearer.token) },
+          authApiKey: { ...to.authApiKey, name: resolve(to.authApiKey.name), value: resolve(to.authApiKey.value) },
+          authOAuthClientCredentials: {
+            ...to.authOAuthClientCredentials,
+            tokenUrl: resolve(to.authOAuthClientCredentials.tokenUrl),
+            clientId: resolve(to.authOAuthClientCredentials.clientId),
+            clientSecret: resolve(to.authOAuthClientCredentials.clientSecret),
+            scope: resolve(to.authOAuthClientCredentials.scope),
+          },
+        };
+
+        const curl = msg.target === 'token'
+          ? buildTokenCurl(resolvedTo)
+          : buildRequestCurl(resolvedTo);
+
+        this.panel.webview.postMessage({ cmd: 'curlResult', curl });
         return;
       }
       case 'pickEnvFile': {
