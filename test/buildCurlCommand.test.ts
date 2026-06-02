@@ -178,6 +178,27 @@ describe('buildRequestCurl', () => {
     const curl = buildRequestCurl(baseOpts({ timeoutMs: 15000 }));
     expect(curl).toContain('--max-time 15');
   });
+
+  it('escapes single quotes in body', () => {
+    const curl = buildRequestCurl(baseOpts({
+      method: 'POST',
+      bodyKind: 'raw',
+      bodyRaw: "it's alive",
+    }));
+    expect(curl).toContain("--data-raw 'it'\\''s alive'");
+  });
+
+  it('escapes single quotes in header values', () => {
+    const curl = buildRequestCurl(baseOpts({
+      headers: [{ key: 'X-Name', value: "O'Reilly", enabled: true }],
+    }));
+    expect(curl).toContain("-H 'X-Name: O'\\''Reilly'");
+  });
+
+  it('CUSTOM method with blank customMethod emits WARNING comment', () => {
+    const curl = buildRequestCurl(baseOpts({ method: 'CUSTOM', customMethod: '' }));
+    expect(curl).toContain('# WARNING:');
+  });
 });
 
 // ── buildTokenCurl ────────────────────────────────────────────────────────────
@@ -243,5 +264,29 @@ describe('buildTokenCurl', () => {
   it('omits scope when empty', () => {
     const curl = buildTokenCurl(baseOpts());
     expect(curl).not.toContain('scope');
+  });
+
+  it('applies verifyTls false as --insecure', () => {
+    const curl = buildTokenCurl(baseOpts({ verifyTls: false }));
+    expect(curl).toContain('--insecure');
+  });
+
+  it('applies timeoutMs as --max-time', () => {
+    const curl = buildTokenCurl(baseOpts({ timeoutMs: 10000 }));
+    expect(curl).toContain('--max-time 10');
+  });
+
+  it('escapes single quotes in client credentials (body mode)', () => {
+    const curl = buildTokenCurl(baseOpts({
+      authOAuthClientCredentials: {
+        tokenUrl: 'https://auth.example.com/token',
+        clientId: "id'with'quotes",
+        clientSecret: "sec'ret",
+        scope: '',
+        clientAuth: 'body',
+      },
+    }));
+    expect(curl).toContain("client_id=id'\\''with'\\''quotes");
+    expect(curl).toContain("client_secret=sec'\\''ret");
   });
 });

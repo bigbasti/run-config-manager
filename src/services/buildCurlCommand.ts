@@ -1,5 +1,10 @@
 import type { HttpRequestTypeOptions } from '../shared/types';
 
+/** Escapes single quotes for embedding inside a single-quoted shell string. */
+function shellEscape(s: string): string {
+  return s.replace(/'/g, "'\\''");
+}
+
 /**
  * Builds a curl command string for the main HTTP request.
  * `to` must already have all variables resolved (no ${...} tokens).
@@ -18,7 +23,17 @@ export function buildRequestCurl(to: HttpRequestTypeOptions): string {
   }
 
   // Base command
-  const method = to.method === 'CUSTOM' ? (to.customMethod || 'GET') : to.method;
+  let method: string;
+  if (to.method === 'CUSTOM') {
+    if (to.customMethod) {
+      method = to.customMethod;
+    } else {
+      parts.push('# WARNING: Custom method is blank. Add -X <METHOD> to the command below.');
+      method = 'GET'; // fallback so the rest of the command is valid
+    }
+  } else {
+    method = to.method;
+  }
   const cmdParts: string[] = ['curl'];
   if (method !== 'GET') {
     cmdParts.push(`-X ${method}`);
@@ -55,7 +70,7 @@ export function buildRequestCurl(to: HttpRequestTypeOptions): string {
   } else if (to.authKind === 'bearer') {
     cmdParts.push(`-H 'Authorization: Bearer ${to.authBearer.token}'`);
   } else if (to.authKind === 'apiKey' && to.authApiKey.location === 'header' && to.authApiKey.name) {
-    cmdParts.push(`-H '${to.authApiKey.name}: ${to.authApiKey.value}'`);
+    cmdParts.push(`-H '${shellEscape(to.authApiKey.name)}: ${shellEscape(to.authApiKey.value)}'`);
   } else if (to.authKind === 'oauth-client-credentials') {
     cmdParts.push(`-H 'Authorization: Bearer <access_token>'`);
   }
@@ -68,19 +83,19 @@ export function buildRequestCurl(to: HttpRequestTypeOptions): string {
   // User-defined headers (enabled only)
   for (const row of to.headers) {
     if (row.enabled && row.key) {
-      cmdParts.push(`-H '${row.key}: ${row.value}'`);
+      cmdParts.push(`-H '${shellEscape(row.key)}: ${shellEscape(row.value)}'`);
     }
   }
 
   // Body
   if (to.bodyKind === 'json' || to.bodyKind === 'raw' || to.bodyKind === 'xml') {
     if (to.bodyRaw) {
-      cmdParts.push(`--data-raw '${to.bodyRaw}'`);
+      cmdParts.push(`--data-raw '${shellEscape(to.bodyRaw)}'`);
     }
   } else if (to.bodyKind === 'form-urlencoded') {
     for (const row of to.bodyForm) {
       if (row.enabled && row.key) {
-        cmdParts.push(`--data-urlencode '${row.key}=${row.value}'`);
+        cmdParts.push(`--data-urlencode '${shellEscape(row.key)}=${shellEscape(row.value)}'`);
       }
     }
   }
@@ -117,13 +132,18 @@ export function buildTokenCurl(to: HttpRequestTypeOptions): string {
   cmdParts.push(`--data-urlencode 'grant_type=client_credentials'`);
 
   if (oauth.clientAuth === 'body') {
-    cmdParts.push(`--data-urlencode 'client_id=${oauth.clientId}'`);
-    cmdParts.push(`--data-urlencode 'client_secret=${oauth.clientSecret}'`);
+    cmdParts.push(`--data-urlencode 'client_id=${shellEscape(oauth.clientId)}'`);
+    cmdParts.push(`--data-urlencode 'client_secret=${shellEscape(oauth.clientSecret)}'`);
   }
 
   if (oauth.scope) {
-    cmdParts.push(`--data-urlencode 'scope=${oauth.scope}'`);
+    cmdParts.push(`--data-urlencode 'scope=${shellEscape(oauth.scope)}'`);
   }
+
+  if (!to.verifyTls) {
+    cmdParts.push('--insecure');
+  }
+  cmdParts.push(`--max-time ${Math.floor(to.timeoutMs / 1000)}`);
 
   return cmdParts.join(' ');
 }
