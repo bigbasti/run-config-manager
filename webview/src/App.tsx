@@ -72,6 +72,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const [busyActionId, setBusyActionId] = useState<string | null>(null);
+  const [curlOutput, setCurlOutput] = useState<string | null>(null);
+  const [curlDropdownOpen, setCurlDropdownOpen] = useState(false);
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
@@ -164,6 +166,13 @@ export function App() {
   // no red border anywhere on the form.
   const schemaRef = useRef<FormSchema | null>(null);
   useEffect(() => { schemaRef.current = schema; }, [schema]);
+
+  useEffect(() => {
+    if (!curlDropdownOpen) return;
+    const handler = () => setCurlDropdownOpen(false);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [curlDropdownOpen]);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent<Inbound>) => {
@@ -371,6 +380,11 @@ export function App() {
         // itself needs these messages; the configPatch/schemaUpdate that
         // arrive alongside `*DownloadComplete` already update the form.
         for (const sub of dialogSubscribersRef.current) sub(msg);
+      } else if (msg.cmd === 'curlResult') {
+        setCurlOutput(msg.curl);
+        navigator.clipboard.writeText(msg.curl).catch(() => {
+          // clipboard may be unavailable in some webview contexts; textarea fallback still works
+        });
       } else if (msg.cmd === 'buildToolSettings') {
         setSettings(msg);
         setSettingsLoading(false);
@@ -699,16 +713,92 @@ export function App() {
               long-running side effects that don't suit a try-without-
               saving flow. */}
           {values.type === 'http-request' && (
-            <div className="side-actions" style={{ marginTop: 6 }}>
-              <button
-                title="Run this HTTP request now using the current (possibly unsaved) form values."
-                onClick={() => {
-                  setError(null);
-                  post({ cmd: 'executeUnsaved', config: values as RunConfig });
-                }}
-              >
-                ▶ Execute
-              </button>
+            <div style={{ marginTop: 6 }}>
+              <div className="side-actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  title="Run this HTTP request now using the current (possibly unsaved) form values."
+                  onClick={() => {
+                    setError(null);
+                    post({ cmd: 'executeUnsaved', config: values as RunConfig });
+                  }}
+                >
+                  ▶ Execute
+                </button>
+
+                {/* Copy as curl button */}
+                <div style={{ position: 'relative' }}>
+                  {(values.typeOptions as { authKind?: string } | undefined)?.authKind === 'oauth-client-credentials' ? (
+                    <>
+                      <button
+                        title="Copy as curl"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCurlDropdownOpen(open => !open);
+                        }}
+                      >
+                        ⧉
+                      </button>
+                      {curlDropdownOpen && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: '100%',
+                            left: 0,
+                            zIndex: 100,
+                            background: 'var(--vscode-menu-background)',
+                            border: '1px solid var(--vscode-menu-border)',
+                            minWidth: 260,
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '4px 8px' }}
+                            onClick={() => {
+                              setCurlDropdownOpen(false);
+                              post({ cmd: 'copyCurl', config: values as RunConfig, target: 'request' });
+                            }}
+                          >
+                            Convert Request to curl command
+                          </button>
+                          <button
+                            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '4px 8px' }}
+                            onClick={() => {
+                              setCurlDropdownOpen(false);
+                              post({ cmd: 'copyCurl', config: values as RunConfig, target: 'token' });
+                            }}
+                          >
+                            Convert Token Request to curl command
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <button
+                      title="Copy as curl"
+                      onClick={() => {
+                        post({ cmd: 'copyCurl', config: values as RunConfig, target: 'request' });
+                      }}
+                    >
+                      ⧉
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Curl output textarea */}
+              {curlOutput !== null && (
+                <div style={{ marginTop: 6 }}>
+                  <textarea
+                    readOnly
+                    value={curlOutput}
+                    rows={6}
+                    style={{ width: '100%', fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
+                  />
+                  <div>
+                    <button onClick={() => setCurlOutput(null)}>Close</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {(() => {
