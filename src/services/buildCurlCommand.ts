@@ -12,25 +12,10 @@ function shellEscape(s: string): string {
  * is used because the actual token requires a live network call.
  */
 export function buildRequestCurl(to: HttpRequestTypeOptions): string {
-  const parts: string[] = [];
-
-  // NOTE comment for OAuth so user understands the placeholder
-  if (to.authKind === 'oauth-client-credentials') {
-    parts.push(
-      '# NOTE: This request uses OAuth 2 client credentials. Run the token curl first,',
-      '# then replace <access_token> with the access_token value from the response.',
-    );
-  }
-
   // Base command
   let method: string;
   if (to.method === 'CUSTOM') {
-    if (to.customMethod) {
-      method = to.customMethod;
-    } else {
-      parts.push('# WARNING: Custom method is blank. Add -X <METHOD> to the command below.');
-      method = 'GET'; // fallback so the rest of the command is valid
-    }
+    method = to.customMethod || 'GET';
   } else {
     method = to.method;
   }
@@ -109,8 +94,7 @@ export function buildRequestCurl(to: HttpRequestTypeOptions): string {
   }
   cmdParts.push(`--max-time ${Math.floor(to.timeoutMs / 1000)}`);
 
-  parts.push(cmdParts.join(' '));
-  return parts.join('\n');
+  return cmdParts.join(' ');
 }
 
 /**

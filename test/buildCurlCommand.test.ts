@@ -106,10 +106,10 @@ describe('buildRequestCurl', () => {
     expect(curl).not.toContain("-H 'api_key:");
   });
 
-  it('OAuth uses <access_token> placeholder and includes NOTE comment', () => {
+  it('OAuth uses <access_token> placeholder', () => {
     const curl = buildRequestCurl(baseOpts({ authKind: 'oauth-client-credentials' }));
     expect(curl).toContain('Authorization: Bearer <access_token>');
-    expect(curl).toContain('# NOTE:');
+    expect(curl).not.toContain('#');
   });
 
   it('JSON body uses --data-raw', () => {
@@ -195,9 +195,11 @@ describe('buildRequestCurl', () => {
     expect(curl).toContain("-H 'X-Name: O'\\''Reilly'");
   });
 
-  it('CUSTOM method with blank customMethod emits WARNING comment', () => {
+  it('CUSTOM method with blank customMethod falls back to GET silently', () => {
     const curl = buildRequestCurl(baseOpts({ method: 'CUSTOM', customMethod: '' }));
-    expect(curl).toContain('# WARNING:');
+    expect(curl).not.toContain('#');
+    expect(curl).toContain('curl ');
+    expect(curl).not.toContain('-X');
   });
 });
 
