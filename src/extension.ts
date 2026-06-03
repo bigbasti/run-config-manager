@@ -7,6 +7,9 @@ import { RunConfigService } from './services/RunConfigService';
 import { ProjectScanner } from './services/ProjectScanner';
 import { ExecutionService } from './services/ExecutionService';
 import { DebugService } from './services/DebugService';
+import { RunStateStore } from './services/RunStateStore';
+import { reattachOnStartup } from './services/reattachOnStartup';
+import { scanPorts } from './services/PortScanner';
 import { AdapterRegistry } from './adapters/AdapterRegistry';
 import { NpmAdapter } from './adapters/npm/NpmAdapter';
 import { SpringBootAdapter } from './adapters/spring-boot/SpringBootAdapter';
@@ -78,7 +81,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const scanner = new ProjectScanner(registry);
   const monitoring = new MonitoringService(context.extensionUri);
   context.subscriptions.push({ dispose: () => monitoring.dispose() });
-  const exec = new ExecutionService(registry, monitoring, svc);
+  // Persisted run state for auto-reattach after a window / extension-host
+  // reload. Lives in workspaceState so it survives the reload.
+  const runState = new RunStateStore(context.workspaceState);
+  const exec = new ExecutionService(registry, monitoring, svc, runState);
   const dbg = new DebugService(registry, exec);
   const native = new NativeRunnerService();
   context.subscriptions.push({ dispose: () => native.dispose() });
@@ -156,6 +162,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   dbg.onRunningChanged(updateRunningState);
   store.onChange(updateRunningState);
   docker.onChanged(updateRunningState);
+
+  // Auto-reattach: after a window / extension-host reload, ExecutionService's
+  // in-memory state is gone. Find configs the extension started before the
+  // reload that are still listening on their recorded port and mark them
+  // running again (Stop will kill the live process). Best-effort and fully
+  // async so activation isn't blocked on a port scan.
+  void reattachOnStartup({
+    runState,
+    reattach: (id, pid, ports) => exec.reattach(id, pid, ports),
+    configExists: (id) => svc.getById(id)?.valid === true,
+    scan: scanPorts,
+  })
+    .then(n => {
+      if (n > 0) {
+        log.info(`Reattached ${n} running configuration(s) after reload.`);
+        tree.refresh();
+        updateRunningState();
+      }
+    })
+    .catch(e => log.warn(`reattach on startup failed: ${(e as Error).message}`));
 
   // Keep store in sync when workspace folders change.
   context.subscriptions.push(

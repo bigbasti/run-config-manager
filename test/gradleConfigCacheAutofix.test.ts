@@ -52,7 +52,7 @@ describe('Gradle config cache auto-fix — source-level guards', () => {
     // can trigger the toast again if the error fires again.
     const stopIdx = src.indexOf('async stop(');
     expect(stopIdx).toBeGreaterThan(-1);
-    const stopBody = src.slice(stopIdx, stopIdx + 2000);
+    const stopBody = src.slice(stopIdx, stopIdx + 3000);
     expect(stopBody).toMatch(/configCacheToastShown\.delete/);
   });
 });

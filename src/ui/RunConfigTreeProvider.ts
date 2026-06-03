@@ -205,6 +205,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     const started = this.exec.isStarted(n.config.id);
     const failed = this.exec.isFailed(n.config.id);
     const rebuilding = this.exec.isRebuilding(n.config.id);
+    const reattached = this.exec.isReattached(n.config.id);
     const adapter = this.registry.get(n.config.type);
     const debuggable = adapter?.supportsDebug === true;
     // Stale-config check: consult the synchronous cache first; the async
@@ -267,6 +268,8 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
         ? '\n\n_Rebuilding — dev server detected a file change._'
         : failed
         ? '\n\n_Startup failed — see terminal for details._'
+        : reattached
+        ? '\n\n_Reattached to a process that was running before the window reload. Live logs aren’t available; Stop will end the process._'
         : running && !started
         ? '\n\n_Starting…_'
         : started
@@ -310,6 +313,12 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     } else if (failed) {
       item.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
       item.description = 'Failed';
+    } else if (running && reattached) {
+      // Reattached to a process that survived a reload. We know the port is
+      // listening but never observed a readiness signal, so we render green
+      // (it's serving) with a distinct "Reattached" label + plug glyph.
+      item.iconPath = new vscode.ThemeIcon('plug', new vscode.ThemeColor('charts.green'));
+      item.description = 'Reattached';
     } else if (running && !started) {
       item.iconPath = new vscode.ThemeIcon('loading~spin');
       item.description = 'Starting…';

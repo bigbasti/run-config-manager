@@ -19,6 +19,9 @@ import { runPythonInTerminal } from './runInTerminal';
 import { checkDependencies } from '../adapters/python/checkDependencies';
 import { MonitoringService } from './MonitoringService';
 import { allocateFreePort } from './monitoring/freePort';
+import { scanPorts, killProcess, type PortEntry } from './PortScanner';
+import { resolveExpectedPorts } from './configPorts';
+import type { RunStateStore } from './RunStateStore';
 import * as fsModule from 'fs';
 import * as pathModule from 'path';
 
@@ -105,6 +108,17 @@ export class ExecutionService {
   // as a yellow sync-spin in the tree. Mutually exclusive with started and
   // failed while active.
   private rebuilding = new Set<string>();
+  // Configs reattached to an already-running external process after a window
+  // / extension-host reload. There is no TaskExecution or pseudoterminal to
+  // track here — only the live listener pid (kill target for stop) and the
+  // ports it owns. These count as "running" but NOT "started": we observed a
+  // listening socket, not an actual readiness signal, so we must not feed a
+  // false ready into the dependency/group orchestration.
+  private external = new Map<string, { pid: number; ports: number[] }>();
+  // Short-lived cache of the last port scan, so a burst of runs (e.g. Run All
+  // Parallel) doesn't shell out to lsof/ss/netstat once per config. The
+  // kill-and-wait path bypasses this and scans fresh.
+  private portScanCache?: { at: number; rows: PortEntry[] };
   // Transient flash for http-request configs: after the request finishes
   // we surface the response class on the tree row for 3 seconds, then
   // clear back to the brand icon. 'success' = 2xx (green check),
@@ -131,12 +145,24 @@ export class ExecutionService {
       getById(id: string): { folderKey: string; config: RunConfig; valid: true } | { folderKey: string; config: unknown; valid: false } | undefined;
       update(folderKey: string, cfg: RunConfig): Promise<void>;
     },
+    // Persisted run-state for auto-reattach after reload. Optional so existing
+    // callers/tests that don't exercise reattach can omit it — when absent,
+    // the port-conflict prompt, run-state recording, and external-process
+    // tracking are all disabled (and ExecutionService never shells out to a
+    // port scan).
+    private readonly runState?: RunStateStore,
   ) {
     this.taskEndSub = vscode.tasks.onDidEndTask(e => this.handleEnd(e.execution));
   }
 
   isRunning(configId: string): boolean {
-    return this.running.has(configId);
+    return this.running.has(configId) || this.external.has(configId);
+  }
+
+  // True when the config is tracked as an external process reattached after a
+  // reload (no live task / log stream — kill-by-pid only).
+  isReattached(configId: string): boolean {
+    return this.external.has(configId);
   }
 
   isPreparing(configId: string): boolean {
@@ -180,6 +206,150 @@ export class ExecutionService {
       }
     }
     log.warn(`focus(${configId}): no terminal found for "${taskName}"`);
+  }
+
+  // Marks a config as running against an already-live external process,
+  // discovered by port. Called from reattachOnStartup (after a reload) and
+  // from the port-conflict prompt when the user chooses "Reattach". Idempotent
+  // and a no-op if a live task already owns this config.
+  reattach(configId: string, pid: number, ports: number[]): void {
+    if (this.running.has(configId) || this.external.has(configId)) return;
+    this.external.set(configId, { pid, ports });
+    // Persist (or refresh) so a subsequent reload can reattach again. Preserve
+    // the informational name/type/startedAt if we already had them.
+    const prev = this.runState?.get(configId);
+    this.runState?.set(configId, {
+      ports,
+      pid,
+      name: prev?.name ?? '',
+      type: prev?.type ?? '',
+      startedAt: prev?.startedAt ?? Date.now(),
+    });
+    this.emitter.fire(configId);
+    log.info(`Reattached "${configId}" to external process (pid=${pid}, ports=[${ports.join(', ')}])`);
+  }
+
+  // Port scan with a 1.5s cache so a burst of runs (Run All Parallel) doesn't
+  // shell out once per config.
+  private async cachedScanPorts(): Promise<PortEntry[]> {
+    const now = Date.now();
+    if (this.portScanCache && now - this.portScanCache.at < 1500) {
+      return this.portScanCache.rows;
+    }
+    const rows = await scanPorts();
+    this.portScanCache = { at: now, rows };
+    return rows;
+  }
+
+  // After a config goes ready (port is up), record the actual listener pid so
+  // a later reload can match the exact process, not just the port. Best
+  // effort, fire-and-forget.
+  private captureListenerPid(configId: string): void {
+    if (!this.runState) return;
+    const st = this.runState.get(configId);
+    if (!st || st.ports.length === 0) return;
+    void (async () => {
+      try {
+        const rows = await scanPorts();
+        const hit = rows.find(r => st.ports.includes(r.port));
+        if (hit && hit.pid > 0) this.runState!.setPid(configId, hit.pid);
+      } catch {
+        /* best effort */
+      }
+    })();
+  }
+
+  // Detects whether the config's expected port is already taken before a
+  // launch and, if so, prompts the user. Returns true to proceed with the
+  // launch, false to abort (the user reattached or cancelled, or the port
+  // could not be freed). Disabled entirely when runState isn't wired.
+  private async resolvePortConflict(
+    cfg: RunConfig,
+    resolvedCfg: RunConfig,
+    folder: vscode.WorkspaceFolder,
+  ): Promise<boolean> {
+    if (!this.runState) return true;
+    let expected: number[];
+    try {
+      expected = await resolveExpectedPorts(resolvedCfg, folder);
+    } catch {
+      return true;
+    }
+    if (expected.length === 0) return true;
+
+    let rows: PortEntry[];
+    try {
+      rows = await this.cachedScanPorts();
+    } catch {
+      // If we can't scan, don't block the run — fall through to a normal
+      // launch (which will surface a real "port in use" error if there is one).
+      return true;
+    }
+    const conflicts = rows.filter(r => expected.includes(r.port));
+    if (conflicts.length === 0) return true;
+
+    const first = conflicts[0];
+    const pids = [...new Set(conflicts.map(c => c.pid).filter(p => p > 0))];
+    const alreadyOurs = this.external.has(cfg.id);
+    const where =
+      `Port ${first.port} is already in use by ${first.processName || 'another process'}` +
+      (first.pid ? ` (PID ${first.pid})` : '') + '.';
+    const message = alreadyOurs
+      ? `"${cfg.name}" still appears to be running from before the window reload. ${where}`
+      : `"${cfg.name}" cannot start cleanly — its port is already taken. ${where}`;
+
+    const KILL = 'Kill & Restart';
+    const REATTACH = 'Reattach';
+    const choice = await vscode.window.showWarningMessage(
+      message,
+      { modal: true, detail: 'Reattach keeps the existing process and marks the config running. Kill & Restart stops it first, then launches a fresh run.' },
+      KILL,
+      REATTACH,
+    );
+
+    if (choice === REATTACH) {
+      this.reattach(cfg.id, first.pid, expected);
+      return false;
+    }
+    if (choice === KILL) {
+      // Replacing the old process — drop any reattached record for this config.
+      this.external.delete(cfg.id);
+      for (const pid of pids) {
+        try {
+          await killProcess(pid);
+        } catch (e) {
+          log.warn(`Kill & Restart: could not kill PID ${pid} — ${(e as Error).message}`);
+        }
+      }
+      // Invalidate the scan cache — the killed ports should now read as free.
+      this.portScanCache = undefined;
+      const freed = await this.waitForPortsFree(expected, 5000);
+      if (!freed) {
+        vscode.window.showErrorMessage(
+          `Port ${first.port} is still in use after stopping the old process. "${cfg.name}" was not started.`,
+        );
+        return false;
+      }
+      return true;
+    }
+    // Dismissed / cancelled → abort the run.
+    return false;
+  }
+
+  // Polls until none of `ports` is listening, or the timeout elapses.
+  private async waitForPortsFree(ports: number[], timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      let rows: PortEntry[];
+      try {
+        rows = await scanPorts();
+      } catch {
+        return true; // can't verify — assume freed rather than block forever
+      }
+      if (!rows.some(r => ports.includes(r.port))) return true;
+      await new Promise(res => setTimeout(res, 300));
+    }
+    return false;
   }
 
   async run(
@@ -226,6 +396,14 @@ export class ExecutionService {
     if (unresolved.length) {
       log.warn(`Unresolved variable(s) in "${cfg.name}": ${unresolved.join(', ')} (expanded to empty string)`);
     }
+
+    // Port-conflict guard: if the config's expected port is already taken
+    // (commonly an instance that survived a window reload, or a leftover run),
+    // ask the user whether to kill it and restart or reattach to it. Returns
+    // false when the user reattached or cancelled, or the port couldn't be
+    // freed. No-op unless run-state persistence is wired.
+    const proceed = await this.resolvePortConflict(cfg, resolvedCfg, folder);
+    if (!proceed) return undefined;
 
     // Allocate a JMX port for monitoring up-front so we can pass it into
     // prepareLaunch. If allocation fails the run still proceeds; we just
@@ -359,6 +537,9 @@ export class ExecutionService {
         this.started.add(cfg.id);
         this.emitter.fire(cfg.id);
         log.info(`Ready: ${cfg.name} — ${reason}`);
+        // Port is up now — capture the real listener pid for precise reattach
+        // after a future reload.
+        this.captureListenerPid(cfg.id);
       }
     };
     const markFailed = (reason: string) => {
@@ -526,6 +707,29 @@ export class ExecutionService {
       this.running.set(cfg.id, entry);
       this.emitter.fire(cfg.id);
       log.info(`Started: ${cfg.name} (${command} ${args.join(' ')})`);
+
+      // Record run state for auto-reattach after a reload. Keyed on the
+      // config's expected ports; the precise listener pid is filled in later
+      // by captureListenerPid once the app reports ready. Only configs with a
+      // known port are persisted — others can't be matched deterministically.
+      if (this.runState) {
+        void (async () => {
+          try {
+            const ports = await resolveExpectedPorts(effectiveCfg, folder);
+            if (ports.length > 0) {
+              this.runState!.set(cfg.id, {
+                ports,
+                pid: terminalRef.current?.childPid ?? 0,
+                name: cfg.name,
+                type: cfg.type,
+                startedAt: Date.now(),
+              });
+            }
+          } catch (e) {
+            log.debug(`record run state failed for ${cfg.name}: ${(e as Error).message}`);
+          }
+        })();
+      }
 
       // Spin up the monitoring agent. Fire-and-forget — the agent retries
       // its JMX connection internally for ~10 s, which covers the gap
@@ -788,6 +992,24 @@ export class ExecutionService {
   }
 
   async stop(configId: string): Promise<void> {
+    // Reattached external process: there's no TaskExecution to terminate, so
+    // kill the live listener pid directly and clear all tracking.
+    const ext = this.external.get(configId);
+    if (ext) {
+      if (ext.pid > 0) {
+        try {
+          await killProcess(ext.pid);
+        } catch (e) {
+          log.warn(`stop(reattached ${configId}): kill PID ${ext.pid} failed — ${(e as Error).message}`);
+        }
+      }
+      this.external.delete(configId);
+      this.runState?.delete(configId);
+      this.monitoring?.detach(configId);
+      this.emitter.fire(configId);
+      return;
+    }
+
     const entry = this.running.get(configId);
     if (!entry) return;
     // When the config went through our pseudoterminal AND the user
@@ -824,6 +1046,7 @@ export class ExecutionService {
     this.failed.delete(configId);
     this.rebuilding.delete(configId);
     this.configCacheToastShown.delete(configId);
+    this.runState?.delete(configId);
     this.emitter.fire(configId);
   }
 
@@ -840,6 +1063,7 @@ export class ExecutionService {
         this.failed.delete(id);
         this.rebuilding.delete(id);
         this.configCacheToastShown.delete(id);
+        this.runState?.delete(id);
         this.emitter.fire(id);
         return;
       }
@@ -854,12 +1078,21 @@ export class ExecutionService {
   }
 
   dispose(): void {
-    for (const entry of this.running.values()) {
-      try { entry.execution.terminate(); } catch { /* ignore */ }
+    // IMPORTANT: do NOT terminate the main run tasks here. dispose() runs on
+    // extension-host shutdown / window reload; killing the user's long-running
+    // services on every reload would defeat the auto-reattach feature (and the
+    // persisted RunStateStore that drives it). We only tear down side
+    // artifacts that must not outlive this session — the rebuild watcher and
+    // any attached monitoring agent — and clear in-memory state. Processes
+    // that survive the reload are rediscovered by reattachOnStartup; those the
+    // OS reaps (e.g. our pseudoterminal children) are pruned on next scan.
+    for (const [id, entry] of this.running.entries()) {
       try { entry.watcher?.terminate(); } catch { /* ignore */ }
       if (entry.readyTimer) clearTimeout(entry.readyTimer);
+      this.monitoring?.detach(id);
     }
     this.running.clear();
+    this.external.clear();
     this.started.clear();
     this.failed.clear();
     this.rebuilding.clear();
