@@ -6,6 +6,7 @@ import type { ExecutionService } from './ExecutionService';
 import { log } from '../utils/logger';
 import { makeRunContext, resolveConfig } from '../utils/resolveVars';
 import { resolveProjectUri } from '../utils/paths';
+import { resolveJavaProjectName } from '../utils/javaProjectName';
 
 // Required for `type: 'java'` debug configurations. The Spring Boot adapter
 // needs this extension; npm uses the built-in `pwa-node` and doesn't.
@@ -61,6 +62,21 @@ export class DebugService {
 
     const conf = adapter.getDebugConfig(resolvedCfg, folder);
     log.debug(`getDebugConfig: type=${conf.type}, request=${conf.request}${conf.port ? `, port=${conf.port}` : ''}`);
+
+    // Attach-mode Java configs deliberately ship an empty `projectName` (the
+    // adapters set it so launch-mode skips the "resolve main class" workspace
+    // scan). But vscode-java-debug REQUIRES a real projectName to evaluate
+    // expressions / conditional breakpoints once the workspace has more than
+    // one Java project — without it the Debug Console throws "Cannot evaluate,
+    // please specify projectName in launch.json". Attach never launches a JVM,
+    // so there's no startup-scan penalty to reintroducing the name here.
+    if (conf.type === 'java' && conf.request === 'attach' && !conf.projectName) {
+      const projectName = await resolveJavaProjectName(folder, resolvedCfg.projectPath);
+      if (projectName) {
+        conf.projectName = projectName;
+        log.debug(`Resolved java projectName for evaluation: ${projectName}`);
+      }
+    }
 
     // Java-type debug requires the Java Debugger extension.
     if (conf.type === 'java' && !vscode.extensions.getExtension(JAVA_DEBUG_EXTENSION_ID)) {
