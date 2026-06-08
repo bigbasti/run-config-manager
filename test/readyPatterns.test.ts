@@ -49,6 +49,9 @@ describe('readyPatternsFor', () => {
     const patterns = readyPatternsFor(cfg({ type: 'npm' } as any));
     expect(chunkSignalsReady('Server listening on port 3000', patterns)).toBe(true);
     expect(chunkSignalsReady('App is running on http://localhost:3000', patterns)).toBe(true);
+    expect(
+      chunkSignalsReady('TARDIS mock listening on http://127.0.0.1:9191', patterns),
+    ).toBe(true);
   });
 
   test('no false positive on generic log lines', () => {

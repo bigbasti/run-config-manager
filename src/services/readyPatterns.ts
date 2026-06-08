@@ -107,6 +107,10 @@ export function readyPatternsFor(cfg: RunConfig): RegExp[] {
       // Express / general node server conventions.
       /server (is )?(running|listening) on/i,
       /listening (on )?(port |:)\d+/i,
+      // "<anything> listening on http(s)://host:port" — common bare-Node form
+      // (e.g. 'TARDIS mock listening on http://127.0.0.1:9191') where there's
+      // no 'server' keyword and the URL (not a 'port'/':' token) follows.
+      /listening on https?:\/\//i,
       // Generic "…running on http(s)://…" form (common in README snippets).
       /running on https?:\/\//i,
     ];
