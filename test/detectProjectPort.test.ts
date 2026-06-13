@@ -152,4 +152,55 @@ describe('detectNpmPort', () => {
     }));
     expect(await detectNpmPort(ROOT, 'start')).toBe(9999);
   });
+
+  test('Angular reads serve port from angular.json over the 4200 default', async () => {
+    __writeFs('/proj/package.json', JSON.stringify({
+      scripts: { start: 'ng serve' },
+      dependencies: { '@angular/core': '^17' },
+    }));
+    __writeFs('/proj/angular.json', JSON.stringify({
+      projects: {
+        admin: {
+          architect: {
+            serve: { options: { port: 4300 } },
+          },
+        },
+      },
+    }));
+    expect(await detectNpmPort(ROOT, 'start')).toBe(4300);
+  });
+
+  test('Angular falls back to 4200 when angular.json sets no serve port', async () => {
+    __writeFs('/proj/package.json', JSON.stringify({
+      scripts: { start: 'ng serve' },
+      dependencies: { '@angular/core': '^17' },
+    }));
+    __writeFs('/proj/angular.json', JSON.stringify({
+      projects: {
+        web: {
+          architect: {
+            serve: { options: {} },
+          },
+        },
+      },
+    }));
+    expect(await detectNpmPort(ROOT, 'start')).toBe(4200);
+  });
+
+  test('Angular reads serve port from newer targets schema', async () => {
+    __writeFs('/proj/package.json', JSON.stringify({
+      scripts: { start: 'ng serve' },
+      dependencies: { '@angular/core': '^17' },
+    }));
+    __writeFs('/proj/angular.json', JSON.stringify({
+      projects: {
+        admin: {
+          targets: {
+            serve: { options: { port: 4300 } },
+          },
+        },
+      },
+    }));
+    expect(await detectNpmPort(ROOT, 'start')).toBe(4300);
+  });
 });

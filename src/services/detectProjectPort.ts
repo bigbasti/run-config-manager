@@ -163,12 +163,68 @@ export async function detectNpmPort(
     ...Object.keys(pkg.devDependencies ?? {}),
   ];
   const fw = await detectNpmFramework(projectRoot, scriptKeys, scripts, dependencies);
+
+  // Angular declares its real dev-server port in angular.json, not in the
+  // npm script. Read it before reaching for the generic 4200 default — in
+  // multi-project workspaces (e.g. a `web` on 4200 next to an `admin` on
+  // 4300) the convention default is wrong and would inject a phantom port
+  // into the conflict-check set, producing false "port already in use"
+  // errors when a sibling project is already running on the default port.
+  if (fw.name === 'angular') {
+    const declared = await readAngularServePort(projectRoot);
+    if (declared !== null) {
+      log.info(`detectNpmPort: angular.json serve.options.port=${declared}`);
+      return declared;
+    }
+  }
+
   if (fw.defaultPort !== null) {
     log.info(`detectNpmPort: matched ${fw.name} convention → port=${fw.defaultPort}`);
     return fw.defaultPort;
   }
   log.debug(`detectNpmPort: no framework convention matched for script "${scriptName}"`);
   return null;
+}
+
+// Reads the configured dev-server port from a project's angular.json.
+// Returns null when the file is missing, unparseable, declares no serve
+// port, or is ambiguous (multiple projects with no defaultProject) — the
+// caller then falls back to the 4200 convention default.
+//
+// Each Angular project conventionally has its own angular.json in its own
+// directory with a single project entry, so "the only project" is the
+// common case. When several projects are present we honour `defaultProject`
+// (older schema); otherwise we bail rather than guess.
+async function readAngularServePort(projectRoot: vscode.Uri): Promise<number | null> {
+  const text = await readFile(vscode.Uri.joinPath(projectRoot, 'angular.json'));
+  if (!text) return null;
+  let json: any;
+  try { json = JSON.parse(text); }
+  catch (e) {
+    log.debug(`readAngularServePort: angular.json parse failed — ${(e as Error).message}`);
+    return null;
+  }
+  const projects = json.projects;
+  if (!projects || typeof projects !== 'object') return null;
+  const names = Object.keys(projects);
+  if (names.length === 0) return null;
+
+  let projectName: string;
+  if (names.length === 1) {
+    projectName = names[0];
+  } else if (typeof json.defaultProject === 'string' && projects[json.defaultProject]) {
+    projectName = json.defaultProject;
+  } else {
+    // Ambiguous — don't guess which project this run config targets.
+    return null;
+  }
+
+  const project = projects[projectName];
+  // Angular CLI moved `architect` → `targets` in newer schema versions;
+  // both carry the same `serve.options.port` shape.
+  const serve = project?.architect?.serve ?? project?.targets?.serve;
+  const port = serve?.options?.port;
+  return typeof port === 'number' && port > 0 ? port : null;
 }
 
 // --- parsing helpers ----------------------------------------------------
