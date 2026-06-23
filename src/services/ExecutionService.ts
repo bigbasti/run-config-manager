@@ -352,6 +352,42 @@ export class ExecutionService {
     return false;
   }
 
+  /**
+   * Wait until a config's expected ports are released after a stop, then a
+   * fixed settle delay. Used by Restart: stop() resolves as soon as the task
+   * is signalled, but the OS tears down the listener asynchronously, so an
+   * immediate relaunch races the still-closing process and trips run()'s
+   * port-conflict prompt. We poll until the ports read free (shutdown
+   * finished), then wait `settleMs` more to be sure, and invalidate the
+   * port-scan cache so the subsequent run() sees fresh state.
+   *
+   * Best-effort: when no ports are known we just wait `settleMs`; if the ports
+   * never free within `timeoutMs` we proceed anyway (run()'s own conflict
+   * prompt is the backstop).
+   */
+  async waitForShutdown(
+    cfg: RunConfig,
+    folder: vscode.WorkspaceFolder,
+    settleMs: number,
+    timeoutMs = 30_000,
+  ): Promise<void> {
+    let ports: number[] = [];
+    try {
+      ports = await resolveExpectedPorts(cfg, folder);
+    } catch {
+      ports = [];
+    }
+    if (ports.length > 0) {
+      await this.waitForPortsFree(ports, timeoutMs);
+    }
+    // Force the next cachedScanPorts() to re-scan rather than trust a snapshot
+    // taken while the old process was still bound.
+    this.portScanCache = undefined;
+    if (settleMs > 0) {
+      await new Promise<void>(res => setTimeout(res, settleMs));
+    }
+  }
+
   async run(
     cfg: RunConfig,
     folder: vscode.WorkspaceFolder,

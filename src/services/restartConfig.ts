@@ -5,18 +5,19 @@ import type { DebugService } from './DebugService';
 import type { MonitoringService } from './MonitoringService';
 
 /**
- * Pause between stop and start so the OS releases the port and the child
- * process fully exits before we relaunch. Tuned for a usability "restart"
- * rather than correctness — a value too small risks a port-in-use relaunch.
+ * Extra settle delay applied AFTER the old process has released its port(s),
+ * to be sure the shutdown is fully complete before relaunching. The
+ * port-release wait itself is open-ended (see ExecutionService.waitForShutdown)
+ * — this is only the safety margin on top of it.
  */
-export const RESTART_DELAY_MS = 1000;
+export const RESTART_SETTLE_MS = 3000;
 
 export interface RestartDeps {
-  exec: Pick<ExecutionService, 'stop' | 'run'>;
+  exec: Pick<ExecutionService, 'stop' | 'run' | 'waitForShutdown'>;
   dbg: Pick<DebugService, 'isRunning' | 'stop' | 'debug'>;
   monitoring?: Pick<MonitoringService, 'state'>;
-  /** Injectable purely so tests can pass 0. Defaults to RESTART_DELAY_MS. */
-  delayMs?: number;
+  /** Settle margin after the port frees. Injectable so tests can pass 0. */
+  settleMs?: number;
 }
 
 /**
@@ -28,6 +29,10 @@ export interface RestartDeps {
  *
  * dbg.stop() also tears down the underlying run task in attach-mode, so a
  * single stop call is sufficient regardless of mode.
+ *
+ * Between stop and start we wait for the process to actually release its
+ * port(s) plus a settle margin (exec.waitForShutdown) — otherwise the relaunch
+ * races the still-closing process and run() prompts the user to kill & restart.
  */
 export async function restartConfig(
   deps: RestartDeps,
@@ -35,7 +40,7 @@ export async function restartConfig(
   folder: vscode.WorkspaceFolder,
 ): Promise<void> {
   const { exec, dbg, monitoring } = deps;
-  const delayMs = deps.delayMs ?? RESTART_DELAY_MS;
+  const settleMs = deps.settleMs ?? RESTART_SETTLE_MS;
 
   const wasDebugging = dbg.isRunning(config.id);
   const wasMonitoring = Boolean(monitoring?.state(config.id));
@@ -46,9 +51,9 @@ export async function restartConfig(
     await exec.stop(config.id);
   }
 
-  if (delayMs > 0) {
-    await new Promise<void>(resolve => setTimeout(resolve, delayMs));
-  }
+  // Wait until the old process has released its port(s) (shutdown finished),
+  // then the settle margin, before relaunching.
+  await exec.waitForShutdown(config, folder, settleMs);
 
   if (wasDebugging) {
     await dbg.debug(config, folder, wasMonitoring ? { monitor: true } : undefined);
