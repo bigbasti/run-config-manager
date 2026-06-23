@@ -7,6 +7,7 @@ import { RunConfigService } from './services/RunConfigService';
 import { ProjectScanner } from './services/ProjectScanner';
 import { ExecutionService } from './services/ExecutionService';
 import { DebugService } from './services/DebugService';
+import { restartConfig } from './services/restartConfig';
 import { RunStateStore } from './services/RunStateStore';
 import { reattachOnStartup } from './services/reattachOnStartup';
 import { scanPorts } from './services/PortScanner';
@@ -416,6 +417,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       } else {
         await exec.stop(config.id);
       }
+    }),
+
+    vscode.commands.registerCommand('runConfig.restart', async (arg: ConfigNodeArg) => {
+      const resolved = resolveCommandTarget(arg, store);
+      if (!resolved || resolved.kind !== 'config') return; // restart only applies to RCM configs
+      const { config, folder } = resolved;
+      log.info(`Restart: "${config.name}"`);
+      await restartConfig({ exec, dbg, monitoring }, config, folder);
     }),
 
     vscode.commands.registerCommand('runConfig.debug', async (arg: any) => {

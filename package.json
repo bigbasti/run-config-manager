@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code.",
-  "version": "0.8.6",
+  "version": "0.8.7",
   "publisher": "SebastianGross",
   "license": "MIT",
   "repository": {
@@ -107,6 +107,11 @@
         "command": "runConfig.stop",
         "title": "Stop",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "runConfig.restart",
+        "title": "Restart",
+        "icon": "media/icons/restart.svg"
       },
       {
         "command": "runConfig.debug",
@@ -384,6 +389,11 @@
           "group": "inline@1"
         },
         {
+          "command": "runConfig.restart",
+          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
+          "group": "inline@0"
+        },
+        {
           "command": "runConfig.stop",
           "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "inline@1"
@@ -447,6 +457,11 @@
           "command": "runConfig.stop",
           "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
           "group": "1_run@3"
+        },
+        {
+          "command": "runConfig.restart",
+          "when": "view == runConfigurations && viewItem =~ /^configRunning(NoDebug)?(:(maven|gradle|npm|python|go))?(:grouped)?(:monitored)?$/",
+          "group": "1_run@4"
         },
         {
           "command": "runConfig.runMonitored",
