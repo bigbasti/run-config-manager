@@ -110,6 +110,33 @@ Every config's right-click menu offers type-appropriate shortcuts — no manual 
 
 These shortcuts reuse the config's resolved `buildRoot`, `:module:` prefix, and tool path, so they run against the exact same project state as the main run action. For multi-module Gradle projects that means the right module, not a top-level rebuild.
 
+### JVM monitoring
+
+Any JVM-based configuration can be launched with live monitoring attached. A small JMX agent ships with the extension; when you start a config with monitoring, the agent connects to your application's JVM and streams memory, thread, GC, and runtime metrics in real time — first as a compact sparkline + heap MB + CPU% right in the sidebar row, and in full detail in a dedicated **Monitor** view.
+
+**How to activate it** — right-click a monitorable config (Spring Boot, Quarkus, Java Application, or Tomcat running through Maven or Gradle) and choose:
+
+- **Run with Monitoring** — starts the app and attaches the agent.
+- **Debug with Monitoring** — same, but also attaches the debugger.
+
+Once it's running, right-click the config again and choose **Open Monitor View** to open the full dashboard. No JMX ports, agent flags, or VisualVM setup required — the extension injects the right JVM arguments through each runtime's fork-safe channel and wires everything up for you. Monitoring is JVM-only; it isn't offered for Node, Python, Go, Docker, or HTTP configs.
+
+The Monitor view has a time-window selector (60s / 5min / 30min), a **Save heap dump** button (writes an `.hprof` you can open in your profiler of choice), and four tabs.
+
+**Memory** — an auto-scaled heap-usage chart, at-a-glance cards (heap used / committed, last GC pause, process CPU, live thread count, off-heap usage, open file descriptors), per-pool gauges (Young / Survivor / Old gen, Metaspace, Code Cache), a GC timeline, direct/mapped buffer usage, the current allocation rate, and a live class histogram you can filter, sort, and pause.
+
+![JVM monitoring — Memory tab](media/memory_monitoring_view_memory.png)
+
+**Threads** — a thread-state donut (RUNNABLE / WAITING / TIMED_WAITING / …), total thread count over time, and a "top threads by CPU" table with each thread's state and a stack snippet so you can spot a hot or stuck thread immediately.
+
+![JVM monitoring — Threads tab](media/memory_monitoring_view_threads.png)
+
+**JVM internals** — runtime facts (vendor, VM, version, PID, uptime), class-loading counters, JIT compile time, and operating-system metrics (load average, free/total RAM, swap, file descriptors), plus expandable lists of the JVM args, system properties, and environment variables the process was launched with.
+
+![JVM monitoring — JVM internals tab](media/memory_monitoring_view_jvm_internals.png)
+
+The **App** tab surfaces application-level metrics when available. Every metric carries a hover tooltip explaining what it means, and the whole view streams live — close it any time; monitoring keeps running until you stop the configuration.
+
 ### Dependency-aware build context
 
 Saved configs never assume defaults they can't prove. The "Port" field is populated from the actual project (reads `application-<profile>.properties` for Spring Boot, `quarkus.http.port` for Quarkus, `package.json` scripts or framework convention for npm) — and left blank when nothing could be determined, rather than guessing 8080. Re-runs fire when the profile changes, so picking `dev` fills in the port from `application-dev.properties`.
