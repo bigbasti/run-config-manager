@@ -8,6 +8,7 @@ import { probeGosStreaming, readGos, goOption } from './probeGosStreaming';
 import { findGoMains } from './findGoMains';
 import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 import { log } from '../../utils/logger';
+import { resolveProjectUri } from '../../utils/paths';
 
 const VAR_SYNTAX_HINT =
   'Supports `${VAR}` and `${env:VAR}` (environment variables), `${workspaceFolder}`, `${userHome}`, and `${cwd}` / `${projectPath}`. Unresolved variables expand to an empty string at launch.';
@@ -346,7 +347,7 @@ export class GoAdapter implements RuntimeAdapter {
     const projectRoot = to.buildRoot
       ? to.buildRoot
       : cfg.projectPath
-      ? vscode.Uri.joinPath(folder.uri, cfg.projectPath).fsPath
+      ? resolveProjectUri(folder, cfg.projectPath).fsPath
       : folder.uri.fsPath;
 
     // `program` must be an absolute path to a package directory so Delve

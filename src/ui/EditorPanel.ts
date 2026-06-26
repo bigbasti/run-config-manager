@@ -349,7 +349,7 @@ export class EditorPanel {
     const projectPath =
       this.args.seedDefaults?.projectPath ?? this.args.existing?.projectPath ?? '';
     const projectUri = projectPath
-      ? vscode.Uri.joinPath(this.args.folder.uri, projectPath)
+      ? resolveProjectUri(this.args.folder, projectPath)
       : this.args.folder.uri;
     await s.adapter.detectStreaming(projectUri, emit);
   }

@@ -44,6 +44,7 @@ import {
 import { PortViewerPanel } from './ui/PortViewerPanel';
 import { brandIconUri } from './ui/iconForConfig';
 import { log, initLogger } from './utils/logger';
+import { resolveProjectUri } from './utils/paths';
 import type { RunConfig, RunConfigType } from './shared/types';
 import type { InvalidConfigEntry } from './shared/types';
 import { buildRecoveredConfig } from './recovery/buildRecoveredConfig';
@@ -487,7 +488,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!adapter) return;
 
       const projectUri = recovered.projectPath
-        ? vscode.Uri.joinPath(folder.uri, recovered.projectPath)
+        ? resolveProjectUri(folder, recovered.projectPath)
         : folder.uri;
 
       let detection: Awaited<ReturnType<typeof adapter.detect>> = null;
@@ -1298,7 +1299,7 @@ async function buildEditContext(
   projectPath: string,
 ): Promise<Record<string, unknown>> {
   const projectUri = projectPath
-    ? vscode.Uri.joinPath(folder.uri, projectPath)
+    ? resolveProjectUri(folder, projectPath)
     : folder.uri;
   try {
     const detection = await adapter.detect(projectUri);
