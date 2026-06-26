@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { RuntimeAdapter, DetectionResult, StreamingPatch } from '../RuntimeAdapter';
+import type { RuntimeAdapter, DetectionResult, StreamingPatch, PrepareContext } from '../RuntimeAdapter';
 import type { RunConfig } from '../../shared/types';
 import type { FormField, FormSchema } from '../../shared/formSchema';
 import { readPackageJsonInfo } from './detectPackageJson';
@@ -9,6 +9,7 @@ import { log } from '../../utils/logger';
 import { dependsOnField, envFilesField, closeTerminalOnExitField } from '../sharedFields';
 import { detectNpmPort } from '../../services/detectProjectPort';
 import { probeNodesStreaming, readNodes, nodeOption } from './probeNodesStreaming';
+import { buildNodeMonitorEnv } from '../../utils/nodeMonitorEnv';
 import * as path from 'path';
 
 export class NpmAdapter implements RuntimeAdapter {
@@ -230,7 +231,11 @@ export class NpmAdapter implements RuntimeAdapter {
   // Setting FORCE_COLOR=1 (Node standard) + CLICOLOR_FORCE=1 (Unix standard)
   // + COLORTERM=truecolor flips those auto-detect checks back on for the
   // overwhelming majority of CLIs.
-  async prepareLaunch(cfg: RunConfig): Promise<{ env?: Record<string, string> }> {
+  async prepareLaunch(
+    cfg: RunConfig,
+    _folder?: vscode.WorkspaceFolder,
+    ctx?: PrepareContext,
+  ): Promise<{ env?: Record<string, string> }> {
     const env: Record<string, string> = {
       FORCE_COLOR: '1',
       CLICOLOR_FORCE: '1',
@@ -244,6 +249,11 @@ export class NpmAdapter implements RuntimeAdapter {
         : path.join(cfg.typeOptions.nodePath, 'bin');
       const sep = process.platform === 'win32' ? ';' : ':';
       env.PATH = `${binDir}${sep}${process.env.PATH ?? ''}`;
+    }
+    // Node monitoring: inject the in-process agent. ExecutionService passes the
+    // IPC server port (ctx.monitorPort) and the bundled agent path.
+    if (ctx?.monitor && ctx.nodeAgentPath && ctx.monitorPort) {
+      Object.assign(env, buildNodeMonitorEnv(ctx.nodeAgentPath, ctx.monitorPort, cfg.id));
     }
     return { env };
   }

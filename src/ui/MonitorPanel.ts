@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import type { MonitoringService } from '../services/MonitoringService';
+import type { NodeMonitoringService } from '../services/NodeMonitoringService';
 import type { RunConfig } from '../shared/types';
 import { log } from '../utils/logger';
 
@@ -14,12 +15,15 @@ export class MonitorPanel {
 
   private panel: vscode.WebviewPanel;
   private subscription: vscode.Disposable;
+  private readonly runtime: 'node' | 'jvm';
 
   private constructor(
     private readonly cfg: RunConfig,
     private readonly extensionUri: vscode.Uri,
     private readonly monitoring: MonitoringService,
+    private readonly nodeMonitoring?: NodeMonitoringService,
   ) {
+    this.runtime = cfg.type === 'npm' ? 'node' : 'jvm';
     this.panel = vscode.window.createWebviewPanel(
       'rcmMonitor',
       `Monitor: ${cfg.name}`,
@@ -32,7 +36,8 @@ export class MonitorPanel {
     );
     this.panel.webview.html = this.html();
     this.panel.webview.onDidReceiveMessage(msg => this.onMessage(msg));
-    this.subscription = monitoring.onChanged(id => {
+    const svc = this.runtime === 'node' ? this.nodeMonitoring : this.monitoring;
+    this.subscription = svc!.onChanged(id => {
       if (id === cfg.id) this.pushState();
     });
     this.panel.onDidDispose(() => {
@@ -42,17 +47,44 @@ export class MonitorPanel {
     this.pushState();
   }
 
-  static open(cfg: RunConfig, extensionUri: vscode.Uri, monitoring: MonitoringService): void {
+  static open(
+    cfg: RunConfig,
+    extensionUri: vscode.Uri,
+    monitoring: MonitoringService,
+    nodeMonitoring?: NodeMonitoringService,
+  ): void {
     const existing = this.instances.get(cfg.id);
     if (existing) {
       existing.panel.reveal(vscode.ViewColumn.Beside);
       return;
     }
-    const inst = new MonitorPanel(cfg, extensionUri, monitoring);
+    const inst = new MonitorPanel(cfg, extensionUri, monitoring, nodeMonitoring);
     this.instances.set(cfg.id, inst);
   }
 
   private pushState(): void {
+    if (this.runtime === 'node') {
+      const state = this.nodeMonitoring?.state(this.cfg.id);
+      if (!state) return;
+      if (state.hello) {
+        this.panel.webview.postMessage({ cmd: 'monitor.node.hello', configId: this.cfg.id, hello: state.hello });
+      }
+      if (state.history.length > 0) {
+        this.panel.webview.postMessage({
+          cmd: 'monitor.node.tick',
+          configId: this.cfg.id,
+          metrics: state.history[state.history.length - 1],
+          startTime: state.startTime,
+        });
+      }
+      if (state.heapSpaces) {
+        this.panel.webview.postMessage({ cmd: 'monitor.node.heapSpaces', configId: this.cfg.id, heapSpaces: state.heapSpaces });
+      }
+      for (const ev of state.gcEvents) {
+        this.panel.webview.postMessage({ cmd: 'monitor.node.gc', configId: this.cfg.id, gc: ev });
+      }
+      return;
+    }
     const state = this.monitoring.state(this.cfg.id);
     if (!state) return;
     if (state.history.length > 0) {
@@ -104,6 +136,27 @@ export class MonitorPanel {
   }
 
   private async onMessage(msg: any): Promise<void> {
+    if (msg?.cmd === 'monitor.node.saveSnapshot' && msg.configId === this.cfg.id) {
+      const target = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(
+          os.tmpdir(),
+          `${this.cfg.name.replace(/\W+/g, '-')}-${Date.now()}.heapsnapshot`,
+        )),
+        filters: { 'Heap snapshot': ['heapsnapshot'] },
+      });
+      if (!target) return;
+      try {
+        const written = await this.nodeMonitoring!.saveHeapSnapshot(this.cfg.id, target.fsPath);
+        this.panel.webview.postMessage({ cmd: 'monitor.node.snapshotComplete', configId: this.cfg.id, path: written });
+        const choice = await vscode.window.showInformationMessage(`Heap snapshot written to ${written}`, 'Reveal in Explorer');
+        if (choice === 'Reveal in Explorer') {
+          vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(written));
+        }
+      } catch (e) {
+        this.panel.webview.postMessage({ cmd: 'monitor.error', configId: this.cfg.id, message: (e as Error).message });
+      }
+      return;
+    }
     if (msg?.cmd === 'monitor.saveHeapDump' && msg.configId === this.cfg.id) {
       const target = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.join(
@@ -208,7 +261,7 @@ export class MonitorPanel {
   <title>Monitor: ${escapeHtml(this.cfg.name)}</title>
 </head>
 <body>
-<div id="root" data-view="monitor" data-config-id="${escapeHtml(this.cfg.id)}" data-config-name="${escapeHtml(this.cfg.name)}" data-own-package="${escapeHtml(ownPackagePrefix(this.cfg))}"></div>
+<div id="root" data-view="monitor" data-runtime="${this.runtime}" data-config-id="${escapeHtml(this.cfg.id)}" data-config-name="${escapeHtml(this.cfg.name)}" data-own-package="${escapeHtml(ownPackagePrefix(this.cfg))}"></div>
 <script type="module" nonce="${nonce}" src="${main}"></script>
 </body>
 </html>`;

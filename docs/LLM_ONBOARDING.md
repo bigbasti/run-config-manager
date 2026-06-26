@@ -266,6 +266,8 @@ A bundled Java agent (`media/agent/rcm-monitor.jar`, ~10 KB, source in `monitor-
 
 **Rebuilding the agent jar**: `cd monitor-agent && mvn package -q && cp target/rcm-monitor.jar ../media/agent/rcm-monitor.jar`. The committed jar is what ships; rebuild only when `Monitor.java` changes.
 
+**Node (npm) monitoring** (2026-06-26): Separate, parallel stack to the JVM/JMX one (the JVM path is untouched). An in-process agent `media/agent/rcm-node-agent.cjs` (dependency-free, Node builtins only) is injected via `NODE_OPTIONS=--require` and streams NDJSON (`src/services/monitoring/NodeAgentMessage.ts`) over a localhost TCP socket the extension listens on. `NodeMonitoringService` owns the shared server + per-config ring buffer (mirrors `MonitoringService`'s API: `onChanged`/`state`/`detach`/`dispose`, plus `listenPort()`/`agentPath`/`expect()`/`saveHeapSnapshot()`). Routing: `ExecutionService.run` branches npm→nodeMonitoring (env injected by `NpmAdapter.prepareLaunch` via `buildNodeMonitorEnv`); npm debug-launch injects the same env in `DebugService.getDebugConfig` path. Menus gated on `:npm` (offered on ALL npm, no `:monitorable` token). Webview: `MonitorPanel` sends `data-runtime`; `main.tsx` renders `NodeMonitorView.tsx` (tabs: Memory / Event loop / Runtime — no Java metrics). Tree row shows `<rss> MB · <cpu>%` text (no sparkline). Multi-process: first-connection-wins by `RCM_MONITOR_ID`. The `.cjs` ships as-is (no build).
+
 ## Recovery
 
 `src/recovery/buildRecoveredConfig.ts` — best-effort extractor that turns an `InvalidConfigEntry.rawText` into a `Partial<RunConfig>` for editor pre-population. Never throws.

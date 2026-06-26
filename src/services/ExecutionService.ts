@@ -151,6 +151,14 @@ export class ExecutionService {
     // tracking are all disabled (and ExecutionService never shells out to a
     // port scan).
     private readonly runState?: RunStateStore,
+    // Optional Node monitoring service. When present, npm + monitor is routed
+    // here (loopback agent) instead of the JVM JMX attach path.
+    private readonly nodeMonitoring?: {
+      listenPort(): Promise<number>;
+      readonly agentPath: string;
+      expect(configId: string): void;
+      detach(configId: string): void;
+    },
   ) {
     this.taskEndSub = vscode.tasks.onDidEndTask(e => this.handleEnd(e.execution));
   }
@@ -452,19 +460,27 @@ export class ExecutionService {
     // "Port <N> already in use". Passing the known app port to
     // allocateFreePort() lets it retry until it gets a different one.
     let monitorPort: number | undefined;
+    let nodeAgentPath: string | undefined;
     if (opts?.monitor) {
-      // Collect ports this config is known to use so we don't collide with them.
-      const appPorts: number[] = [];
-      const rp = resolvedCfg.port;
-      if (rp && rp > 0) appPorts.push(rp);
-      if (resolvedCfg.type === 'tomcat') appPorts.push(resolvedCfg.typeOptions.httpPort);
-      try {
-        monitorPort = await allocateFreePort(appPorts);
-      } catch (e) {
-        log.warn(`Could not allocate JMX port for monitoring: ${(e as Error).message}`);
-        vscode.window.showWarningMessage(
-          `Monitoring disabled: could not allocate a free JMX port. The run will continue without monitoring.`,
-        );
+      if (resolvedCfg.type === 'npm' && this.nodeMonitoring) {
+        // Node: the "port" is the extension's IPC server, not a port the app
+        // binds. The in-process agent dials back to it.
+        monitorPort = await this.nodeMonitoring.listenPort();
+        nodeAgentPath = this.nodeMonitoring.agentPath;
+      } else if (this.monitoring) {
+        // JVM: allocate a free JMX port, excluding the app's own port(s).
+        const appPorts: number[] = [];
+        const rp = resolvedCfg.port;
+        if (rp && rp > 0) appPorts.push(rp);
+        if (resolvedCfg.type === 'tomcat') appPorts.push(resolvedCfg.typeOptions.httpPort);
+        try {
+          monitorPort = await allocateFreePort(appPorts);
+        } catch (e) {
+          log.warn(`Could not allocate JMX port for monitoring: ${(e as Error).message}`);
+          vscode.window.showWarningMessage(
+            `Monitoring disabled: could not allocate a free JMX port. The run will continue without monitoring.`,
+          );
+        }
       }
     }
 
@@ -481,6 +497,7 @@ export class ExecutionService {
           debugPort: opts?.debugPort,
           monitor: Boolean(monitorPort),
           monitorPort,
+          nodeAgentPath,
         });
         const envKeys = Object.keys(prepared.env ?? {});
         if (envKeys.length || prepared.cwd) {
@@ -782,29 +799,35 @@ export class ExecutionService {
       // well before the JVM is ready. We therefore delay the attach by
       // QUARKUS_MONITOR_ATTACH_DELAY_MS so the agent starts polling
       // right around the time the JVM binds the JMX port.
-      if (monitorPort && this.monitoring) {
-        const pid = terminalRef.current?.childPid ?? 0;
-        // Pass the config's declared app port so the agent can probe the
-        // actuator at the right port without falling back to the generic scan.
-        // For Tomcat, the user-facing port lives in typeOptions.httpPort (not
-        // the base cfg.port field which the Tomcat form does not expose).
-        const appPort =
-          resolvedCfg.port ??
-          (resolvedCfg.type === 'tomcat' ? resolvedCfg.typeOptions.httpPort : undefined);
-        if (resolvedCfg.type === 'quarkus') {
-          // Use a per-execution token so a rapid stop+restart doesn't
-          // cause the old run's pending attach to fire for the new run.
-          const execToken = execution;
-          setTimeout(() => {
-            // Guard: config must still be running AND must still be THIS
-            // execution (not a restarted one with the same config id).
-            const currentEntry = this.running.get(cfg.id);
-            if (currentEntry?.execution === execToken && this.monitoring) {
-              this.monitoring.attach(cfg.id, 0, monitorPort!, appPort);
-            }
-          }, QUARKUS_MONITOR_ATTACH_DELAY_MS);
-        } else {
-          this.monitoring.attach(cfg.id, pid, monitorPort, appPort);
+      if (monitorPort) {
+        if (resolvedCfg.type === 'npm' && this.nodeMonitoring) {
+          // The in-process agent connects on its own; just register the
+          // expectation so its hello is routed to this config.
+          this.nodeMonitoring.expect(cfg.id);
+        } else if (this.monitoring) {
+          const pid = terminalRef.current?.childPid ?? 0;
+          // Pass the config's declared app port so the agent can probe the
+          // actuator at the right port without falling back to the generic scan.
+          // For Tomcat, the user-facing port lives in typeOptions.httpPort (not
+          // the base cfg.port field which the Tomcat form does not expose).
+          const appPort =
+            resolvedCfg.port ??
+            (resolvedCfg.type === 'tomcat' ? resolvedCfg.typeOptions.httpPort : undefined);
+          if (resolvedCfg.type === 'quarkus') {
+            // Use a per-execution token so a rapid stop+restart doesn't
+            // cause the old run's pending attach to fire for the new run.
+            const execToken = execution;
+            setTimeout(() => {
+              // Guard: config must still be running AND must still be THIS
+              // execution (not a restarted one with the same config id).
+              const currentEntry = this.running.get(cfg.id);
+              if (currentEntry?.execution === execToken && this.monitoring) {
+                this.monitoring.attach(cfg.id, 0, monitorPort!, appPort);
+              }
+            }, QUARKUS_MONITOR_ATTACH_DELAY_MS);
+          } else {
+            this.monitoring.attach(cfg.id, pid, monitorPort, appPort);
+          }
         }
       }
 
@@ -1042,6 +1065,7 @@ export class ExecutionService {
       this.external.delete(configId);
       this.runState?.delete(configId);
       this.monitoring?.detach(configId);
+      this.nodeMonitoring?.detach(configId);
       this.emitter.fire(configId);
       return;
     }
@@ -1077,6 +1101,7 @@ export class ExecutionService {
     // even when this config wasn't monitored — detach is a no-op for
     // unknown ids.
     this.monitoring?.detach(configId);
+    this.nodeMonitoring?.detach(configId);
     this.running.delete(configId);
     this.started.delete(configId);
     this.failed.delete(configId);
@@ -1094,6 +1119,7 @@ export class ExecutionService {
         if (entry.readyTimer) clearTimeout(entry.readyTimer);
         // The JVM is gone; tear the monitoring agent down too.
         this.monitoring?.detach(id);
+        this.nodeMonitoring?.detach(id);
         this.running.delete(id);
         this.started.delete(id);
         this.failed.delete(id);
@@ -1126,6 +1152,7 @@ export class ExecutionService {
       try { entry.watcher?.terminate(); } catch { /* ignore */ }
       if (entry.readyTimer) clearTimeout(entry.readyTimer);
       this.monitoring?.detach(id);
+      this.nodeMonitoring?.detach(id);
     }
     this.running.clear();
     this.external.clear();

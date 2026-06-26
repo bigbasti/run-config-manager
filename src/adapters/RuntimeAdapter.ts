@@ -74,6 +74,9 @@ export interface PrepareContext {
   // agent connects to the same port after launch.
   monitor?: boolean;
   monitorPort?: number;
+  // NEW — for Node monitoring: absolute path to the bundled in-process agent.
+  // When present (npm + monitor), the npm adapter injects NODE_OPTIONS=--require.
+  nodeAgentPath?: string;
 }
 
 export interface PrepareResult {

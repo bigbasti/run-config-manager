@@ -29,6 +29,7 @@ import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { NativeRunnerTreeProvider } from './ui/NativeRunnerTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
 import { MonitoringService } from './services/MonitoringService';
+import { NodeMonitoringService } from './services/NodeMonitoringService';
 import { MonitorPanel } from './ui/MonitorPanel';
 import { NativeRunnerService, type NativeLaunch, type NativeTask } from './services/NativeRunnerService';
 import { buildDependencyOptions, rcmRef } from './services/dependencyCandidates';
@@ -83,11 +84,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const scanner = new ProjectScanner(registry);
   const monitoring = new MonitoringService(context.extensionUri);
   context.subscriptions.push({ dispose: () => monitoring.dispose() });
+  const nodeMonitoring = new NodeMonitoringService(context.extensionUri);
+  context.subscriptions.push({ dispose: () => nodeMonitoring.dispose() });
   // Persisted run state for auto-reattach after a window / extension-host
   // reload. Lives in workspaceState so it survives the reload.
   const runState = new RunStateStore(context.workspaceState);
-  const exec = new ExecutionService(registry, monitoring, svc, runState);
-  const dbg = new DebugService(registry, exec);
+  const exec = new ExecutionService(registry, monitoring, svc, runState, nodeMonitoring);
+  const dbg = new DebugService(registry, exec, nodeMonitoring);
   const native = new NativeRunnerService();
   context.subscriptions.push({ dispose: () => native.dispose() });
 
@@ -99,7 +102,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const orchestrator = new DependencyOrchestrator(svc, exec, dbg, docker, native);
   const groups = new GroupService(svc);
   const collapseState = new CollapseStateStore(context.workspaceState);
-  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri, docker, orchestrator, native, groups, monitoring, collapseState);
+  const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri, docker, orchestrator, native, groups, monitoring, collapseState, nodeMonitoring);
   // Separate view for native launch.json / tasks.json — sibling to the
   // main Configurations view, like VARIABLES / BREAKPOINTS in Run & Debug.
   const nativeTree = new NativeRunnerTreeProvider(native);
@@ -473,7 +476,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand('runConfig.openMonitor', (arg: ConfigNodeArg) => {
       if (!arg || arg.kind !== 'config') return;
-      MonitorPanel.open(arg.config, context.extensionUri, monitoring);
+      MonitorPanel.open(arg.config, context.extensionUri, monitoring, nodeMonitoring);
     }),
 
     vscode.commands.registerCommand('runConfig.fix', async (arg: ConfigNodeArg) => {

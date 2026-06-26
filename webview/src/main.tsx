@@ -17,11 +17,20 @@ if (view === 'monitor') {
   const configId = root.dataset.configId ?? '';
   const configName = root.dataset.configName ?? '';
   const ownPackage = root.dataset.ownPackage ?? '';
-  void import('./MonitorView').then(({ MonitorView }) => {
-    createRoot(root).render(
-      <MonitorView configId={configId} configName={configName} ownPackage={ownPackage} />
-    );
-  });
+  const runtime = root.dataset.runtime ?? 'jvm';
+  if (runtime === 'node') {
+    void import('./NodeMonitorView').then(({ NodeMonitorView }) => {
+      createRoot(root).render(
+        <NodeMonitorView configId={configId} configName={configName} />
+      );
+    });
+  } else {
+    void import('./MonitorView').then(({ MonitorView }) => {
+      createRoot(root).render(
+        <MonitorView configId={configId} configName={configName} ownPackage={ownPackage} />
+      );
+    });
+  }
 } else {
   void import('./App').then(({ App }) => {
     createRoot(root).render(<App />);

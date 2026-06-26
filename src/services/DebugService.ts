@@ -7,6 +7,7 @@ import { log } from '../utils/logger';
 import { makeRunContext, resolveConfig } from '../utils/resolveVars';
 import { resolveProjectUri } from '../utils/paths';
 import { resolveJavaProjectName } from '../utils/javaProjectName';
+import { buildNodeMonitorEnv } from '../utils/nodeMonitorEnv';
 
 // Required for `type: 'java'` debug configurations. The Spring Boot adapter
 // needs this extension; npm uses the built-in `pwa-node` and doesn't.
@@ -23,6 +24,13 @@ export class DebugService {
     // Optional so existing tests that don't care about Spring Boot debug can
     // still construct a DebugService without ExecutionService.
     private readonly exec?: ExecutionService,
+    // Optional Node monitoring service for Debug-with-Monitoring on npm configs.
+    private readonly nodeMonitoring?: {
+      listenPort(): Promise<number>;
+      readonly agentPath: string;
+      expect(configId: string): void;
+      detach(configId: string): void;
+    },
   ) {
     this.subs = [
       vscode.debug.onDidTerminateDebugSession(s => this.handleEnd(s.name)),
@@ -62,6 +70,15 @@ export class DebugService {
 
     const conf = adapter.getDebugConfig(resolvedCfg, folder);
     log.debug(`getDebugConfig: type=${conf.type}, request=${conf.request}${conf.port ? `, port=${conf.port}` : ''}`);
+
+    if (resolvedCfg.type === 'npm' && opts?.monitor && this.nodeMonitoring) {
+      const port = await this.nodeMonitoring.listenPort();
+      conf.env = {
+        ...(conf.env ?? {}),
+        ...buildNodeMonitorEnv(this.nodeMonitoring.agentPath, port, cfg.id),
+      };
+      this.nodeMonitoring.expect(cfg.id);
+    }
 
     // Attach-mode Java configs deliberately ship an empty `projectName` (the
     // adapters set it so launch-mode skips the "resolve main class" workspace
@@ -364,6 +381,7 @@ export class DebugService {
     for (const [id, name] of this.running.entries()) {
       if (name === sessionName) {
         this.running.delete(id);
+        this.nodeMonitoring?.detach(id);
         this.emitter.fire(id);
         // If the debug session ended but the build-tool task is still running
         // (attach-mode, user hit detach not stop), leave the task alone —

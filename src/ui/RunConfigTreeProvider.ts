@@ -9,6 +9,7 @@ import type { GroupService } from '../services/GroupService';
 import type { DependencyOrchestrator, OrchestrationStatus } from '../services/DependencyOrchestrator';
 import type { NativeRunnerService } from '../services/NativeRunnerService';
 import type { MonitoringService } from '../services/MonitoringService';
+import type { NodeMonitoringService, NodeMonitoringState } from '../services/NodeMonitoringService';
 import { parseDependencyRef, rcmRef } from '../services/dependencyCandidates';
 import { resolveBuildContext, resolveNpmContext, resolvePythonContext, resolveGoContext } from '../services/buildActions';
 import { buildCommandPreview } from '../shared/buildCommandPreview';
@@ -84,6 +85,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     // group rows so reloading VS Code restores the last view. Optional so
     // tests can construct the provider without a workspace state mock.
     private readonly collapseState?: CollapseStateStore,
+    private readonly nodeMonitoring?: NodeMonitoringService,
   ) {
     store.onChange(() => this.refresh());
     exec.onRunningChanged(() => this.refresh());
@@ -94,6 +96,9 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     groupSvc.onChanged(() => this.refresh());
     if (monitoring) {
       monitoring.onChanged(() => this.refresh());
+    }
+    if (nodeMonitoring) {
+      nodeMonitoring.onChanged(() => this.refresh());
     }
   }
 
@@ -386,8 +391,14 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
             ? ':go'
             : '';
     const groupSuffix = n.config.group ? ':grouped' : '';
+    const nodeState = this.nodeMonitoring?.state(n.config.id);
+    const nodeExtras = computeNodeRowExtras(n.config, nodeState);
+
     const monState = this.monitoring?.state(n.config.id);
-    const monitoredSuffix = monState ? ':monitored' : '';
+    const monitoredSuffix = (monState || nodeState) ? ':monitored' : '';
+    // contextValue shape unchanged — no new :monitorable token (the npm
+    // monitoring menus are gated on :npm, see package.json). openMonitor
+    // already includes npm in its alternation, so :monitored alone lights it up.
     item.contextValue = `${baseContextValue}${toolSuffix}${groupSuffix}${monitoredSuffix}`;
     // When monitoring is active, surface a live heap/CPU summary in the
     // row description. Updates each metric tick (1 s) via the onChanged
@@ -397,6 +408,9 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
       const heapMb = (last.heapUsed / (1024 * 1024)).toFixed(0);
       const cpuPct = (last.cpuLoad * 100).toFixed(1);
       item.description = `${item.description ? `${item.description}  ` : ''}${heapMb} MB  ${cpuPct}%`;
+    } else if (nodeExtras.description) {
+      // Node monitoring description: RSS + CPU text, no sparkline.
+      item.description = `${item.description ? `${item.description}  ` : ''}${nodeExtras.description}`;
     }
     // Click behavior: running/preparing configs reveal the task terminal;
     // idle configs open the editor. The inline Edit button always opens the
@@ -1001,4 +1015,21 @@ function depTooltip(
     lines.push(`\n${reason}`);
   }
   return new vscode.MarkdownString(lines.join('\n\n'));
+}
+
+// Pure helper: computes the Node-specific tree-row additions so they can be
+// unit-tested without constructing the whole provider. RSS is the headline
+// number; no sparkline (Node).
+export function computeNodeRowExtras(
+  _cfg: RunConfig,
+  nodeState: NodeMonitoringState | undefined,
+): { monitored: string; description: string } {
+  const live = nodeState && nodeState.history.length > 0
+    ? nodeState.history[nodeState.history.length - 1]
+    : undefined;
+  const monitored = nodeState ? ':monitored' : '';
+  const description = live
+    ? `${(live.rss / (1024 * 1024)).toFixed(0)} MB · ${live.cpuPercent.toFixed(1)}%`
+    : '';
+  return { monitored, description };
 }
