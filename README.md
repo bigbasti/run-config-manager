@@ -119,7 +119,7 @@ Any JVM-based configuration can be launched with live monitoring attached. A sma
 - **Run with Monitoring** — starts the app and attaches the agent.
 - **Debug with Monitoring** — same, but also attaches the debugger.
 
-Once it's running, right-click the config again and choose **Open Monitor View** to open the full dashboard. No JMX ports, agent flags, or VisualVM setup required — the extension injects the right JVM arguments through each runtime's fork-safe channel and wires everything up for you. Monitoring is JVM-only; it isn't offered for Node, Python, Go, Docker, or HTTP configs.
+Once it's running, right-click the config again and choose **Open Monitor View** to open the full dashboard. No JMX ports, agent flags, or VisualVM setup required — the extension injects the right JVM arguments through each runtime's fork-safe channel and wires everything up for you. (Node configs get their own monitoring view — see below; Python, Go, Docker, and HTTP configs are not monitored.)
 
 The Monitor view has a time-window selector (60s / 5min / 30min), a **Save heap dump** button (writes an `.hprof` you can open in your profiler of choice), and four tabs.
 
@@ -136,6 +136,20 @@ The Monitor view has a time-window selector (60s / 5min / 30min), a **Save heap 
 ![JVM monitoring — JVM internals tab](media/memory_monitoring_view_jvm_internals.png)
 
 The **App** tab surfaces application-level metrics when available. Every metric carries a hover tooltip explaining what it means, and the whole view streams live — close it any time; monitoring keeps running until you stop the configuration.
+
+### Node monitoring
+
+npm configurations get the same one-click monitoring, with a view tailored to Node instead of the JVM — so you only ever see metrics that make sense for your runtime, never empty Java placeholders. A tiny, dependency-free agent ships with the extension and is loaded into your process at launch (via `NODE_OPTIONS=--require`); it streams live V8 and libuv metrics back to the extension over a local socket. Nothing to install or configure.
+
+**How to activate it** — right-click any npm config and choose **Run with Monitoring** or **Debug with Monitoring** (the agent coexists with the JS debugger). Once it's running, the sidebar row shows live RSS + CPU, and **Open Monitor View** opens the dashboard. The view has the same time-window selector (60s / 5min / 30min) and a **Save heap snapshot** button that writes a `.heapsnapshot` you can open in Chrome DevTools or VS Code.
+
+Three tabs, all Node-native:
+
+- **Memory** — RSS and heap-used over time, at-a-glance cards (heap used / limit, RSS, CPU, event-loop lag p99, active handles, GC pause), V8 heap-space gauges (new / old / code / large-object space), external + ArrayBuffer usage, a GC timeline, and the current allocation rate.
+- **Event loop** — event-loop lag (mean / p99 / max) over time plus active handle and request counts — the fastest way to see when the loop is blocked. This is the Node-native counterpart to the JVM "Threads" view.
+- **Runtime** — Node and V8 versions, PID, platform/arch, exec path, working directory, uptime, and expandable argv and environment-variable lists.
+
+Heap snapshots, Debug-with-Monitoring, and the live sidebar readout all work the same as the JVM experience; the data and labels are simply adapted to Node.
 
 ### Dependency-aware build context
 
