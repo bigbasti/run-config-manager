@@ -146,7 +146,13 @@ npm configurations get the same one-click monitoring, with a view tailored to No
 Three tabs, all Node-native:
 
 - **Memory** — RSS and heap-used over time, at-a-glance cards (heap used / limit, RSS, CPU, event-loop lag p99, active handles, GC pause), V8 heap-space gauges (new / old / code / large-object space), external + ArrayBuffer usage, a GC timeline, and the current allocation rate.
+
+![Node monitoring — Memory tab](media/memory_monitoring_view_node_memory.png)
+
 - **Event loop** — event-loop lag (mean / p99 / max) over time plus active handle and request counts — the fastest way to see when the loop is blocked. This is the Node-native counterpart to the JVM "Threads" view.
+
+![Node monitoring — Event loop tab](media/memory_monitoring_view_node_eventloop.png)
+
 - **Runtime** — Node and V8 versions, PID, platform/arch, exec path, working directory, uptime, and expandable argv and environment-variable lists.
 
 Heap snapshots, Debug-with-Monitoring, and the live sidebar readout all work the same as the JVM experience; the data and labels are simply adapted to Node.

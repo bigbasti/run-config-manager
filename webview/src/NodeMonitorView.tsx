@@ -170,16 +170,42 @@ function MemoryTab({ last, heapSpaces, gcEvents, history }: {
         <div><div style={{ opacity: 0.7, fontSize: 12 }}>Alloc rate</div><div>{(allocRate / MB).toFixed(2)} MB/s</div></div>
       </div>
       <h3 style={{ marginTop: 16 }}>GC timeline (last 60s)</h3>
-      <div style={{ display: 'flex', gap: 2, height: 40, alignItems: 'flex-end' }}>
-        {gcEvents.length === 0 ? <span style={{ opacity: 0.6 }}>No GC events yet</span> :
-          gcEvents.map((g, i) => (
-            <div key={i} title={`${g.kind} · ${g.durationMs} ms`} style={{
-              width: 4, height: Math.min(40, 4 + g.durationMs), background: g.kind === 'major'
-                ? 'var(--vscode-charts-red, #f14c4c)' : 'var(--vscode-charts-green, #16825d)',
-            }} />
-          ))}
-      </div>
+      <NodeGcTimeline events={gcEvents} now={Date.now()} />
     </div>
+  );
+}
+
+// Full-width 60s strip of GC events, positioned by event time (mirrors the JVM
+// GcTimeline). Node GC is infrequent, so packing fixed-width bars left-to-right
+// squashed them into the corner — here each event sits at its real timestamp
+// and bar height is log-scaled so a 50ms major pause stands out next to a
+// sub-ms minor one.
+function NodeGcTimeline({ events, now }: { events: NodeGcEvent[]; now: number }) {
+  const w = 800, h = 60;
+  const windowMs = 60_000;
+  const xFor = (t: number) => ((t - (now - windowMs)) / windowMs) * w;
+  const heightFor = (durationMs: number) => Math.min(h, 8 + Math.log10(Math.max(1, durationMs)) * 14);
+  const colorFor = (kind: string) =>
+    kind === 'major' ? 'var(--vscode-charts-red, #f14c4c)'
+      : kind === 'minor' ? 'var(--vscode-charts-green, #16825d)'
+        : 'var(--vscode-charts-orange, #d18616)';
+  if (events.length === 0) {
+    return <div style={{ height: h, opacity: 0.6, padding: 8, fontSize: 12 }}>No GC events in the last 60s.</div>;
+  }
+  return (
+    <svg width="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
+      style={{ background: 'var(--vscode-editorWidget-background)', display: 'block' }}>
+      {events.map(ev => {
+        const x = xFor(ev.t);
+        const barH = heightFor(ev.durationMs);
+        return (
+          <g key={`${ev.t}-${ev.kind}`}>
+            <title>{`${ev.kind} · ${ev.durationMs} ms`}</title>
+            <rect x={x - 1.5} y={h - barH} width={3} height={barH} fill={colorFor(ev.kind)} />
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
