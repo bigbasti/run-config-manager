@@ -51,6 +51,10 @@ import type { InvalidConfigEntry } from './shared/types';
 import { buildRecoveredConfig } from './recovery/buildRecoveredConfig';
 import { RunConfigSchema } from './shared/schema';
 import { EXTENSION_VERSION } from './utils/extensionVersion';
+import * as crypto from 'crypto';
+import { McpBridgeServer } from './services/McpBridgeServer';
+import { createBridgeServices } from './mcp/bridgeServices';
+import { registerMcpProvider } from './mcp/registerMcpProvider';
 
 type ConfigNodeArg =
   | { kind: 'config'; folderKey: string; config: RunConfig }
@@ -101,6 +105,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const orchestrator = new DependencyOrchestrator(svc, exec, dbg, docker, native);
   const groups = new GroupService(svc);
+
+  // MCP server: let AI agents read the config schema/guide and manage configs.
+  // Gated behind a setting; the bridge listens lazily (first provider fetch).
+  if (vscode.workspace.getConfiguration('runConfigManager').get<boolean>('mcp.enabled', true)) {
+    const mcpToken = crypto.randomBytes(24).toString('hex');
+    const bridgeServices = createBridgeServices({ svc, store, exec, dbg });
+    const bridge = new McpBridgeServer(mcpToken, bridgeServices);
+    context.subscriptions.push({ dispose: () => bridge.dispose() });
+    context.subscriptions.push(
+      registerMcpProvider(context, { port: () => bridge.listenPort(), token: mcpToken }),
+    );
+  }
   const collapseState = new CollapseStateStore(context.workspaceState);
   const tree = new RunConfigTreeProvider(store, svc, exec, dbg, registry, context.extensionUri, docker, orchestrator, native, groups, monitoring, collapseState, nodeMonitoring);
   // Separate view for native launch.json / tasks.json — sibling to the

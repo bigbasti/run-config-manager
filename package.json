@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code.",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "publisher": "SebastianGross",
   "license": "MIT",
   "repository": {
@@ -27,13 +27,29 @@
     "Other"
   ],
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.101.0"
   },
   "main": "./out/extension.js",
   "activationEvents": [
     "onStartupFinished"
   ],
   "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "runConfigManager",
+        "label": "Run Configuration Manager"
+      }
+    ],
+    "configuration": {
+      "title": "Run Configuration Manager",
+      "properties": {
+        "runConfigManager.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Register the Run Configuration Manager MCP server so AI agents can read the config schema and manage run configurations."
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -750,8 +766,10 @@
     "package": "npm run build && vsce package --no-dependencies"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.19.0",
     "uuid": "^9.0.1",
-    "zod": "^3.22.4"
+    "zod": "^3.22.4",
+    "zod-to-json-schema": "^3.24.1"
   },
   "devDependencies": {
     "@types/jest": "^29.5.11",
@@ -759,7 +777,7 @@
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "@types/uuid": "^9.0.7",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.101.0",
     "@vitejs/plugin-react": "^4.2.1",
     "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.19.10",

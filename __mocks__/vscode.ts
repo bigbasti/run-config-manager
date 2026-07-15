@@ -292,3 +292,44 @@ export const RelativePattern = class {
 export const extensions = {
   getExtension: jest.fn((_id: string) => undefined),
 };
+
+export class McpStdioServerDefinition {
+  label: string;
+  command: string;
+  args: string[];
+  env: Record<string, string | number | null>;
+  version?: string;
+  cwd?: unknown;
+  // The real API uses positional args; accept an options object OR positionals
+  // so tests and impl both compile regardless of which form is used.
+  constructor(
+    labelOrOpts:
+      | string
+      | { label: string; command: string; args?: string[]; env?: Record<string, string | number | null>; version?: string; cwd?: unknown },
+    command?: string,
+    args?: string[],
+    env?: Record<string, string | number | null>,
+    version?: string,
+  ) {
+    if (typeof labelOrOpts === 'object') {
+      this.label = labelOrOpts.label;
+      this.command = labelOrOpts.command;
+      this.args = labelOrOpts.args ?? [];
+      this.env = labelOrOpts.env ?? {};
+      this.version = labelOrOpts.version;
+      this.cwd = labelOrOpts.cwd;
+    } else {
+      this.label = labelOrOpts;
+      this.command = command ?? '';
+      this.args = args ?? [];
+      this.env = env ?? {};
+      this.version = version;
+    }
+  }
+}
+
+export const lm = {
+  registerMcpServerDefinitionProvider: jest.fn(
+    (_id: string, _provider: unknown) => ({ dispose: jest.fn() }),
+  ),
+};
