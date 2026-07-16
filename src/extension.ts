@@ -54,6 +54,7 @@ import { EXTENSION_VERSION } from './utils/extensionVersion';
 import * as crypto from 'crypto';
 import { McpBridgeServer } from './services/McpBridgeServer';
 import { createBridgeServices } from './mcp/bridgeServices';
+import { decideAutoOpen } from './services/monitorAutoOpen';
 import { registerMcpProvider } from './mcp/registerMcpProvider';
 
 type ConfigNodeArg =
@@ -110,7 +111,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Gated behind a setting; the bridge listens lazily (first provider fetch).
   if (vscode.workspace.getConfiguration('runConfigManager').get<boolean>('mcp.enabled', true)) {
     const mcpToken = crypto.randomBytes(24).toString('hex');
-    const bridgeServices = createBridgeServices({ svc, store, exec, dbg });
+    const bridgeServices = createBridgeServices({ svc, store, exec, dbg, monitoring, nodeMonitoring });
     const bridge = new McpBridgeServer(mcpToken, bridgeServices);
     context.subscriptions.push({ dispose: () => bridge.dispose() });
     context.subscriptions.push(
@@ -183,6 +184,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   dbg.onRunningChanged(updateRunningState);
   store.onChange(updateRunningState);
   docker.onChanged(updateRunningState);
+
+  // Auto-open the monitor view when a config gains monitoring state. Monitoring
+  // only ever attaches when { monitor: true } was requested, so this fires for
+  // exactly the monitored-start paths (runMonitored/debugMonitored commands and
+  // the MCP run_config/debug_config monitor path). One reactive hook covers all
+  // of them. The guard set prevents re-opening a panel the user closed mid-run;
+  // it is cleared on detach so the next monitored run re-opens.
+  const autoOpenedMonitors = new Set<string>();
+  const maybeAutoOpenMonitor = (id: string): void => {
+    const enabled = vscode.workspace
+      .getConfiguration('runConfigManager')
+      .get<boolean>('monitoring.autoOpenView', true);
+    const live = !!(monitoring.state(id) || nodeMonitoring.state(id));
+    const action = decideAutoOpen({ enabled, live, alreadyOpened: autoOpenedMonitors.has(id) });
+    if (action === 'clear') {
+      autoOpenedMonitors.delete(id);
+      return;
+    }
+    if (action === 'noop') return;
+    const ref = svc.getById(id);
+    if (!ref || !ref.valid) return;
+    autoOpenedMonitors.add(id);
+    MonitorPanel.open(ref.config as RunConfig, context.extensionUri, monitoring, nodeMonitoring);
+  };
+  context.subscriptions.push(monitoring.onChanged(maybeAutoOpenMonitor));
+  context.subscriptions.push(nodeMonitoring.onChanged(maybeAutoOpenMonitor));
 
   // Auto-reattach: after a window / extension-host reload, ExecutionService's
   // in-memory state is gone. Find configs the extension started before the

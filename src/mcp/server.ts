@@ -142,20 +142,26 @@ server.registerTool(
   'run_config',
   {
     title: 'Run configuration',
-    description: 'Start a configuration by id (non-debug).',
-    inputSchema: { id: z.string().describe('The configuration id.') },
+    description: 'Start a configuration by id (non-debug). Set `monitor` to attach runtime monitoring (JVM: spring-boot/quarkus/java/tomcat; Node: npm). Then poll get_run_status until started, and get_monitoring_snapshot to observe.',
+    inputSchema: {
+      id: z.string().describe('The configuration id.'),
+      monitor: z.boolean().optional().describe('Attach runtime monitoring (default false). Ignored for non-monitorable types.'),
+    },
   },
-  async ({ id }) => text(await client.call('run', { id })),
+  async ({ id, monitor }) => text(await client.call('run', { id, monitor })),
 );
 
 server.registerTool(
   'debug_config',
   {
     title: 'Debug configuration',
-    description: 'Start a configuration by id in debug mode (if the type supports debugging).',
-    inputSchema: { id: z.string().describe('The configuration id.') },
+    description: 'Start a configuration by id in debug mode (if the type supports debugging). Set `monitor` to also attach runtime monitoring.',
+    inputSchema: {
+      id: z.string().describe('The configuration id.'),
+      monitor: z.boolean().optional().describe('Attach runtime monitoring (default false). Ignored for non-monitorable types.'),
+    },
   },
-  async ({ id }) => text(await client.call('debug', { id })),
+  async ({ id, monitor }) => text(await client.call('debug', { id, monitor })),
 );
 
 server.registerTool(
@@ -166,6 +172,48 @@ server.registerTool(
     inputSchema: { id: z.string().describe('The configuration id.') },
   },
   async ({ id }) => text(await client.call('stop', { id })),
+);
+
+server.registerTool(
+  'get_run_status',
+  {
+    title: 'Get run status',
+    description: 'Report whether a configuration is running/started/failed/preparing, whether monitoring is attached, and its monitored runtime. Poll this after run_config/debug_config to know when the app is up before profiling.',
+    inputSchema: { id: z.string().describe('The configuration id.') },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ id }) => text(await client.call('runStatus', { id })),
+);
+
+server.registerTool(
+  'get_monitoring_snapshot',
+  {
+    title: 'Get monitoring snapshot',
+    description:
+      'Read raw runtime telemetry for a monitored configuration. Default (no sections) returns { runtime, status, latest } — the most recent metrics tick — which is cheap and safe to poll repeatedly. ' +
+      'Request `sections` to drill in. JVM sections: metrics (full ~60s ring buffer), histogram (top classes by bytes), threads (states, top-by-CPU with stack snippets, deadlock), gc (recent events), actuator (Spring health/HTTP latency/top endpoints), runtime (JVM info; returned under key `runtimeInfo`). ' +
+      'Node sections: metrics (ring buffer, incl. event-loop lag), heapSpaces, gc, hello (process info). The payload is runtime-tagged raw data — analyze it yourself.',
+    inputSchema: {
+      id: z.string().describe('The configuration id.'),
+      sections: z.array(z.string()).optional().describe('Optional list of extra sections to include. Omit for the cheap latest-tick-only default.'),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ id, sections }) => text(await client.call('monitoringSnapshot', { id, sections })),
+);
+
+server.registerTool(
+  'get_thread_dump',
+  {
+    title: 'Get thread dump (JVM only)',
+    description: 'Return the full stack trace of a single JVM thread by its numeric thread id (tid). Pick a hot thread id from the `threads` section of get_monitoring_snapshot. JVM configs only.',
+    inputSchema: {
+      id: z.string().describe('The configuration id.'),
+      tid: z.number().describe('The numeric thread id (from the threads section).'),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ id, tid }) => text(await client.call('threadDump', { id, tid })),
 );
 
 async function main(): Promise<void> {

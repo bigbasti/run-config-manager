@@ -65,7 +65,14 @@ export class McpBridgeServer {
   }
 
   private dispatch(method: string, params: unknown): Promise<unknown> | unknown {
-    const p = (params ?? {}) as { id?: string; config?: unknown; workspaceFolder?: string };
+    const p = (params ?? {}) as {
+      id?: string;
+      config?: unknown;
+      workspaceFolder?: string;
+      monitor?: boolean;
+      sections?: string[];
+      tid?: number;
+    };
     switch (method) {
       case 'list': return this.services.listConfigs();
       case 'get': return this.services.getConfig(String(p.id));
@@ -74,9 +81,12 @@ export class McpBridgeServer {
       case 'create': return this.services.createConfig({ config: p.config, workspaceFolder: p.workspaceFolder });
       case 'update': return this.services.updateConfig(p.config);
       case 'delete': return this.services.deleteConfig(String(p.id));
-      case 'run': return this.services.runConfig(String(p.id));
-      case 'debug': return this.services.debugConfig(String(p.id));
+      case 'run': return this.services.runConfig(String(p.id), p.monitor);
+      case 'debug': return this.services.debugConfig(String(p.id), p.monitor);
       case 'stop': return this.services.stopConfig(String(p.id));
+      case 'runStatus': return this.services.runStatus(String(p.id));
+      case 'monitoringSnapshot': return this.services.monitoringSnapshot(String(p.id), p.sections);
+      case 'threadDump': return this.services.threadDump(String(p.id), Number(p.tid));
       default: throw new Error(`unknown method: ${method}`);
     }
   }

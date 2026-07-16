@@ -2,7 +2,7 @@
   "name": "run-config-manager",
   "displayName": "Run Configuration Manager",
   "description": "IntelliJ-style run configurations for VS Code.",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "publisher": "SebastianGross",
   "license": "MIT",
   "repository": {
@@ -47,6 +47,11 @@
           "type": "boolean",
           "default": true,
           "description": "Register the Run Configuration Manager MCP server so AI agents can read the config schema and manage run configurations."
+        },
+        "runConfigManager.monitoring.autoOpenView": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open the monitor view when a configuration is started with monitoring attached."
         }
       }
     },

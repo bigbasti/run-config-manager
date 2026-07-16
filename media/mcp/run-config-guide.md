@@ -383,3 +383,39 @@ A single HTTP request (driven by an in-process runner, not a spawned process).
   }
 }
 ```
+
+## Profiling a running application
+
+The extension can attach runtime monitoring to a run and expose the raw
+telemetry. Monitorable types: **JVM** — `spring-boot`, `quarkus`, `java`,
+`tomcat`; **Node** — `npm`. Other types ignore the `monitor` flag.
+
+Workflow:
+
+1. `list_run_configs` — pick a monitorable config.
+2. `run_config` with `monitor: true` (or `debug_config` with `monitor: true`).
+   The response's `monitoring` field is `requested` when the runtime supports
+   monitoring, or `unsupported` otherwise.
+3. Poll `get_run_status(id)` until `started: true` (or `failed: true`). Fields:
+   `running`, `started`, `failed`, `preparing`, `monitored`, `runtime`.
+4. Poll `get_monitoring_snapshot(id)` to watch the app over time. With no
+   `sections` it returns just `{ runtime, status, latest }` (the newest metrics
+   tick) — cheap to poll. Add `sections` to drill in:
+   - JVM: `metrics` (full ~60s ring buffer), `histogram` (top classes by retained
+     bytes), `threads` (state counts, hottest threads with stack snippets,
+     deadlock info), `gc` (recent GC events), `actuator` (Spring Boot
+     health / HTTP p50-p99 / top endpoints / loggers), `runtime` (JVM/vendor/args;
+     returned under key `runtimeInfo`).
+   - Node: `metrics` (ring buffer incl. event-loop lag p50/p99), `heapSpaces`,
+     `gc`, `hello` (process/version info).
+   The payload is raw, runtime-tagged data. Interpret trends yourself: rising
+   `heapUsed`/`rss` across ticks suggests a leak; sustained high `cpuLoad`/
+   `cpuPercent` or `loopLagP99` suggests a hot path; growing `gc` time suggests
+   memory pressure; a non-null `threads.deadlock` is critical.
+5. For a JVM hot thread, take its `id` from the `threads` section and call
+   `get_thread_dump(id, tid)` for the full stack. Thread dumps are JVM-only.
+6. `stop_config(id)` when finished.
+
+If `get_monitoring_snapshot` errors with "No monitoring data", either the run
+was not started with `monitor: true`, the type is not monitorable, or the agent
+has not connected yet — poll `get_run_status` and retry.

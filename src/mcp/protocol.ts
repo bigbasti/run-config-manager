@@ -13,7 +13,10 @@ export type BridgeMethod =
   | 'delete'
   | 'run'
   | 'debug'
-  | 'stop';
+  | 'stop'
+  | 'runStatus'
+  | 'monitoringSnapshot'
+  | 'threadDump';
 
 export interface BridgeRequest {
   id: number;

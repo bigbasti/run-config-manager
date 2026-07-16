@@ -237,6 +237,27 @@ Failure patterns are equally specific — Spring Boot's `APPLICATION FAILED TO S
 
 Configurations saved against an older version of the extension get flagged in the sidebar with a warning icon when a detection improvement would now produce different values. The tooltip explains what changed and suggests re-creating — no silent breakage when you upgrade.
 
+### MCP server — let AI agents manage your run configs
+
+The extension registers itself as an MCP server (via VS Code's `lm.registerMcpServerDefinitionProvider` API), so any MCP-aware agent — GitHub Copilot Chat, Claude, or another client connected to your editor — can read and drive your run configurations directly, without you copy-pasting commands back and forth.
+
+The server exposes:
+
+- **Resources**
+  - `runconfig://schema` — the full JSON Schema for every configuration type and field, so an agent knows exactly what a valid config looks like.
+  - `runconfig://guide` — a human-authored guide covering each config type's purpose, launch modes, and field meanings.
+  - `runconfig://current` — the workspace's current run configurations, grouped by folder.
+- **Tools**
+  - `list_run_configs` — list every configuration across workspace folders (id, name, type, folder, validity).
+  - `get_run_config` — fetch the full object for a given id.
+  - `validate_run_config` — validate a candidate configuration against the schema before creating or updating it.
+  - `create_run_config` / `update_run_config` / `delete_run_config` — manage configurations.
+  - `run_config` / `debug_config` / `stop_config` — start, debug, or stop a configuration by id.
+
+Under the hood, the MCP server runs as a separate Node process (bundled as `out/mcp-server.js`) and talks back to the running extension over a token-authenticated loopback socket — nothing is exposed outside your machine, and no config data ever leaves your workspace.
+
+It's on by default; turn it off with `runConfigManager.mcp.enabled: false` if you'd rather not expose run configs to agents in a given setup.
+
 ## Getting started
 
 1. Click the **Run Configurations** icon in the Activity Bar.

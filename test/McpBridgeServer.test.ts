@@ -11,9 +11,20 @@ function fakeServices(): BridgeServices {
     createConfig: async () => ({ id: 'new' }),
     updateConfig: async () => undefined,
     deleteConfig: async () => undefined,
-    runConfig: async () => undefined,
-    debugConfig: async () => undefined,
+    runConfig: async (_id, monitor) => ({ monitoring: monitor ? 'requested' : undefined }),
+    debugConfig: async () => ({}),
     stopConfig: async () => undefined,
+    runStatus: () => ({
+      running: true, started: true, failed: false, preparing: false,
+      monitored: true, runtime: 'node',
+    }),
+    monitoringSnapshot: (_id, sections) => ({
+      runtime: 'node', status: 'live', latest: { rss: 1 },
+      ...(sections?.includes('metrics') ? { metrics: [{ rss: 1 }] } : {}),
+    }),
+    threadDump: async (_id, tid) => ({
+      type: 'threadDump', t: 1, tid, name: 'main', state: 'RUNNABLE', stack: [],
+    }) as any,
   };
 }
 
@@ -50,6 +61,35 @@ describe('McpBridgeServer + LoopbackClient', () => {
     const client = new LoopbackClient(port, 'secret');
     const res = await client.call('create', { config: { type: 'npm' } });
     expect(res).toEqual({ id: 'new' });
+    client.dispose();
+  });
+
+  it('round-trips runStatus', async () => {
+    const client = new LoopbackClient(port, 'secret');
+    const res = await client.call('runStatus', { id: 'a' });
+    expect(res).toMatchObject({ running: true, runtime: 'node', monitored: true });
+    client.dispose();
+  });
+
+  it('round-trips monitoringSnapshot with sections', async () => {
+    const client = new LoopbackClient(port, 'secret');
+    const res = await client.call('monitoringSnapshot', { id: 'a', sections: ['metrics'] });
+    expect(res).toMatchObject({ runtime: 'node', status: 'live' });
+    expect((res as any).metrics).toEqual([{ rss: 1 }]);
+    client.dispose();
+  });
+
+  it('round-trips threadDump', async () => {
+    const client = new LoopbackClient(port, 'secret');
+    const res = await client.call('threadDump', { id: 'a', tid: 7 });
+    expect(res).toMatchObject({ type: 'threadDump', tid: 7 });
+    client.dispose();
+  });
+
+  it('forwards the monitor flag on run', async () => {
+    const client = new LoopbackClient(port, 'secret');
+    const res = await client.call('run', { id: 'a', monitor: true });
+    expect(res).toEqual({ monitoring: 'requested' });
     client.dispose();
   });
 });
