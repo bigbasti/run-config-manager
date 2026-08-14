@@ -245,7 +245,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     // Not a reason to make the config row collapsible; those actions live
     // in the context menu, not in a sub-tree.
     const buildCtx = folder ? resolveBuildContext(n.config, folder) : null;
-    const orchActive = this.orchestrator.snapshotOf(n.config.id) !== undefined;
+    const orchActive = this.orchPinned(n.config.id);
     const collapsibleState = !hasDeps
       ? vscode.TreeItemCollapsibleState.None
       : orchActive
@@ -431,7 +431,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     // expand the row to inspect the dep chain. Forced Expanded while the
     // orchestrator is active for this id.
     const hasDeps = (n.config.dependsOn?.length ?? 0) > 0;
-    const orchActive = this.orchestrator.snapshotOf(n.config.id) !== undefined;
+    const orchActive = this.orchPinned(n.config.id);
     const collapsibleState = !hasDeps
       ? vscode.TreeItemCollapsibleState.None
       : orchActive
@@ -505,6 +505,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     const snap = this.orchestrator.snapshotOf(n.rootId);
     const status: OrchestrationStatus | undefined = snap?.statuses.get(n.ref);
     const reason = snap?.reasons.get(n.ref);
+    const finished = snap?.finished === true;
     const delayLabel = n.delaySeconds > 0 ? ` · +${n.delaySeconds}s` : '';
 
     if (n.kind === 'depMissing') {
@@ -524,10 +525,10 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     if (n.kind === 'depLaunch') {
       const item = new vscode.TreeItem(n.launchName, vscode.TreeItemCollapsibleState.None);
       const running = this.native.isLaunchRunning(n.launchName);
-      item.iconPath = iconForDepStatus(status, running)
+      item.iconPath = iconForDepStatus(status, running, finished)
         ?? new vscode.ThemeIcon('debug-alt');
       item.description = `launch · ${n.launchType ?? 'launch'}${delayLabel}${running ? ' · running' : ''}`;
-      item.tooltip = depTooltip('Launch configuration', n.launchName, status, reason, n.delaySeconds);
+      item.tooltip = depTooltip('Launch configuration', n.launchName, status, reason, n.delaySeconds, running, finished);
       item.contextValue = running ? 'depLaunchRunning' : 'depLaunchIdle';
       return item;
     }
@@ -535,10 +536,10 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     if (n.kind === 'depTask') {
       const item = new vscode.TreeItem(n.taskName, vscode.TreeItemCollapsibleState.None);
       const running = this.native.isTaskRunning(n.source, n.taskName);
-      item.iconPath = iconForDepStatus(status, running)
+      item.iconPath = iconForDepStatus(status, running, finished)
         ?? new vscode.ThemeIcon('tools');
       item.description = `task · ${n.source}${delayLabel}${running ? ' · running' : ''}`;
-      item.tooltip = depTooltip('Task', `${n.taskName} (${n.source})`, status, reason, n.delaySeconds);
+      item.tooltip = depTooltip('Task', `${n.taskName} (${n.source})`, status, reason, n.delaySeconds, running, finished);
       item.contextValue = running ? 'depTaskRunning' : 'depTaskIdle';
       return item;
     }
@@ -552,7 +553,7 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     const hasOwnDeps = (cfg.dependsOn?.length ?? 0) > 0;
     const folderForCfg = this.store.getFolder(this.folderKeyOf(cfg));
     const buildCtx = folderForCfg ? resolveBuildContext(cfg, folderForCfg) : null;
-    const orchActive = this.orchestrator.snapshotOf(n.rootId) !== undefined;
+    const orchActive = this.orchPinned(n.rootId);
     const state = !hasOwnDeps
       ? vscode.TreeItemCollapsibleState.None
       : orchActive
@@ -567,13 +568,26 @@ export class RunConfigTreeProvider implements vscode.TreeDataProvider<Node>, vsc
     const running = cfg.type === 'docker'
       ? this.docker.isRunning(cfg.typeOptions.containerId)
       : (this.exec.isRunning(cfg.id) || this.dbg.isRunning(cfg.id));
-    item.iconPath = iconForDepStatus(status, running)
+    item.iconPath = iconForDepStatus(status, running, finished)
       ?? iconForConfig(cfg, this.store.getFolder(this.folderKeyOf(cfg)), this.extensionUri);
     item.description = `${cfg.type}${delayLabel}${running ? ' · running' : ''}`;
-    item.tooltip = depTooltip('Run configuration', cfg.name, status, reason, n.delaySeconds);
+    item.tooltip = depTooltip('Run configuration', cfg.name, status, reason, n.delaySeconds, running, finished);
     const depBase = running ? 'depRcmRunning' : 'depRcmIdle';
     item.contextValue = buildCtx ? `${depBase}:${buildCtx.tool}` : depBase;
     return item;
+  }
+
+  // Should the root row for `rootId` be forced open to show orchestration
+  // state? True while the walk is in flight, and afterwards only for as long
+  // as a broken dependency is still down. Once the user has repaired and
+  // started everything the post-mortem has nothing left to say, so the row
+  // goes back to normal user-driven collapse behaviour instead of staying
+  // pinned open until the root is re-run.
+  private orchPinned(rootId: string): boolean {
+    const snap = this.orchestrator.snapshotOf(rootId);
+    if (!snap) return false;
+    if (!snap.finished) return true;
+    return this.orchestrator.hasUnresolvedFailure(rootId);
   }
 
   // Best-effort lookup of which folder a RunConfig belongs to — used for
@@ -964,22 +978,47 @@ function iconForGroupType(type: string): string {
 }
 
 
+// Which visual state a dependency row should paint. Pure so the precedence
+// rules can be tested without a TreeItem; iconForDepStatus maps the result
+// onto a ThemeIcon ('default' = fall back to the row's own type icon).
+export type DepIconState =
+  | 'waiting' | 'starting' | 'delaying' | 'running' | 'failed' | 'skipped' | 'default';
+
+export function depIconState(
+  status: OrchestrationStatus | undefined,
+  runningNow: boolean,
+  snapshotFinished: boolean,
+): DepIconState {
+  // No orchestration record at all — live state is the only truth.
+  if (!status) return runningNow ? 'running' : 'default';
+
+  // Orchestration still walking the graph. The recorded status IS the current
+  // truth and expresses progress the live channels cannot ("queued behind an
+  // earlier dep", "start issued, not up yet", "waiting out the edge delay"),
+  // so it outranks runningNow here.
+  if (!snapshotFinished) return status === 'idle' ? 'default' : status;
+
+  // The run is over and this snapshot is a post-mortem we keep around only so
+  // the user can see what broke. Live state wins from here: a dependency the
+  // user repaired and started by hand must stop showing as failed without
+  // needing the parent config re-run.
+  if (runningNow) return 'running';
+  if (status === 'failed') return 'failed';
+  if (status === 'skipped') return 'skipped';
+  // 'running'/'starting'/'delaying'/'waiting' recorded on a finished run for
+  // something that is down now is equally stale — show the plain type icon.
+  return 'default';
+}
+
 // Overlay the orchestration status on top of the default icon for a dep
 // node. Returning undefined lets the caller fall back to its normal icon
 // (launch/debug-alt, tools, brand SVG for rcm).
 function iconForDepStatus(
   status: OrchestrationStatus | undefined,
   runningNow: boolean,
+  snapshotFinished: boolean,
 ): vscode.ThemeIcon | undefined {
-  if (!status) {
-    // No active orchestration: if the dep already looks running (user
-    // started it manually, or a previous orchestration finished), keep the
-    // tree honest about that.
-    return runningNow
-      ? new vscode.ThemeIcon('debug-start', new vscode.ThemeColor('charts.green'))
-      : undefined;
-  }
-  switch (status) {
+  switch (depIconState(status, runningNow, snapshotFinished)) {
     case 'waiting':
       return new vscode.ThemeIcon('clock', new vscode.ThemeColor('charts.foreground'));
     case 'starting':
@@ -1003,16 +1042,26 @@ function depTooltip(
   status: OrchestrationStatus | undefined,
   reason: string | undefined,
   delaySeconds: number,
+  runningNow: boolean,
+  snapshotFinished: boolean,
 ): vscode.MarkdownString {
   const lines = [`**${kind}**: ${label}`];
   if (delaySeconds > 0) {
     lines.push(`\nDelay after start: ${delaySeconds}s`);
   }
-  if (status) {
-    lines.push(`\nStatus: _${status}_`);
+  // Report the same state the icon paints — reusing depIconState keeps the
+  // two from drifting apart.
+  const shown = depIconState(status, runningNow, snapshotFinished);
+  if (shown !== 'default') {
+    lines.push(`\nStatus: _${shown}_`);
   }
-  if (reason) {
-    lines.push(`\n${reason}`);
+  if (reason && (status === 'failed' || status === 'skipped')) {
+    // The reason belongs to the run that produced the snapshot. If that run
+    // is over and the dependency is back up, say so — otherwise a green row
+    // carrying an old failure note reads like a live error.
+    lines.push(snapshotFinished && shown === 'running'
+      ? `\nPrevious run: ${reason}`
+      : `\n${reason}`);
   }
   return new vscode.MarkdownString(lines.join('\n\n'));
 }

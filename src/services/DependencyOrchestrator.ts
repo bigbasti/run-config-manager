@@ -27,6 +27,15 @@ export interface OrchestrationSnapshot {
   statuses: Map<string, OrchestrationStatus>;
   // Reason text attached to 'failed' or 'skipped' entries.
   reasons: Map<string, string>;
+  // The walk is over — nothing in here will change again. A failed snapshot
+  // is deliberately kept around so the user can see WHICH dependency broke,
+  // which means `statuses` outlives the run that produced it. Consumers MUST
+  // treat a finished snapshot as a post-mortem record, not as current state:
+  // once the user fixes a dependency and starts it by hand, the live
+  // exec/docker/native channels are the truth and the recorded status is
+  // history. Without this flag the tree had no way to tell the two apart and
+  // kept repainting stale failure icons until the root was re-run.
+  finished?: boolean;
 }
 
 // Options forwarded to the ROOT config's launch only — dependencies
@@ -105,6 +114,7 @@ export class DependencyOrchestrator {
         plan.cycle.ref,
         `Cycle detected: ${plan.cycle.path.join(' → ')}. Nothing was started — break the cycle in the config's "Depends on" list.`,
       );
+      snap.finished = true;
       this.emitter.fire(snap);
       vscode.window.showErrorMessage(
         `Dependency cycle detected for "${rootCfg.name}": ${plan.cycle.path.join(' → ')}. No configs were started.`,
@@ -139,8 +149,12 @@ export class DependencyOrchestrator {
     if (failed) {
       snap.statuses.set(rcmRef(rootCfg.id), 'skipped');
       snap.reasons.set(rcmRef(rootCfg.id), 'Root config skipped because a dependency failed.');
+      snap.finished = true;
       this.emitter.fire(snap);
       // Leave snapshot in place so tree stays expanded showing the failure.
+      // `finished` tells the tree these statuses are history — live runtime
+      // state wins over them from here on, so a dependency the user repairs
+      // and starts by hand stops showing as failed.
       return;
     }
 
@@ -152,6 +166,7 @@ export class DependencyOrchestrator {
     try {
       await this.startRcmConfig(rootCfg, folder, rootOpts);
       snap.statuses.set(rcmRef(rootCfg.id), 'running');
+      snap.finished = true;
       this.emitter.fire(snap);
       // Happy path — drop the snapshot so the tree collapses on its own.
       // Caller (tree provider) can read `active` and auto-collapse the
@@ -165,8 +180,32 @@ export class DependencyOrchestrator {
     } catch (e) {
       snap.statuses.set(rcmRef(rootCfg.id), 'failed');
       snap.reasons.set(rcmRef(rootCfg.id), (e as Error).message);
+      snap.finished = true;
       this.emitter.fire(snap);
     }
+  }
+
+  // True when a finished orchestration still has a dependency the user
+  // hasn't dealt with — recorded as failed/skipped and NOT running right
+  // now. Drives whether the tree keeps the root row pinned open showing the
+  // post-mortem. Once every broken dependency is back up there is nothing
+  // left to report, so the row goes back to normal collapse behaviour.
+  //
+  // The root's own `rcm:<rootId>` entry is deliberately excluded: it is
+  // always 'skipped' after a dependency failure (the root never launched),
+  // so counting it would pin the row open forever.
+  hasUnresolvedFailure(rootId: string): boolean {
+    const snap = this.active.get(rootId);
+    if (!snap?.finished) return false;
+    const rootOwnRef = rcmRef(rootId);
+    const rootEntry = this.svc.getById(rootId);
+    const folderName = rootEntry?.valid ? rootEntry.config.workspaceFolder : '';
+    for (const [ref, status] of snap.statuses) {
+      if (ref === rootOwnRef) continue;
+      if (status !== 'failed' && status !== 'skipped') continue;
+      if (!this.isRefRunning(ref, folderName)) return true;
+    }
+    return false;
   }
 
   // Expose plan computation so the tree provider can render dep children
@@ -301,17 +340,27 @@ export class DependencyOrchestrator {
   // it. Used to skip the post-start delay — it's a "give the new
   // process time to come up" timer, useless when nothing was started.
   private isStepAlreadyRunning(step: PlanStep): boolean {
-    if (!step.resolved) return false;
-    if (step.resolved.kind === 'rcm') {
-      const cfg = step.resolved.cfg;
+    return this.isResolvedRunning(step.resolved);
+  }
+
+  // Live running-state for an already-resolved ref. Shared by the delay-skip
+  // check and by hasUnresolvedFailure so both read the same channels.
+  private isResolvedRunning(resolved: ResolvedRef | null): boolean {
+    if (!resolved) return false;
+    if (resolved.kind === 'rcm') {
+      const cfg = resolved.cfg;
       if (cfg.type === 'docker') return this.docker.isRunning(cfg.typeOptions.containerId);
       return this.exec.isRunning(cfg.id) || this.dbg.isRunning(cfg.id);
     }
-    if (step.resolved.kind === 'launch') {
-      return this.native.isLaunchRunning(step.resolved.launch.name);
+    if (resolved.kind === 'launch') {
+      return this.native.isLaunchRunning(resolved.launch.name);
     }
     // task
-    return this.native.isTaskRunning(step.resolved.source, step.resolved.taskName);
+    return this.native.isTaskRunning(resolved.source, resolved.taskName);
+  }
+
+  private isRefRunning(ref: string, workspaceFolderName: string): boolean {
+    return this.isResolvedRunning(this.resolve(ref, workspaceFolderName));
   }
 
   private folderFor(cfg: RunConfig): vscode.WorkspaceFolder | undefined {
