@@ -184,6 +184,9 @@ export const window = {
   }),
   createTreeView: jest.fn(),
   createWebviewPanel: jest.fn(),
+  // A real emitter (not a bare stub) so the Disposable returned to subscribers
+  // stays valid for their dispose().
+  onDidCloseTerminal: new EventEmitter<any>().event,
 };
 
 export const commands = {

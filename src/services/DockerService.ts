@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import { log } from '../utils/logger';
+import { containerIdMatches } from './containerMatch';
 
 // Summary of one container from `docker ps -a --format '{{json .}}'`.
 // We normalise the handful of fields the tree and form actually display;
@@ -97,11 +98,7 @@ export class DockerService {
 
   find(containerId: string): ContainerSummary | undefined {
     if (!containerId) return undefined;
-    // Users may save a short id (12 chars); Docker reports both — match on
-    // prefix in either direction so either representation works.
-    return this.cache.find(
-      c => c.id === containerId || c.id.startsWith(containerId) || containerId.startsWith(c.id),
-    );
+    return this.cache.find(c => containerIdMatches(c.id, containerId));
   }
 
   // Force a fresh `docker ps -a` and wait for it. Used by the form's
@@ -225,10 +222,26 @@ export class DockerService {
   }
 }
 
-function summariesChanged(a: ContainerSummary[], b: ContainerSummary[]): boolean {
+// Exported for unit tests. `image` and `ports` are excluded not because they
+// are invisible — the tree row description shows the image and the tooltip
+// shows both — but because neither drives any heal or running-state decision.
+// `docker tag` can change the image of a running container with no state or
+// status transition, so the row description can lag by a poll; that is an
+// acceptable trade for not re-rendering on churn that changes nothing
+// actionable. `name` CAN change on its own via `docker rename`, which is why
+// it is compared: the docker config self-heal backfills typeOptions.
+// containerName off this event, and the name is the key it re-matches a
+// re-created container on.
+// See src/services/dockerConfigHealer.ts
+export function summariesChanged(a: ContainerSummary[], b: ContainerSummary[]): boolean {
   if (a.length !== b.length) return true;
   for (let i = 0; i < a.length; i++) {
-    if (a[i].id !== b[i].id || a[i].state !== b[i].state || a[i].status !== b[i].status) {
+    if (
+      a[i].id !== b[i].id ||
+      a[i].state !== b[i].state ||
+      a[i].status !== b[i].status ||
+      a[i].name !== b[i].name
+    ) {
       return true;
     }
   }

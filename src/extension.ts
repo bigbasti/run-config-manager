@@ -25,6 +25,7 @@ import { DockerAdapter } from './adapters/docker/DockerAdapter';
 import { HttpRequestAdapter } from './adapters/http-request/HttpRequestAdapter';
 import { GoAdapter } from './adapters/go/GoAdapter';
 import { DockerService } from './services/DockerService';
+import { createDockerHealRunner } from './services/dockerHealRunner';
 import { RunConfigTreeProvider } from './ui/RunConfigTreeProvider';
 import { NativeRunnerTreeProvider } from './ui/NativeRunnerTreeProvider';
 import { EditorPanel } from './ui/EditorPanel';
@@ -66,7 +67,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   log.info('Run Configurations activating…');
 
   const docker = new DockerService();
-  docker.start();
+  // start() is deliberately deferred until the heal subscription is wired up
+  // below — see the comment there.
   context.subscriptions.push({ dispose: () => docker.dispose() });
 
   const registry = new AdapterRegistry();
@@ -210,6 +212,80 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
   context.subscriptions.push(monitoring.onChanged(maybeAutoOpenMonitor));
   context.subscriptions.push(nodeMonitoring.onChanged(maybeAutoOpenMonitor));
+
+  // Docker configs go stale whenever a container is re-created with a new id.
+  // The runner owns the repair logic (and its concurrency guards) so it stays
+  // testable; everything here is just the vscode plumbing it needs.
+  const runDockerHeal = createDockerHealRunner({
+    isEnabled: () =>
+      vscode.workspace
+        .getConfiguration('runConfigManager')
+        .get<boolean>('docker.autoRelink', true),
+    listDockerConfigs: () => {
+      // ConfigRef is discriminated on `valid`; narrow before touching `.type`.
+      const out: Array<{ folderKey: string; config: RunConfig }> = [];
+      for (const ref of svc.list()) {
+        if (!ref.valid || ref.config.type !== 'docker') continue;
+        out.push({ folderKey: ref.folderKey, config: ref.config });
+      }
+      return out;
+    },
+    listContainers: () => docker.list(),
+    getConfig: id => {
+      const ref = svc.getById(id);
+      return ref && ref.valid ? { folderKey: ref.folderKey, config: ref.config } : undefined;
+    },
+    updateConfig: (folderKey, cfg) => svc.update(folderKey, cfg),
+    notifyRelinked: relinked => {
+      if (relinked.length === 1) {
+        const a = relinked[0];
+        void vscode.window.showInformationMessage(
+          `"${a.configName}" now points at the re-created container "${a.containerName}".`,
+        );
+        return;
+      }
+      void vscode.window
+        .showInformationMessage(
+          `Updated ${relinked.length} Docker configurations to point at re-created containers.`,
+          'Show Details',
+        )
+        .then(choice => {
+          if (choice === 'Show Details') log.show();
+        });
+    },
+    notifyError: (configName, message) => {
+      void vscode.window.showErrorMessage(
+        `Failed to update Docker configuration "${configName}": ${message}`,
+      );
+    },
+    log,
+  });
+  context.subscriptions.push(
+    docker.onChanged(() => {
+      void runDockerHeal().catch(e => log.warn(`Docker config heal failed: ${(e as Error).message}`));
+    }),
+  );
+
+  // Also run on config changes, not just container changes. onChanged is
+  // edge-triggered on the container list, so saving a NEW docker config fires
+  // nothing — and the backfill that makes it heal-capable would then wait for
+  // an unrelated container transition, which for a long-lived container can be
+  // a day away (Docker's `status` string is the practical clock). Converges in
+  // one extra pass: the heal's own write re-fires onChange, the next plan is
+  // empty because the name now matches, and no further write occurs.
+  context.subscriptions.push(
+    store.onChange(() => {
+      void runDockerHeal().catch(e =>
+        log.warn(`Docker config heal failed: ${(e as Error).message}`),
+      );
+    }),
+  );
+
+  // Polling starts only now: DockerService.onChanged is edge-triggered, so the
+  // first `[] -> [containers]` transition is delivered exactly once. Starting
+  // earlier races `await store.attach` above and can drop that event entirely,
+  // which on a settled container list means the heal never runs at all.
+  docker.start();
 
   // Auto-reattach: after a window / extension-host reload, ExecutionService's
   // in-memory state is gone. Find configs the extension started before the

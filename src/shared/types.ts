@@ -405,12 +405,18 @@ export interface HttpRequestTypeOptions {
 // `docker stop`. Click-to-logs and running-state detection go through
 // DockerService (not ExecutionService).
 export interface DockerTypeOptions {
-  // The container id (short or long). We key on id rather than name because
-  // users rename containers and we don't want saved configs to break silently.
+  // The container id (short or long). A cache of the CURRENT instance, not an
+  // identity: Docker issues a new id every time a container is re-created, so
+  // this goes stale on `compose up --force-recreate`, rebuilds and rm+run.
+  // dockerConfigHealer re-links it by matching containerName.
   containerId: string;
-  // Human-readable name snapshot captured when the user picked the container.
-  // Used only for the form's info panel / tooltip when the container has been
-  // removed — we can still show "was X" instead of a bare id.
+  // The durable identity. Container names survive re-creation and Docker
+  // enforces uniqueness across existing containers, so this is what a stale
+  // containerId is re-matched on. Written only by the Docker config self-heal
+  // (the editor form has no field for it), which is why it is optional —
+  // configs created before that feature have no name until the next docker
+  // poll observes their container.
+  // See src/services/dockerConfigHealer.ts
   containerName?: string;
 }
 

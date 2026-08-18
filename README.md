@@ -98,6 +98,8 @@ Debug sessions started from VS Code's own Run & Debug panel also appear as runni
 
 Create a Docker run config and the form lists your local containers grouped by running / stopped, sorted running-first. Pick one and the Info panel fills with image, state, created timestamp, port mappings, volumes, and environment — so you can verify you picked the right one before saving. Clicking a docker config in the sidebar opens a live log tail terminal (`docker logs -f`); the Run / Stop buttons drive the container directly.
 
+Re-creating a container gives it a new id, which would normally leave the saved config pointing at nothing. To avoid that, the extension records the container's name alongside its id in `.vscode/run.json`, and when the stored id goes stale it re-links the config to the container with the matching name — so `docker compose up --force-recreate`, image rebuilds and `docker rm` + `docker run` no longer break your configs. The re-link happens in the background and is announced with a notification. Set `runConfigManager.docker.autoRelink` to `false` to turn it off, along with the name bookkeeping it needs.
+
 ### Right-click actions
 
 Every config's right-click menu offers type-appropriate shortcuts — no manual `mvn` / `gradle` / `npm` / `go` typing:

@@ -52,6 +52,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically open the monitor view when a configuration is started with monitoring attached."
+        },
+        "runConfigManager.docker.autoRelink": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep Docker run configurations working when a container is re-created with a new id. Records the container's name in the configuration and, when the stored id goes stale, updates it to the container with the matching name."
         }
       }
     },
