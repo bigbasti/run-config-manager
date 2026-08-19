@@ -63,7 +63,15 @@ class FsStubError extends Error {
   constructor(public code: string, msg: string) { super(msg); }
 }
 
-export const __resetFs = () => { fsStore.clear(); };
+// Lets a test force readFile to fail with something OTHER than FileNotFound,
+// so the "transient read error" path can be exercised.
+let readFileFailure: { path: string; code: string } | undefined;
+export const __failReadFs = (path: string, code = 'Unavailable') => {
+  readFileFailure = { path, code };
+};
+export const __clearReadFsFailure = () => { readFileFailure = undefined; };
+
+export const __resetFs = () => { fsStore.clear(); readFileFailure = undefined; };
 export const __writeFs = (path: string, data: string | Uint8Array) => {
   fsStore.set(path, typeof data === 'string' ? new TextEncoder().encode(data) : data);
 };
@@ -87,9 +95,17 @@ export const __resetLaunchConfig = () => { launchBySection.clear(); };
 export const workspace = {
   fs: {
     async readFile(uri: Uri): Promise<Uint8Array> {
+      if (readFileFailure && readFileFailure.path === uri.fsPath) {
+        throw new FsStubError(readFileFailure.code, uri.fsPath);
+      }
       const data = fsStore.get(uri.fsPath);
       if (!data) throw new FsStubError('FileNotFound', uri.fsPath);
       return data;
+    },
+    async createDirectory(_uri: Uri): Promise<void> {
+      // The in-memory store keys on full file paths, so directories are
+      // implicit. Nothing to do — but the method must exist because the
+      // real API requires it before writing into a new folder.
     },
     async writeFile(uri: Uri, content: Uint8Array): Promise<void> {
       fsStore.set(uri.fsPath, content);

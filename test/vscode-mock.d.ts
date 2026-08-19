@@ -6,6 +6,9 @@ declare module 'vscode' {
   export const __resetFs: () => void;
   export const __writeFs: (path: string, data: string | Uint8Array) => void;
   export const __readFs: (path: string) => string | undefined;
+  /** Force readFile(path) to reject with a non-FileNotFound error. */
+  export const __failReadFs: (path: string, code?: string) => void;
+  export const __clearReadFsFailure: () => void;
   export const __watchers: Array<{
     pattern: unknown;
     change: EventEmitter<Uri>;

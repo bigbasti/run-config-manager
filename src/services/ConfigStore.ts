@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as os from 'os';
 import type { RunFile, InvalidConfigEntry } from '../shared/types';
 import { parseRunFile, stringifyRunFile, RunConfigSchema } from '../shared/schema';
 import { deriveKnownFolders } from '../shared/folderPath';
@@ -6,6 +7,7 @@ import { log } from '../utils/logger';
 import { migrateSpringBootConfig } from './migrateSpringBoot';
 import { EXTENSION_VERSION } from '../utils/extensionVersion';
 import { runMigrations } from './migrations';
+import { archiveRunJson } from './configBackup';
 
 const EMPTY: RunFile = { version: EXTENSION_VERSION, configurations: [], groups: [] };
 
@@ -22,11 +24,25 @@ export interface WriteOpts {
   removeInvalidIds?: string[];
 }
 
+export interface ConfigStoreOpts {
+  /** Where migration backups go. Defaults to the real home directory. */
+  backupHomeDir?: string;
+  /** Injected clock for backup filenames, for deterministic tests. */
+  now?: () => Date;
+}
+
 export class ConfigStore {
   private entries = new Map<string, FolderEntry>();
   private emitter = new vscode.EventEmitter<string>();
+  private backupHomeDir: string;
+  private now: () => Date;
 
   onChange = this.emitter.event;
+
+  constructor(opts?: ConfigStoreOpts) {
+    this.backupHomeDir = opts?.backupHomeDir ?? safeHomeDir();
+    this.now = opts?.now ?? (() => new Date());
+  }
 
   async attach(folders: readonly vscode.WorkspaceFolder[]): Promise<void> {
     for (const folder of folders) {
@@ -69,7 +85,17 @@ export class ConfigStore {
     try {
       const buf = await vscode.workspace.fs.readFile(uri);
       raw = new TextDecoder().decode(buf);
-    } catch {
+    } catch (e) {
+      if (!isFileNotFound(e)) {
+        // A read that failed for any reason other than "not there" is
+        // transient — most often the sliver between writeFile(tmp) and
+        // rename, where run.json genuinely doesn't exist for an instant.
+        // Collapsing that to EMPTY would let the next write from any
+        // caller (a user edit, the docker healer) persist the emptiness
+        // and destroy the user's configurations.
+        log.warn(`Could not read ${uri.fsPath}, keeping the previously loaded configurations: ${(e as Error).message}`);
+        return;
+      }
       entry.file = EMPTY;
       entry.invalid = [];
       entry.lastError = undefined;
@@ -116,6 +142,19 @@ export class ConfigStore {
       // file is brand-new / empty — no value in writing a version
       // stamp into an empty run.json before the user has any configs.
       if ((result.contentChanged || versionStale) && entry.file.configurations.length > 0) {
+        // A migration rewrote the user's configurations. Keep a copy of
+        // exactly what was on disk first, so a migration bug is
+        // recoverable. Only on contentChanged — a bare version stamp
+        // isn't worth a backup, and would otherwise produce one file
+        // per release for every workspace.
+        if (result.contentChanged) {
+          await archiveRunJson({
+            homeDir: this.backupHomeDir,
+            folderName: entry.folder.name,
+            contents: raw,
+            now: this.now(),
+          });
+        }
         // Fire-and-forget: write() schedules its own debounce, and we
         // don't want load() to depend on the file being on disk.
         this.write(key, entry.file).catch(e =>
@@ -215,15 +254,35 @@ export class ConfigStore {
     const dir = vscode.Uri.joinPath(entry.folder.uri, '.vscode');
     const target = vscode.Uri.joinPath(dir, 'run.json');
     const tmp = vscode.Uri.joinPath(dir, 'run.json.tmp');
-    const encoded = new TextEncoder().encode(stringifyRunFile(file));
-    await vscode.workspace.fs.writeFile(tmp, encoded);
-    await vscode.workspace.fs.rename(tmp, target, { overwrite: true });
+    const text = stringifyRunFile(file);
+    // Skip the physical write when the file already holds exactly these
+    // bytes. Touching run.json wakes the FileSystemWatcher, which
+    // reloads, which may write again — so a no-op write is the raw
+    // material of a rewrite loop. In-memory state and onChange still
+    // proceed, so callers can't tell the difference.
+    if (!(await this.matchesOnDisk(target, text))) {
+      const encoded = new TextEncoder().encode(text);
+      await vscode.workspace.fs.writeFile(tmp, encoded);
+      await vscode.workspace.fs.rename(tmp, target, { overwrite: true });
+    }
     entry.file = file;
     if (opts?.removeInvalidIds?.length) {
       entry.invalid = entry.invalid.filter(e => !opts.removeInvalidIds!.includes(e.id));
     }
     entry.lastError = undefined;
     this.emitter.fire(key);
+  }
+
+  // True when `target` exists and already decodes to exactly `text`.
+  // Any read failure counts as "different" so we fall through to the
+  // write rather than silently dropping it.
+  private async matchesOnDisk(target: vscode.Uri, text: string): Promise<boolean> {
+    try {
+      const buf = await vscode.workspace.fs.readFile(target);
+      return new TextDecoder().decode(buf) === text;
+    } catch {
+      return false;
+    }
   }
 
   dispose(): void {
@@ -246,17 +305,21 @@ function migrateRaw(raw: string): string {
     // Pre-schema coercion: legacy run.json files used `version: 1`
     // (a number literal — the format predates the migration system).
     // The schema now expects a semver string. We deliberately map the
-    // legacy literal to "0.0.0" — if we used "1.0.0" the migrator
-    // would treat the file as NEWER than any pre-1.0.0 extension and
-    // refuse to migrate it. Treating legacy as "earliest" lets every
-    // registered migration run on first load.
-    // Same treatment for "1" / "1.x" string forms left over from
-    // hand-edits; the literal number / string was never a real semver.
+    // legacy literal to "0.0.0" so every registered migration runs on
+    // first load; mapping it to "1.0.0" would make the migrator treat
+    // the file as current and skip everything.
+    //
+    // Only genuine pre-semver forms qualify: the bare number, a missing
+    // version, and the hand-written strings "1" / "1.0". A complete
+    // three-part semver is a real version and must be left alone —
+    // swallowing "1.0.0" here made every file written by the 1.0.0
+    // extension look permanently stale, so reload() wrote it back, the
+    // watcher fired, and run.json rewrote itself in a loop forever.
     if (parsed.version === 1
         || parsed.version === undefined
         || parsed.version === null
         || parsed.version === '1'
-        || (typeof parsed.version === 'string' && /^1(\.0)?(\.0)?$/.test(parsed.version))) {
+        || parsed.version === '1.0') {
       parsed.version = '0.0.0';
     } else if (typeof parsed.version === 'number') {
       // Any other bare-number version (e.g. version: 2, future
@@ -267,5 +330,28 @@ function migrateRaw(raw: string): string {
     return JSON.stringify(parsed);
   } catch {
     return raw;
+  }
+}
+
+// "The file isn't there" arrives spelled several ways depending on who
+// raised it: vscode.FileSystemError uses `code`/`name` of "FileNotFound"
+// (some providers say "EntryNotFound"), while a raw Node error says
+// "ENOENT". Getting this wrong in the strict direction is the dangerous
+// one — a real deletion that we fail to recognise would leave the tree
+// showing configurations that no longer exist — so match generously and
+// fall back to the message.
+function isFileNotFound(e: unknown): boolean {
+  const err = e as { code?: string; name?: string; message?: string } | undefined;
+  const tokens = [err?.code, err?.name, err?.message].filter(Boolean).join(' ');
+  return /FileNotFound|EntryNotFound|ENOENT|NotFound/i.test(tokens);
+}
+
+// os.homedir() throws on exotic setups with no HOME and no passwd entry.
+// The backup path treats "" as "nowhere to write", which is exactly right.
+function safeHomeDir(): string {
+  try {
+    return os.homedir() || '';
+  } catch {
+    return '';
   }
 }
