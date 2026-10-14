@@ -5,6 +5,7 @@ import type { FormSchema } from '../shared/formSchema';
 import type { RunConfigService } from '../services/RunConfigService';
 import type { RuntimeAdapter, StreamingPatch } from '../adapters/RuntimeAdapter';
 import { log } from '../utils/logger';
+import { loadWebviewAssets } from './webviewAssets';
 import { relativeFromWorkspace, resolveProjectUri } from '../utils/paths';
 import { recomputeClasspath, RecomputeTimeoutError } from '../adapters/spring-boot/recomputeClasspath';
 import { detectSpringBootPort, detectQuarkusPort, safeDetect } from '../services/detectProjectPort';
@@ -357,6 +358,7 @@ export class EditorPanel {
   private async handleMessage(msg: Outbound): Promise<void> {
     switch (msg.cmd) {
       case 'ready':
+        log.debug('Editor webview ready; sending init');
         this.sendInit();
         return;
       case 'cancel':
@@ -1475,25 +1477,20 @@ export class EditorPanel {
 
   private getHtml(): string {
     const webview = this.panel.webview;
-    const scriptUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.ctx.extensionUri, 'media', 'webview', 'assets', 'main.js'),
-    );
-    const cssUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.ctx.extensionUri, 'media', 'webview', 'assets', 'main.css'),
-    );
+    const assets = loadWebviewAssets(this.ctx.extensionUri.fsPath);
     const nonce = makeNonce();
     return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy"
- content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';">
-<link rel="stylesheet" href="${cssUri}" />
+ content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}' ${webview.cspSource};">
+<style>${assets.css}</style>
 <title>Run Configuration</title>
 </head>
 <body>
 <div id="root"></div>
-<script type="module" nonce="${nonce}" src="${scriptUri}"></script>
+<script nonce="${nonce}">${assets.js}</script>
 </body>
 </html>`;
   }
