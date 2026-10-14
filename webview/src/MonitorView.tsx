@@ -1,3 +1,4 @@
+import { getVsCodeApi } from './vscodeApi';
 import { useEffect, useMemo, useState } from 'react';
 import type {
   MetricsTick,
@@ -27,8 +28,7 @@ import { AppTab } from './monitor/AppTab';
 const HISTORY_CAP_BY_WINDOW: Record<string, number> = { '60s': 60, '5min': 300, '30min': 1800 };
 type TabKey = 'memory' | 'threads' | 'jvm' | 'app';
 
-declare const acquireVsCodeApi: any;
-const vscode = typeof acquireVsCodeApi !== 'undefined' ? acquireVsCodeApi() : { postMessage: () => {} };
+const vscode = getVsCodeApi();
 
 export function MonitorView({
   configId,

@@ -1,3 +1,4 @@
+import { getVsCodeApi } from './vscodeApi';
 import { useEffect, useMemo, useState } from 'react';
 import type {
   NodeHello, NodeMetricsTick, NodeHeapSpaces, NodeGcEvent,
@@ -6,8 +7,7 @@ import type {
 const HISTORY_CAP_BY_WINDOW: Record<string, number> = { '60s': 60, '5min': 300, '30min': 1800 };
 type TabKey = 'memory' | 'loop' | 'runtime';
 
-declare const acquireVsCodeApi: any;
-const vscode = typeof acquireVsCodeApi !== 'undefined' ? acquireVsCodeApi() : { postMessage: () => {} };
+const vscode = getVsCodeApi();
 const MB = 1024 * 1024;
 const mb = (n: number) => `${(n / MB).toFixed(0)} MB`;
 

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { loadWebviewAssets } from './webviewAssets';
 import * as path from 'path';
 import * as os from 'os';
 import type { MonitoringService } from '../services/MonitoringService';
@@ -243,12 +244,7 @@ export class MonitorPanel {
   }
 
   private html(): string {
-    const main = this.panel.webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, 'media', 'webview', 'assets', 'main.js'),
-    );
-    const css = this.panel.webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, 'media', 'webview', 'assets', 'main.css'),
-    );
+    const assets = loadWebviewAssets(this.extensionUri.fsPath);
     const cspSource = this.panel.webview.cspSource;
     const nonce = makeNonce();
     return `<!doctype html>
@@ -256,13 +252,13 @@ export class MonitorPanel {
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy"
-   content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; img-src ${cspSource} data:; script-src 'nonce-${nonce}';">
-  <link rel="stylesheet" href="${css}" />
+   content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; img-src ${cspSource} data:; script-src 'nonce-${nonce}' ${cspSource};">
+  <style>${assets.css}</style>
   <title>Monitor: ${escapeHtml(this.cfg.name)}</title>
 </head>
 <body>
 <div id="root" data-view="monitor" data-runtime="${this.runtime}" data-config-id="${escapeHtml(this.cfg.id)}" data-config-name="${escapeHtml(this.cfg.name)}" data-own-package="${escapeHtml(ownPackagePrefix(this.cfg))}"></div>
-<script type="module" nonce="${nonce}" src="${main}"></script>
+<script nonce="${nonce}">${assets.js}</script>
 </body>
 </html>`;
   }

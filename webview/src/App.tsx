@@ -12,13 +12,12 @@ import { MavenDownloadDialog } from './MavenDownloadDialog';
 import { GradleDownloadDialog } from './GradleDownloadDialog';
 import { NodeDownloadDialog } from './NodeDownloadDialog';
 import { LoadingDialog } from './LoadingDialog';
+import { getVsCodeApi } from './vscodeApi';
 import type { EnvFileStatus } from './form/EnvFileList';
 import type { TomcatVersionDto, MavenVersionDto, GradleVersionDto, NodeVersionDto } from '../../src/shared/protocol';
 import type { JdkPackageDto } from '../../src/shared/protocol';
 
-declare function acquireVsCodeApi(): { postMessage(msg: Outbound): void; getState<T>(): T; setState<T>(s: T): void };
-
-const vscode = acquireVsCodeApi();
+const vscode = getVsCodeApi();
 function post(msg: Outbound) { vscode.postMessage(msg); }
 
 // Returns the buildTool a folderPath field opted into validation for, or
